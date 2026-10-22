@@ -91,3 +91,7 @@ UI strings live in `src/i18n.ts`. English defines the set of keys, and TypeScrip
 
 - Auto-update and macOS/Linux builds through GitHub Actions
 - Ctrl+1–9 shortcuts
+
+## License
+
+[MIT](LICENSE)
