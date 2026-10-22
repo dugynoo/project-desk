@@ -28,6 +28,10 @@ const en = {
   "update.ok": "Update and restart",
   "update.downloading": "Downloading… {percent}",
   "update.failed": "Update failed: {detail}",
+  "update.check": "Check for updates",
+  "update.checking": "Checking…",
+  "update.upToDate": "You have the latest version ({version}).",
+  "update.checkFailed": "Could not check for updates: {detail}",
 
   "common.cancel": "Cancel",
   "common.save": "Save",
@@ -205,6 +209,10 @@ const sk: Record<Key, string> = {
   "update.ok": "Aktualizovať a reštartovať",
   "update.downloading": "Sťahuje sa… {percent}",
   "update.failed": "Aktualizácia zlyhala: {detail}",
+  "update.check": "Skontrolovať aktualizácie",
+  "update.checking": "Kontrolujem…",
+  "update.upToDate": "Máš najnovšiu verziu ({version}).",
+  "update.checkFailed": "Aktualizácie sa nepodarilo skontrolovať: {detail}",
 
   "common.cancel": "Zrušiť",
   "common.save": "Uložiť",
@@ -379,6 +387,10 @@ const cs: Record<Key, string> = {
   "update.ok": "Aktualizovat a restartovat",
   "update.downloading": "Stahuje se… {percent}",
   "update.failed": "Aktualizace selhala: {detail}",
+  "update.check": "Zkontrolovat aktualizace",
+  "update.checking": "Kontroluji…",
+  "update.upToDate": "Máš nejnovější verzi ({version}).",
+  "update.checkFailed": "Aktualizace se nepodařilo zkontrolovat: {detail}",
 
   "common.cancel": "Zrušit",
   "common.save": "Uložit",

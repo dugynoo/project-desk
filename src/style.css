@@ -98,6 +98,8 @@ button.icon.on { color: var(--accent); }
 .modal { width: min(520px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); padding: 14px; user-select: text; }
 .modal h3 { margin: 0 0 10px; font-size: 14px; }
 .modal p { margin: 0 0 12px; color: var(--muted); }
+.modal .actions button.left { margin-right: auto; }
+.toast.info { border-left-color: var(--accent); }
 .ctxmenu { position: fixed; z-index: 30; min-width: 200px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
 .ctxmenu button { display: block; width: 100%; padding: 6px 10px; border: 0; border-radius: 5px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .ctxmenu button:hover, .ctxmenu button:focus-visible { background: var(--panel-2); outline: none; }

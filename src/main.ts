@@ -1,6 +1,7 @@
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
 
+import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -120,8 +121,9 @@ const contextLabel = (s: Session) => {
 };
 const statusLabel = (s: Status) => t(`status.${s}` as Key);
 
-function toast(msg: string) {
-  const t = el("div", "toast", msg);
+/** Správa v rohu; `info` = nie je to chyba. */
+function toast(msg: string, info = false) {
+  const t = el("div", info ? "toast info" : "toast", msg);
   document.body.append(t);
   window.setTimeout(() => t.remove(), 6000);
 }
@@ -1388,6 +1390,20 @@ function openSettings() {
       const save_ = el("button", "primary", t("common.save"));
       const cancel = el("button", "", t("common.cancel"));
       const actions = el("div", "actions");
+      if (info.updates) {
+        const checkBtn = el("button", "left", t("update.check"));
+        checkBtn.onclick = async () => {
+          checkBtn.disabled = true;
+          checkBtn.textContent = t("update.checking");
+          if (await checkUpdate(true)) {
+            close();
+            return installUpdate();
+          }
+          checkBtn.disabled = false;
+          checkBtn.textContent = t("update.check");
+        };
+        actions.append(checkBtn);
+      }
       actions.append(cancel, save_);
       box.append(actions);
       cancel.onclick = close;
@@ -1426,15 +1442,28 @@ function applyLanguage() {
 
 let pendingUpdate: Update | undefined;
 
-/** Hľadá novú verziu v GitHub Releases. Bez siete alebo bez vydania ticho nič. */
-async function checkUpdate() {
-  if (pendingUpdate) return;
-  const update = await check().catch(() => null);
-  if (!update) return;
+/**
+ * Hľadá novú verziu v GitHub Releases. Automatická kontrola bez siete alebo bez vydania ticho nič;
+ * ručná (`manual`, z Nastavení) povie, keď nič nenašla. Vráti true, ak je k dispozícii nová verzia.
+ */
+async function checkUpdate(manual = false): Promise<boolean> {
+  if (pendingUpdate) return true;
+  let update: Update | null;
+  try {
+    update = await check();
+  } catch (e) {
+    if (manual) toast(t("update.checkFailed", { detail: String(e) }));
+    return false;
+  }
+  if (!update) {
+    if (manual) toast(t("update.upToDate", { version: await getVersion() }), true);
+    return false;
+  }
   pendingUpdate = update;
   const btn = $<HTMLButtonElement>("#btn-update");
   btn.textContent = t("update.button", { version: update.version });
   btn.hidden = false;
+  return true;
 }
 
 /** Zoznam zmien z release notes: len riadky „- …“, ktoré release workflow vytvorí z commitov. */

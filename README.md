@@ -52,7 +52,7 @@ Supported editors: Cursor, VS Code, VS Code Insiders, Windsurf, VSCodium, Trae, 
 **Other program…** is for anything else. Pick the program and set its arguments. `%TARGET_PATH%` is replaced with the file or folder path and `%LINE%` with the line number. The default `%TARGET_PATH%` is enough for most programs.
 
 ### Updates
-The app checks [GitHub Releases](https://github.com/dugynoo/project-desk/releases) shortly after start and then every 6 hours. When a new version is out, an **⬆ Update** button appears in the sidebar. Updates are signed, and the app installs only an update signed with the project's key.
+The app checks [GitHub Releases](https://github.com/dugynoo/project-desk/releases) shortly after start and then every 6 hours. When a new version is out, an **⬆ Update** button appears in the sidebar. To check right away, use **Check for updates** in ⚙ Settings. Updates are signed, and the app installs only an update signed with the project's key.
 
 ## Security
 
