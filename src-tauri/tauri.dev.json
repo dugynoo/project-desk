@@ -1,0 +1,1 @@
+{ "identifier": "eu.effistream.projectdesk.dev", "productName": "Project Desk (dev)", "app": { "windows": [ { "title": "Project Desk (dev)", "width": 1400, "height": 900, "minWidth": 700, "minHeight": 400 } ] } }

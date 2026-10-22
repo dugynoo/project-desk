@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="sk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Desk</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <header class="sidebar-head">
+          <span class="brand">Project Desk</span>
+          <span class="head-actions">
+            <button id="btn-switch" class="icon" title="Nájsť reláciu (Ctrl+K)">⌕</button>
+            <button id="btn-templates" class="icon" title="Šablóny promptov (Ctrl+Shift+T)">✦</button>
+            <button id="btn-grid" class="icon" title="Mriežka 2×2 (Ctrl+G)">⊞</button>
+            <button id="btn-settings" class="icon" title="Nastavenia">⚙</button>
+          </span>
+        </header>
+        <div id="projects"></div>
+        <button id="btn-add-project" class="add-project">+ Pridať projekt</button>
+      </aside>
+      <div id="resizer" title="Ťahaj pre zmenu šírky"></div>
+      <main id="stage">
+        <div id="empty" class="empty">
+          <p>Vyber reláciu vľavo alebo vytvor novú pri projekte.</p>
+          <p class="hint">Ctrl+K relácie · Ctrl+G mriežka · Ctrl+Shift+F hľadať v termináli · Ctrl+Shift+T šablóny · Ctrl+klik otvorí súbor alebo odkaz</p>
+        </div>
+      </main>
+    </div>
+    <div id="overlay" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
