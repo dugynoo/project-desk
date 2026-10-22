@@ -1,5 +1,6 @@
 mod codex;
 mod editors;
+mod files;
 mod hooks;
 mod job;
 mod pty;
@@ -141,6 +142,18 @@ async fn open_in_editor(
     editors::launch(&program, &args)
 }
 
+/// Súbor v predvolenej aplikácii systému (HTML v prehliadači…). Spustiteľné súbory odmietne.
+#[tauri::command]
+async fn open_file_default(path: String) -> Result<(), String> {
+    files::open_default(&path)
+}
+
+/// Ukáže súbor v Prieskumníkovi, Finderi alebo správcovi súborov.
+#[tauri::command]
+async fn reveal_file(path: String) -> Result<(), String> {
+    files::reveal(&path)
+}
+
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
 #[tauri::command]
 fn resolve_file(cwd: String, candidate: String) -> Option<String> {
@@ -222,6 +235,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_in_editor,
+            open_file_default,
+            reveal_file,
             list_editors,
             resolve_file,
             find_codex_session,

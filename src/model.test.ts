@@ -6,7 +6,9 @@ import {
   findFileRefs,
   formatTokens,
   moveProject,
+  opensInSystem,
   orderedProjects,
+  relativePath,
   pasteSequence,
   templatesFor,
   DEFAULT_SETTINGS,
@@ -212,4 +214,21 @@ test("parseState načíta šablóny a zahodí tie k neexistujúcemu projektu", (
   assert.equal(state.templates[0].send, true);
   assert.equal(state.projects[0].pinned, true);
   assert.equal(dropped, 1);
+});
+
+test("opensInSystem podľa prípony z nastavení", () => {
+  const list = "html, .PDF  svg";
+  assert.equal(opensInSystem("C:/web/index.HTML", list), true);
+  assert.equal(opensInSystem("/tmp/report.pdf", list), true);
+  assert.equal(opensInSystem("src/main.ts", list), false);
+  assert.equal(opensInSystem("html", list), false);
+  assert.equal(opensInSystem("/a/.svg", list), false);
+  assert.equal(opensInSystem("x.html", DEFAULT_SETTINGS.systemOpenExts), true);
+});
+
+test("relativePath len pre súbory vnútri projektu", () => {
+  assert.equal(relativePath("C:\\Users\\a\\web", "C:\\Users\\a\\web\\src\\index.html"), "src/index.html");
+  assert.equal(relativePath("/home/a/web/", "/home/a/web/a.ts"), "a.ts");
+  assert.equal(relativePath("/home/a/web", "/home/a/website/a.ts"), undefined);
+  assert.equal(relativePath("/home/a/web", "/etc/passwd"), undefined);
 });

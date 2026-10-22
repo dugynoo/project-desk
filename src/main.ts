@@ -31,6 +31,7 @@ import {
   isUuid,
   matches,
   moveProject,
+  opensInSystem,
   orderedProjects,
   parseState,
   pasteSequence,
@@ -38,6 +39,7 @@ import {
   type Project,
   type PromptTemplate,
   PROVIDER_LABEL,
+  relativePath,
   type Provider,
   type Session,
   type Settings,
@@ -67,6 +69,8 @@ interface Runtime {
   head: HTMLElement;
   running: boolean;
   closing: boolean;
+  /** Odkaz pod myšou, pre menu na pravom kliku. */
+  hoverLink?: { url: string } | { file: string; line?: number };
 }
 
 const PROVIDER_ICON: Record<Provider, string> = { claude: "✳", codex: "‹›", shell: "▣" };
@@ -365,17 +369,23 @@ function openSearch(rt: Runtime) {
   if (input.value) rt.search.findNext(input.value, { ...SEARCH_OPTIONS, incremental: true });
 }
 
-/** Ctrl+klik na URL otvorí prehliadač, na cestu k súboru editor (aj na riadku). */
+/** Ctrl+klik na URL otvorí prehliadač, na cestu k súboru editor alebo predvolenú aplikáciu. Pravý klik ukáže menu. */
 function setupLinks(rt: Runtime, s: Session) {
-  const hint = (key: Key) => () => (rt.host.title = t(key));
-  const leave = () => (rt.host.title = "");
+  const hover = (key: Key, link: NonNullable<Runtime["hoverLink"]>) => {
+    rt.host.title = t(key);
+    rt.hoverLink = link;
+  };
+  const leave = () => {
+    rt.host.title = "";
+    rt.hoverLink = undefined;
+  };
   const wantsOpen = (e: MouseEvent) => e.ctrlKey || e.metaKey;
   rt.term.loadAddon(
     new WebLinksAddon(
       (e, uri) => {
-        if (wantsOpen(e)) void openUrl(uri).catch((err) => toast(t("link.openFailed", { detail: String(err) })));
+        if (wantsOpen(e)) openLink(uri);
       },
-      { hover: hint("link.urlHint"), leave },
+      { hover: (_e, uri) => hover("link.urlHint", { url: uri }), leave },
     ),
   );
   rt.term.registerLinkProvider({
@@ -393,9 +403,9 @@ function setupLinks(rt: Runtime, s: Session) {
               range: { start: { x: r.index + 1, y }, end: { x: r.index + r.length, y } },
               text: text.slice(r.index, r.index + r.length),
               activate: (e: MouseEvent) => {
-                if (wantsOpen(e)) openEditor(file, r.line);
+                if (wantsOpen(e)) openFile(file, r.line);
               },
-              hover: hint("link.fileHint"),
+              hover: () => hover("link.fileHint", { file, line: r.line }),
               leave,
             },
           ];
@@ -404,6 +414,96 @@ function setupLinks(rt: Runtime, s: Session) {
       });
     },
   });
+  rt.host.addEventListener("contextmenu", (e) => {
+    const link = rt.hoverLink;
+    if (!link) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if ("url" in link) {
+      popupMenu(e.clientX, e.clientY, [
+        [t("menu.openLink"), () => openLink(link.url)],
+        [t("menu.copyLink"), () => void navigator.clipboard.writeText(link.url)],
+      ]);
+      return;
+    }
+    const rel = relativePath(project(s.projectId)?.path ?? "", link.file);
+    const items: MenuItem[] = [
+      [t("menu.openEditor"), () => openEditor(link.file, link.line)],
+      [t("menu.openDefault"), () => void openDefault(link.file)],
+      [t(REVEAL_LABEL[info.platform] ?? "menu.revealLinux"), () => void revealFile(link.file)],
+      [t("menu.copyPath"), () => void navigator.clipboard.writeText(link.file)],
+    ];
+    if (rel) items.push([t("menu.copyRelative"), () => void navigator.clipboard.writeText(rel)]);
+    popupMenu(e.clientX, e.clientY, items);
+  });
+}
+
+function openLink(url: string) {
+  void openUrl(url).catch((err) => toast(t("link.openFailed", { detail: String(err) })));
+}
+
+/** Ctrl+klik na súbor: prípony z nastavení idú do predvolenej aplikácie, ostatné do editora. */
+function openFile(file: string, line?: number) {
+  if (!opensInSystem(file, state.settings.systemOpenExts)) return openEditor(file, line);
+  // Spustiteľný súbor backend odmietne; vtedy ho otvoríme aspoň v editore.
+  void openDefault(file, false).then((ok) => {
+    if (!ok) openEditor(file, line);
+  });
+}
+
+/** false = spustiteľný súbor, ktorý sa predvolenou aplikáciou neotvára (s `explain` to aj povie). */
+async function openDefault(file: string, explain = true): Promise<boolean> {
+  try {
+    await invoke("open_file_default", { path: file });
+    return true;
+  } catch (e) {
+    if (e === "file.runnable" && !explain) return false;
+    toast(errorText(e));
+    return e !== "file.runnable";
+  }
+}
+
+async function revealFile(file: string) {
+  await invoke("reveal_file", { path: file }).catch((e) => toast(errorText(e)));
+}
+
+const REVEAL_LABEL: Record<string, Key> = { windows: "menu.revealWindows", macos: "menu.revealMac" };
+
+type MenuItem = [label: string, run: () => void];
+
+/** Malé kontextové menu na pozícii myši. Zavrie ho klik mimo, Escape alebo strata fokusu okna. */
+function popupMenu(x: number, y: number, items: MenuItem[]) {
+  document.querySelector(".ctxmenu")?.remove();
+  const menu = el("div", "ctxmenu");
+  const close = () => {
+    menu.remove();
+    document.removeEventListener("mousedown", outside, true);
+    document.removeEventListener("keydown", esc, true);
+    window.removeEventListener("blur", close);
+  };
+  const outside = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) close();
+  };
+  const esc = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    close();
+  };
+  for (const [label, run] of items) {
+    const b = el("button", "", label);
+    b.onclick = () => {
+      close();
+      run();
+    };
+    menu.append(b);
+  }
+  document.body.append(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  document.addEventListener("mousedown", outside, true);
+  document.addEventListener("keydown", esc, true);
+  window.addEventListener("blur", close);
 }
 
 const resolved = new Map<string, string | null>();
@@ -1265,6 +1365,8 @@ function openSettings() {
       const codexResume = field(t("settings.codexResume"), st.codexResumeCommand, "codex resume");
       const shell = field(t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
       const editor = editorPicker(box, st);
+      const systemExts = field(t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
+      box.append(el("div", "note", t("settings.systemOpenNote")));
       const notifLabel = el("label", "check");
       const notif = el("input");
       notif.type = "checkbox";
@@ -1297,6 +1399,7 @@ function openSettings() {
         const pick = editor();
         if (typeof pick === "string") return toast(pick);
         Object.assign(st, pick);
+        st.systemOpenExts = systemExts.value.trim();
         st.notifications = notif.checked;
         st.autoResume = resume.checked;
         const langChanged = st.language !== language.value;

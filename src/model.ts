@@ -56,6 +56,8 @@ export interface Settings {
   notifications: boolean;
   /** Po spustení aplikácie hneď obnoviť všetky relácie (Claude/Codex pokračujú v tej istej konverzácii). */
   autoResume: boolean;
+  /** Prípony, ktoré Ctrl+klik otvorí v predvolenej aplikácii systému namiesto editora. */
+  systemOpenExts: string;
 }
 
 /** Nainštalovaný editor z backendu (`list_editors`). */
@@ -102,6 +104,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customEditorArgs: "%TARGET_PATH%",
   notifications: true,
   autoResume: true,
+  systemOpenExts: "html htm pdf png jpg jpeg gif webp svg",
 };
 
 /** Predvolené hodnoty z rev 1; ak ich používateľ nezmenil, prejdú na nové. */
@@ -390,4 +393,31 @@ export function matches(s: Session, project: Project | undefined, query: string)
 export function folderName(path: string): string {
   const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
   return parts[parts.length - 1] || path;
+}
+
+/** "html, .PDF  svg" → {"html", "pdf", "svg"} */
+export function parseExtensions(list: string): Set<string> {
+  return new Set(
+    list
+      .toLowerCase()
+      .split(/[\s,;]+/)
+      .map((e) => e.replace(/^\.+/, ""))
+      .filter(Boolean),
+  );
+}
+
+/** Má Ctrl+klik otvoriť súbor v predvolenej aplikácii? Spustiteľné súbory backend aj tak odmietne. */
+export function opensInSystem(path: string, list: string): boolean {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && parseExtensions(list).has(name.slice(dot + 1).toLowerCase());
+}
+
+/** Cesta k súboru relatívne k priečinku projektu, alebo undefined, ak je mimo neho. */
+export function relativePath(root: string, file: string): string | undefined {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const r = norm(root);
+  const f = norm(file);
+  if (f.length <= r.length + 1 || f[r.length] !== "/" || f.slice(0, r.length).toLowerCase() !== r.toLowerCase()) return undefined;
+  return f.slice(r.length + 1);
 }
