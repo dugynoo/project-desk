@@ -1,0 +1,507 @@
+// Preklady UI. Angličtina je predvolená a zároveň určuje sadu kľúčov; ostatné jazyky musia mať všetky.
+
+export type Lang = "en" | "sk" | "cs";
+
+export const LANGUAGES: { id: Lang; label: string }[] = [
+  { id: "en", label: "English" },
+  { id: "sk", label: "Slovenčina" },
+  { id: "cs", label: "Čeština" },
+];
+
+const LOCALE: Record<Lang, string> = { en: "en-GB", sk: "sk-SK", cs: "cs-CZ" };
+
+const en = {
+  // index.html
+  "html.switch": "Find session (Ctrl+K)",
+  "html.templates": "Prompt templates (Ctrl+Shift+T)",
+  "html.grid": "2×2 grid (Ctrl+G)",
+  "html.settings": "Settings",
+  "html.addProject": "+ Add project",
+  "html.resizer": "Drag to resize",
+  "html.empty": "Pick a session on the left or start a new one in a project.",
+  "html.hint":
+    "Ctrl+K sessions · Ctrl+G grid · Ctrl+Shift+F search terminal · Ctrl+Shift+T templates · Ctrl+click opens a file or link",
+
+  "common.cancel": "Cancel",
+  "common.save": "Save",
+  "common.close": "Close",
+  "common.noResults": "Nothing found.",
+
+  "status.sleeping": "Asleep · click to resume",
+  "status.starting": "Starting",
+  "status.running": "Running",
+  "status.idle": "Ready",
+  "status.working": "Working",
+  "status.needs-you": "Needs you",
+  "status.done": "Done",
+  "status.agent-exited": "Agent exited · shell running",
+
+  "app.saveFailed": "Could not save state: {detail}",
+  "app.corrupted": "Saved state was partly damaged ({n} records skipped).",
+  "app.context": " · context {n}",
+
+  "search.placeholder": "Search terminal",
+  "search.none": "none",
+  "search.prev": "Previous (Shift+Enter)",
+  "search.next": "Next (Enter)",
+  "search.close": "Close (Esc)",
+
+  "link.openFailed": "Could not open link: {detail}",
+  "link.urlHint": "Ctrl+click opens the link in your browser",
+  "link.fileHint": "Ctrl+click opens the file in your editor",
+
+  "close.title": "Close terminal?",
+  "close.body": "“{title}” will stop, along with the process running in it. The item disappears from the list.",
+
+  "project.pick": "Choose project folder",
+  "project.exists": "This folder is already in the list.",
+  "project.removeTitle": "Remove project {name}?",
+  "project.removeLive": "Running terminals that will stop: {n}. Project files stay untouched.",
+  "project.removeBody": "Removes the project from the list. Files stay untouched.",
+  "project.removeOk": "Remove",
+  "project.rowTitle": "{path}\nDrag to reorder.",
+  "project.newClaude": "New Claude session",
+  "project.newCodex": "New Codex session",
+  "project.newShell": "New shell",
+  "project.openEditor": "Open in editor",
+  "project.pin": "Pin to top",
+  "project.unpin": "Unpin",
+  "project.remove": "Remove project",
+
+  "session.info": "Session info (right-click)",
+  "session.rename": "Rename",
+  "session.closeTerminal": "Close terminal",
+  "session.removeFromList": "Remove from list",
+
+  "switch.placeholder": "Search by task, project or tool…",
+
+  "info.project": "Project",
+  "info.tool": "Tool",
+  "info.status": "Status",
+  "info.conversation": "Conversation",
+  "info.notDetected": "not detected yet",
+  "info.model": "Model",
+  "info.context": "Context",
+  "info.contextOf": " of {window} ({pct}%)",
+  "info.input": "Input",
+  "info.inputValue": "{fresh} new · {read} from cache · {write} cache write",
+  "info.output": "Output",
+  "info.codexLimit": "Codex limit",
+  "info.limitValue": "{pct}%",
+  "info.limitDays": " over {days} days",
+  "info.tokens": "Tokens",
+  "info.tokensNone": "none yet (they appear after the first reply)",
+  "info.asleep": "session is asleep",
+  "info.created": "Created",
+  "info.lastUsed": "Last used",
+  "info.noteClaude":
+    "Numbers apply to the current conversation. After /clear Claude starts a new conversation, so counting starts over; the old one stays available in claude --resume.",
+  "info.noteCodex": "Numbers come from the Codex session file (counts only, never content).",
+  "info.copyId": "Copy ID",
+  "info.copied": "Copied",
+
+  "tpl.needSession": "Open the session you want to paste the template into first.",
+  "tpl.search": "Search templates…",
+  "tpl.title": "Templates",
+  "tpl.titleProject": "Templates · {name}",
+  "tpl.edit": "Edit",
+  "tpl.delete": "Delete",
+  "tpl.thisProject": "this project",
+  "tpl.allProjects": "all projects",
+  "tpl.empty": "No templates yet. Create the first one.",
+  "tpl.new": "+ New template",
+  "tpl.note": "Enter pastes the template into the active session. Templates marked ⏎ are sent right away.",
+  "tpl.editTitle": "Edit template",
+  "tpl.newTitle": "New template",
+  "tpl.name": "Name",
+  "tpl.namePlaceholder": "e.g. Review the last commit",
+  "tpl.text": "Text",
+  "tpl.textPlaceholder": "Text to paste into the terminal",
+  "tpl.scope": "Applies to",
+  "tpl.only": "Only {name}",
+  "tpl.allScope": "All projects",
+  "tpl.send": "Send right after pasting (Enter)",
+  "tpl.invalid": "A template needs both a name and text.",
+
+  "editor.label": "Editor for ↗ and Ctrl+click on a file",
+  "editor.searching": "Looking for installed editors…",
+  "editor.program": "Program",
+  "editor.browse": "Browse…",
+  "editor.args": "Arguments",
+  "editor.argsNote":
+    "%TARGET_PATH% is replaced with the file or folder path, %LINE% with the line number. Most programs only need %TARGET_PATH%. The program runs directly, without a shell.",
+  "editor.pickTitle": "Choose the editor program",
+  "editor.programs": "Programs",
+  "editor.notFound": "{id} (not found)",
+  "editor.other": "Other program…",
+  "editor.lineNote": "Cursor, VS Code, Windsurf, Zed, Sublime, JetBrains IDEs and Notepad++ open the file at the line.",
+  "editor.noneFound": "No known editor found. Pick a program with “Other program…”.",
+
+  "settings.title": "Settings",
+  "settings.language": "Language",
+  "settings.claude": "Claude command",
+  "settings.codex": "Codex command",
+  "settings.codexResume": "Codex resume command",
+  "settings.shell": "Shell (empty = default)",
+  "settings.notifications": "System notifications when an agent finishes or needs you",
+  "settings.autoResume": "Resume all sessions when the app starts",
+  "settings.hooksOn": "Claude status comes from hooks (local endpoint).",
+  "settings.hooksOff": "The hook server is not running, so Claude status is unavailable.",
+  "settings.footer": "Saved in {file}. Command changes apply to new launches.",
+
+  // Chyby z backendu: kód `oblasť.názov`, voliteľne `: detail`.
+  "err.editor.needProgram": "Choose a program for the custom editor.",
+  "err.editor.programMissing": "Program {detail} does not exist.",
+  "err.editor.windowsExe": "On Windows, choose an .exe file (.cmd and .bat scripts cannot run without a shell).",
+  "err.editor.noneInstalled": "No editor found. Choose one in ⚙ Settings.",
+  "err.editor.missing": "The selected editor was not found. Choose another one in ⚙ Settings.",
+  "err.editor.unknown": "Unknown editor.",
+  "err.editor.launchFailed": "Could not start the editor: {detail}",
+  "err.project.missingFolder": "Project folder does not exist: {detail}",
+  "err.pty.alreadyRunning": "A terminal for this session is already running.",
+  "err.pty.openFailed": "Could not open a PTY: {detail}",
+  "err.pty.shellFailed": "Could not start the shell: {detail}",
+  "err.pty.notRunning": "The terminal is not running.",
+};
+
+export type Key = keyof typeof en;
+
+const sk: Record<Key, string> = {
+  "html.switch": "Nájsť reláciu (Ctrl+K)",
+  "html.templates": "Šablóny promptov (Ctrl+Shift+T)",
+  "html.grid": "Mriežka 2×2 (Ctrl+G)",
+  "html.settings": "Nastavenia",
+  "html.addProject": "+ Pridať projekt",
+  "html.resizer": "Ťahaj pre zmenu šírky",
+  "html.empty": "Vyber reláciu vľavo alebo vytvor novú pri projekte.",
+  "html.hint":
+    "Ctrl+K relácie · Ctrl+G mriežka · Ctrl+Shift+F hľadať v termináli · Ctrl+Shift+T šablóny · Ctrl+klik otvorí súbor alebo odkaz",
+
+  "common.cancel": "Zrušiť",
+  "common.save": "Uložiť",
+  "common.close": "Zavrieť",
+  "common.noResults": "Nič sa nenašlo.",
+
+  "status.sleeping": "Spí · klikni na pokračovanie",
+  "status.starting": "Spúšťa sa",
+  "status.running": "Beží",
+  "status.idle": "Pripravený",
+  "status.working": "Pracuje",
+  "status.needs-you": "Čaká na teba",
+  "status.done": "Hotovo",
+  "status.agent-exited": "Agent skončil · shell beží",
+
+  "app.saveFailed": "Stav sa nepodarilo uložiť: {detail}",
+  "app.corrupted": "Uložený stav bol čiastočne poškodený (vynechané záznamy: {n}).",
+  "app.context": " · kontext {n}",
+
+  "search.placeholder": "Hľadať v termináli",
+  "search.none": "nič",
+  "search.prev": "Predchádzajúci (Shift+Enter)",
+  "search.next": "Ďalší (Enter)",
+  "search.close": "Zavrieť (Esc)",
+
+  "link.openFailed": "Odkaz sa nepodarilo otvoriť: {detail}",
+  "link.urlHint": "Ctrl+klik otvorí odkaz v prehliadači",
+  "link.fileHint": "Ctrl+klik otvorí súbor v editore",
+
+  "close.title": "Zavrieť terminál?",
+  "close.body": "„{title}“ sa ukončí vrátane procesu, ktorý v ňom beží. Položka zmizne zo zoznamu.",
+
+  "project.pick": "Vyber priečinok projektu",
+  "project.exists": "Tento priečinok už v zozname je.",
+  "project.removeTitle": "Odobrať projekt {name}?",
+  "project.removeLive": "Bežiace terminály, ktoré sa ukončia: {n}. Súbory projektu ostanú nedotknuté.",
+  "project.removeBody": "Odstráni projekt zo zoznamu. Súbory ostanú nedotknuté.",
+  "project.removeOk": "Odobrať",
+  "project.rowTitle": "{path}\nŤahaním zmeníš poradie.",
+  "project.newClaude": "Nová Claude relácia",
+  "project.newCodex": "Nová Codex relácia",
+  "project.newShell": "Nový shell",
+  "project.openEditor": "Otvoriť v editore",
+  "project.pin": "Pripnúť hore",
+  "project.unpin": "Odopnúť",
+  "project.remove": "Odobrať projekt",
+
+  "session.info": "Info o relácii (pravý klik)",
+  "session.rename": "Premenovať",
+  "session.closeTerminal": "Zavrieť terminál",
+  "session.removeFromList": "Odstrániť zo zoznamu",
+
+  "switch.placeholder": "Hľadaj podľa úlohy, projektu alebo nástroja…",
+
+  "info.project": "Projekt",
+  "info.tool": "Nástroj",
+  "info.status": "Stav",
+  "info.conversation": "Konverzácia",
+  "info.notDetected": "zatiaľ nezistená",
+  "info.model": "Model",
+  "info.context": "Kontext",
+  "info.contextOf": " z {window} ({pct} %)",
+  "info.input": "Vstup",
+  "info.inputValue": "{fresh} nových · {read} z cache · {write} zápis do cache",
+  "info.output": "Výstup",
+  "info.codexLimit": "Limit Codexu",
+  "info.limitValue": "{pct} %",
+  "info.limitDays": " za {days} dní",
+  "info.tokens": "Tokeny",
+  "info.tokensNone": "zatiaľ žiadne (pribudnú po prvej odpovedi)",
+  "info.asleep": "relácia spí",
+  "info.created": "Vytvorená",
+  "info.lastUsed": "Naposledy použitá",
+  "info.noteClaude":
+    "Čísla platia pre aktuálnu konverzáciu. Po /clear začína Claude novú konverzáciu, takže sa počíta odznova; stará ostáva v claude --resume.",
+  "info.noteCodex": "Čísla sú z Codex session súboru (iba počty, nie obsah).",
+  "info.copyId": "Kopírovať ID",
+  "info.copied": "Skopírované",
+
+  "tpl.needSession": "Najprv otvor reláciu, do ktorej sa má šablóna vložiť.",
+  "tpl.search": "Hľadaj šablónu…",
+  "tpl.title": "Šablóny",
+  "tpl.titleProject": "Šablóny · {name}",
+  "tpl.edit": "Upraviť",
+  "tpl.delete": "Zmazať",
+  "tpl.thisProject": "tento projekt",
+  "tpl.allProjects": "všetky projekty",
+  "tpl.empty": "Zatiaľ žiadne šablóny. Vytvor prvú.",
+  "tpl.new": "+ Nová šablóna",
+  "tpl.note": "Enter vloží šablónu do aktívnej relácie. Šablóny s ⏎ sa hneď aj odošlú.",
+  "tpl.editTitle": "Upraviť šablónu",
+  "tpl.newTitle": "Nová šablóna",
+  "tpl.name": "Názov",
+  "tpl.namePlaceholder": "napr. Review posledného commitu",
+  "tpl.text": "Text",
+  "tpl.textPlaceholder": "Text, ktorý sa vloží do terminálu",
+  "tpl.scope": "Platí pre",
+  "tpl.only": "Iba {name}",
+  "tpl.allScope": "Všetky projekty",
+  "tpl.send": "Po vložení hneď odoslať (Enter)",
+  "tpl.invalid": "Šablóna potrebuje názov aj text.",
+
+  "editor.label": "Editor pre ↗ a Ctrl+klik na súbor",
+  "editor.searching": "Hľadám nainštalované editory…",
+  "editor.program": "Program",
+  "editor.browse": "Vybrať…",
+  "editor.args": "Argumenty",
+  "editor.argsNote":
+    "%TARGET_PATH% sa nahradí cestou k súboru alebo priečinku, %LINE% číslom riadku. Väčšine programov stačí %TARGET_PATH%. Program sa spúšťa priamo, bez shellu.",
+  "editor.pickTitle": "Vyber program editora",
+  "editor.programs": "Programy",
+  "editor.notFound": "{id} (nenájdený)",
+  "editor.other": "Iný program…",
+  "editor.lineNote": "Na riadok skočí Cursor, VS Code, Windsurf, Zed, Sublime, JetBrains IDE a Notepad++.",
+  "editor.noneFound": "Nenašiel som žiadny známy editor. Vyber program cez „Iný program…“.",
+
+  "settings.title": "Nastavenia",
+  "settings.language": "Jazyk",
+  "settings.claude": "Príkaz pre Claude",
+  "settings.codex": "Príkaz pre Codex",
+  "settings.codexResume": "Príkaz pre pokračovanie Codexu",
+  "settings.shell": "Shell (prázdne = predvolený)",
+  "settings.notifications": "Systémové notifikácie, keď agent skončí alebo čaká",
+  "settings.autoResume": "Po spustení aplikácie obnoviť všetky relácie",
+  "settings.hooksOn": "Stav Claude sa číta z hookov (lokálny endpoint).",
+  "settings.hooksOff": "Hook server nebeží, stav Claude nebude dostupný.",
+  "settings.footer": "Uložené v {file}. Zmena príkazov platí pre nové spustenia.",
+
+  "err.editor.needProgram": "Vyber program pre vlastný editor.",
+  "err.editor.programMissing": "Program {detail} neexistuje.",
+  "err.editor.windowsExe": "Na Windows vyber .exe súbor (skripty .cmd a .bat nejde spustiť bez shellu).",
+  "err.editor.noneInstalled": "Nenašiel som žiadny editor. Vyber ho v ⚙ Nastaveniach.",
+  "err.editor.missing": "Vybraný editor sa nenašiel. Vyber iný v ⚙ Nastaveniach.",
+  "err.editor.unknown": "Neznámy editor.",
+  "err.editor.launchFailed": "Editor sa nepodarilo spustiť: {detail}",
+  "err.project.missingFolder": "Priečinok projektu neexistuje: {detail}",
+  "err.pty.alreadyRunning": "Terminál pre túto reláciu už beží.",
+  "err.pty.openFailed": "Nepodarilo sa otvoriť PTY: {detail}",
+  "err.pty.shellFailed": "Nepodarilo sa spustiť shell: {detail}",
+  "err.pty.notRunning": "Terminál nebeží.",
+};
+
+const cs: Record<Key, string> = {
+  "html.switch": "Najít relaci (Ctrl+K)",
+  "html.templates": "Šablony promptů (Ctrl+Shift+T)",
+  "html.grid": "Mřížka 2×2 (Ctrl+G)",
+  "html.settings": "Nastavení",
+  "html.addProject": "+ Přidat projekt",
+  "html.resizer": "Táhni pro změnu šířky",
+  "html.empty": "Vyber relaci vlevo nebo vytvoř novou u projektu.",
+  "html.hint":
+    "Ctrl+K relace · Ctrl+G mřížka · Ctrl+Shift+F hledat v terminálu · Ctrl+Shift+T šablony · Ctrl+klik otevře soubor nebo odkaz",
+
+  "common.cancel": "Zrušit",
+  "common.save": "Uložit",
+  "common.close": "Zavřít",
+  "common.noResults": "Nic se nenašlo.",
+
+  "status.sleeping": "Spí · klikni pro pokračování",
+  "status.starting": "Spouští se",
+  "status.running": "Běží",
+  "status.idle": "Připraveno",
+  "status.working": "Pracuje",
+  "status.needs-you": "Čeká na tebe",
+  "status.done": "Hotovo",
+  "status.agent-exited": "Agent skončil · shell běží",
+
+  "app.saveFailed": "Stav se nepodařilo uložit: {detail}",
+  "app.corrupted": "Uložený stav byl částečně poškozen (vynechané záznamy: {n}).",
+  "app.context": " · kontext {n}",
+
+  "search.placeholder": "Hledat v terminálu",
+  "search.none": "nic",
+  "search.prev": "Předchozí (Shift+Enter)",
+  "search.next": "Další (Enter)",
+  "search.close": "Zavřít (Esc)",
+
+  "link.openFailed": "Odkaz se nepodařilo otevřít: {detail}",
+  "link.urlHint": "Ctrl+klik otevře odkaz v prohlížeči",
+  "link.fileHint": "Ctrl+klik otevře soubor v editoru",
+
+  "close.title": "Zavřít terminál?",
+  "close.body": "„{title}“ se ukončí včetně procesu, který v něm běží. Položka zmizí ze seznamu.",
+
+  "project.pick": "Vyber složku projektu",
+  "project.exists": "Tato složka už v seznamu je.",
+  "project.removeTitle": "Odebrat projekt {name}?",
+  "project.removeLive": "Běžící terminály, které se ukončí: {n}. Soubory projektu zůstanou nedotčené.",
+  "project.removeBody": "Odebere projekt ze seznamu. Soubory zůstanou nedotčené.",
+  "project.removeOk": "Odebrat",
+  "project.rowTitle": "{path}\nTažením změníš pořadí.",
+  "project.newClaude": "Nová Claude relace",
+  "project.newCodex": "Nová Codex relace",
+  "project.newShell": "Nový shell",
+  "project.openEditor": "Otevřít v editoru",
+  "project.pin": "Připnout nahoru",
+  "project.unpin": "Odepnout",
+  "project.remove": "Odebrat projekt",
+
+  "session.info": "Info o relaci (pravý klik)",
+  "session.rename": "Přejmenovat",
+  "session.closeTerminal": "Zavřít terminál",
+  "session.removeFromList": "Odebrat ze seznamu",
+
+  "switch.placeholder": "Hledej podle úkolu, projektu nebo nástroje…",
+
+  "info.project": "Projekt",
+  "info.tool": "Nástroj",
+  "info.status": "Stav",
+  "info.conversation": "Konverzace",
+  "info.notDetected": "zatím nezjištěna",
+  "info.model": "Model",
+  "info.context": "Kontext",
+  "info.contextOf": " z {window} ({pct} %)",
+  "info.input": "Vstup",
+  "info.inputValue": "{fresh} nových · {read} z cache · {write} zápis do cache",
+  "info.output": "Výstup",
+  "info.codexLimit": "Limit Codexu",
+  "info.limitValue": "{pct} %",
+  "info.limitDays": " za {days} dní",
+  "info.tokens": "Tokeny",
+  "info.tokensNone": "zatím žádné (přibudou po první odpovědi)",
+  "info.asleep": "relace spí",
+  "info.created": "Vytvořena",
+  "info.lastUsed": "Naposledy použita",
+  "info.noteClaude":
+    "Čísla platí pro aktuální konverzaci. Po /clear začne Claude novou konverzaci, takže se počítá znovu; stará zůstává v claude --resume.",
+  "info.noteCodex": "Čísla jsou ze session souboru Codexu (jen počty, ne obsah).",
+  "info.copyId": "Kopírovat ID",
+  "info.copied": "Zkopírováno",
+
+  "tpl.needSession": "Nejdřív otevři relaci, do které se má šablona vložit.",
+  "tpl.search": "Hledej šablonu…",
+  "tpl.title": "Šablony",
+  "tpl.titleProject": "Šablony · {name}",
+  "tpl.edit": "Upravit",
+  "tpl.delete": "Smazat",
+  "tpl.thisProject": "tento projekt",
+  "tpl.allProjects": "všechny projekty",
+  "tpl.empty": "Zatím žádné šablony. Vytvoř první.",
+  "tpl.new": "+ Nová šablona",
+  "tpl.note": "Enter vloží šablonu do aktivní relace. Šablony s ⏎ se hned i odešlou.",
+  "tpl.editTitle": "Upravit šablonu",
+  "tpl.newTitle": "Nová šablona",
+  "tpl.name": "Název",
+  "tpl.namePlaceholder": "např. Review posledního commitu",
+  "tpl.text": "Text",
+  "tpl.textPlaceholder": "Text, který se vloží do terminálu",
+  "tpl.scope": "Platí pro",
+  "tpl.only": "Jen {name}",
+  "tpl.allScope": "Všechny projekty",
+  "tpl.send": "Po vložení hned odeslat (Enter)",
+  "tpl.invalid": "Šablona potřebuje název i text.",
+
+  "editor.label": "Editor pro ↗ a Ctrl+klik na soubor",
+  "editor.searching": "Hledám nainstalované editory…",
+  "editor.program": "Program",
+  "editor.browse": "Vybrat…",
+  "editor.args": "Argumenty",
+  "editor.argsNote":
+    "%TARGET_PATH% se nahradí cestou k souboru nebo složce, %LINE% číslem řádku. Většině programů stačí %TARGET_PATH%. Program se spouští přímo, bez shellu.",
+  "editor.pickTitle": "Vyber program editoru",
+  "editor.programs": "Programy",
+  "editor.notFound": "{id} (nenalezen)",
+  "editor.other": "Jiný program…",
+  "editor.lineNote": "Na řádek skočí Cursor, VS Code, Windsurf, Zed, Sublime, JetBrains IDE a Notepad++.",
+  "editor.noneFound": "Nenašel jsem žádný známý editor. Vyber program přes „Jiný program…“.",
+
+  "settings.title": "Nastavení",
+  "settings.language": "Jazyk",
+  "settings.claude": "Příkaz pro Claude",
+  "settings.codex": "Příkaz pro Codex",
+  "settings.codexResume": "Příkaz pro pokračování Codexu",
+  "settings.shell": "Shell (prázdné = výchozí)",
+  "settings.notifications": "Systémová oznámení, když agent skončí nebo čeká",
+  "settings.autoResume": "Po spuštění aplikace obnovit všechny relace",
+  "settings.hooksOn": "Stav Claude se čte z hooků (lokální endpoint).",
+  "settings.hooksOff": "Hook server neběží, stav Claude nebude dostupný.",
+  "settings.footer": "Uloženo v {file}. Změna příkazů platí pro nová spuštění.",
+
+  "err.editor.needProgram": "Vyber program pro vlastní editor.",
+  "err.editor.programMissing": "Program {detail} neexistuje.",
+  "err.editor.windowsExe": "Na Windows vyber soubor .exe (skripty .cmd a .bat nejde spustit bez shellu).",
+  "err.editor.noneInstalled": "Nenašel jsem žádný editor. Vyber ho v ⚙ Nastavení.",
+  "err.editor.missing": "Vybraný editor se nenašel. Vyber jiný v ⚙ Nastavení.",
+  "err.editor.unknown": "Neznámý editor.",
+  "err.editor.launchFailed": "Editor se nepodařilo spustit: {detail}",
+  "err.project.missingFolder": "Složka projektu neexistuje: {detail}",
+  "err.pty.alreadyRunning": "Terminál pro tuto relaci už běží.",
+  "err.pty.openFailed": "Nepodařilo se otevřít PTY: {detail}",
+  "err.pty.shellFailed": "Nepodařilo se spustit shell: {detail}",
+  "err.pty.notRunning": "Terminál neběží.",
+};
+
+const DICTS: Record<Lang, Record<Key, string>> = { en, sk, cs };
+
+let current: Lang = "en";
+
+export const isLang = (v: unknown): v is Lang => v === "en" || v === "sk" || v === "cs";
+
+export function setLang(lang: string) {
+  current = isLang(lang) ? lang : "en";
+}
+
+export const lang = () => current;
+export const locale = () => LOCALE[current];
+
+/** Preklad s dosadením `{premenných}`. */
+export function t(key: Key, vars: Record<string, string | number> = {}): string {
+  return DICTS[current][key].replace(/\{(\w+)\}/g, (m, name: string) => (name in vars ? String(vars[name]) : m));
+}
+
+/** Chyba z backendu (`oblasť.názov` alebo `oblasť.názov: detail`) v jazyku UI; iný text ostane, ako je. */
+export function errorText(e: unknown): string {
+  const text = String(e);
+  const m = /^([a-z]+\.[A-Za-z]+)(?:: ([\s\S]*))?$/.exec(text);
+  const key = m && (`err.${m[1]}` as Key);
+  return key && key in en ? t(key, { detail: m![2] ?? "" }) : text;
+}
+
+/** Texty v index.html označené `data-i18n` (obsah) a `data-i18n-title` (tooltip). */
+export function translateDocument(root: ParentNode = document) {
+  document.documentElement.lang = current;
+  root.querySelectorAll<HTMLElement>("[data-i18n]").forEach((e) => (e.textContent = t(e.dataset.i18n as Key)));
+  root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((e) => (e.title = t(e.dataset.i18nTitle as Key)));
+  root
+    .querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]")
+    .forEach((e) => (e.placeholder = t(e.dataset.i18nPlaceholder as Key)));
+}

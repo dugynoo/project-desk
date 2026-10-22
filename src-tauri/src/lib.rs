@@ -75,7 +75,7 @@ fn pty_spawn(
     on_output: Channel<String>,
 ) -> Result<(), String> {
     if !std::path::Path::new(&args.cwd).is_dir() {
-        return Err(format!("Priečinok projektu neexistuje: {}", args.cwd));
+        return Err(format!("project.missingFolder: {}", args.cwd));
     }
     let mut env = vec![(hooks::SESSION_ENV.to_owned(), args.id.clone())];
     if let Some(h) = &state.hooks {
@@ -184,7 +184,7 @@ async fn find_codex_session(cwd: String, since_ms: u64, exclude: Vec<String>) ->
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(e) = job::kill_children_on_exit() {
-        eprintln!("Poistka proti sirotám sa nezapla, pri páde môžu ostať bežať terminály: {e}");
+        eprintln!("Orphan guard is off, terminals may outlive a crash: {e}");
     }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -195,7 +195,7 @@ pub fn run() {
             let hooks = match hooks::start(app.handle().clone(), &config_dir) {
                 Ok(h) => Some(h),
                 Err(e) => {
-                    eprintln!("Hook server sa nespustil, stav agentov nebude dostupný: {e}");
+                    eprintln!("Hook server did not start, agent status is unavailable: {e}");
                     None
                 }
             };
@@ -223,7 +223,7 @@ pub fn run() {
             agent_poll
         ])
         .build(tauri::generate_context!())
-        .expect("Project Desk sa nepodarilo spustiť");
+        .expect("Project Desk failed to start");
 
     app.run(|handle, event| {
         // Pri zatvorení okna ukončíme všetky shelly, nech po nás neostanú siroty.

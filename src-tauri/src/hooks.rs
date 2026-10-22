@@ -68,7 +68,7 @@ fn header<'a>(req: &'a tiny_http::Request, name: &'static str) -> Option<&'a str
 
 pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
     let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("Neznámy port hook servera.")?;
+    let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("unknown hook server port")?;
     let token = uuid::Uuid::new_v4().simple().to_string();
 
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

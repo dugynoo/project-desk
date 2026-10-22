@@ -46,6 +46,8 @@ export interface Settings {
   codexCommand: string;
   codexResumeCommand: string;
   shell: string;
+  /** Jazyk UI: "en" | "sk" | "cs". */
+  language: string;
   /** ID nájdeného editora, "" = prvý nájdený, "custom" = vlastný program. */
   editorId: string;
   customEditorPath: string;
@@ -94,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
   codexCommand: "codex --dangerously-bypass-approvals-and-sandbox",
   codexResumeCommand: "codex resume --dangerously-bypass-approvals-and-sandbox",
   shell: "",
+  language: "en",
   editorId: "",
   customEditorPath: "",
   customEditorArgs: "%TARGET_PATH%",
@@ -178,6 +181,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
       const v = data.settings[key];
       if (typeof v === typeof DEFAULT_SETTINGS[key]) (state.settings as unknown as Record<string, unknown>)[key] = v;
     }
+    if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
     if (typeof data.settings.editorId !== "string" && typeof data.settings.editorCommand === "string") {
       state.settings.editorId = migrateEditorCommand(data.settings.editorCommand);
     }
@@ -244,17 +248,6 @@ export type Status =
   | "needs-you"
   | "done"
   | "agent-exited";
-
-export const STATUS_LABEL: Record<Status, string> = {
-  sleeping: "Spí · klikni na pokračovanie",
-  starting: "Spúšťa sa",
-  running: "Beží",
-  idle: "Pripravený",
-  working: "Pracuje",
-  "needs-you": "Čaká na teba",
-  done: "Hotovo",
-  "agent-exited": "Agent skončil · shell beží",
-};
 
 export interface AgentEvent {
   deskSessionId: string;

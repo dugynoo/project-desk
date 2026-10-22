@@ -42,9 +42,9 @@ import {
   sessionsOf,
   type Status,
   statusAfter,
-  STATUS_LABEL,
   templatesFor,
 } from "./model.ts";
+import { errorText, type Key, LANGUAGES, locale, setLang, t, translateDocument } from "./i18n.ts";
 
 interface AppInfo {
   platform: string;
@@ -91,7 +91,9 @@ let saveTimer: number | undefined;
 function save() {
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
-    invoke("save_state", { json: JSON.stringify(state, null, 2) }).catch((e) => toast(`Stav sa nepodarilo uložiť: ${e}`));
+    invoke("save_state", { json: JSON.stringify(state, null, 2) }).catch((e) =>
+      toast(t("app.saveFailed", { detail: String(e) })),
+    );
   }, 250);
 }
 
@@ -106,8 +108,9 @@ const statsOf = (s: Session) => {
 };
 const contextLabel = (s: Session) => {
   const ctx = statsOf(s)?.contextTokens;
-  return ctx ? ` · kontext ${formatTokens(ctx)}` : "";
+  return ctx ? t("app.context", { n: formatTokens(ctx) }) : "";
 };
+const statusLabel = (s: Status) => t(`status.${s}` as Key);
 
 function toast(msg: string) {
   const t = el("div", "toast", msg);
@@ -140,7 +143,7 @@ async function notify(id: string, status: Status) {
     if (!ok) ok = (await requestPermission()) === "granted";
     if (!ok) return;
     const p = project(s.projectId);
-    sendNotification({ title: `${STATUS_LABEL[status]} · ${s.title}`, body: `${p?.name ?? ""} · ${PROVIDER_LABEL[s.provider]}` });
+    sendNotification({ title: `${statusLabel(status)} · ${s.title}`, body: `${p?.name ?? ""} · ${PROVIDER_LABEL[s.provider]}` });
   } catch {
     // Notifikácie sú bonus; keď nejdú, ostane bodka v zozname.
   }
@@ -210,7 +213,7 @@ function renderPaneHeads() {
     const s = session(id);
     if (!s) continue;
     const p = project(s.projectId);
-    rt.head.textContent = `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${STATUS_LABEL[statusOf(id)]}${contextLabel(s)}`;
+    rt.head.textContent = `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`;
   }
 }
 
@@ -303,7 +306,9 @@ function createSearchBar(term: Terminal, search: SearchAddon): HTMLElement {
   bar.hidden = true;
   const input = el("input");
   input.type = "text";
-  input.placeholder = "Hľadať v termináli";
+  // data-i18n-* nech sa texty preložia aj v už otvorených termináloch po zmene jazyka.
+  input.dataset.i18nPlaceholder = "search.placeholder";
+  input.placeholder = t("search.placeholder");
   input.spellcheck = false;
   const count = el("span", "count");
   const close = () => {
@@ -317,7 +322,7 @@ function createSearchBar(term: Terminal, search: SearchAddon): HTMLElement {
     else search.findNext(input.value, { ...SEARCH_OPTIONS, incremental });
   };
   search.onDidChangeResults(({ resultIndex, resultCount }) => {
-    count.textContent = !input.value ? "" : resultCount ? `${resultIndex + 1}/${resultCount}` : "nič";
+    count.textContent = !input.value ? "" : resultCount ? `${resultIndex + 1}/${resultCount}` : t("search.none");
   });
   input.addEventListener("input", () => {
     if (input.value) find(false, true);
@@ -332,12 +337,17 @@ function createSearchBar(term: Terminal, search: SearchAddon): HTMLElement {
     if (e.key === "Enter") find(e.shiftKey);
     else if (e.key === "Escape") close();
   });
+  const button = (label: string, key: Key, onClick: () => void) => {
+    const b = iconButton(label, t(key), onClick);
+    b.dataset.i18nTitle = key;
+    return b;
+  };
   bar.append(
     input,
     count,
-    iconButton("↑", "Predchádzajúci (Shift+Enter)", () => find(true)),
-    iconButton("↓", "Ďalší (Enter)", () => find(false)),
-    iconButton("✕", "Zavrieť (Esc)", close),
+    button("↑", "search.prev", () => find(true)),
+    button("↓", "search.next", () => find(false)),
+    button("✕", "search.close", close),
   );
   return bar;
 }
@@ -353,15 +363,15 @@ function openSearch(rt: Runtime) {
 
 /** Ctrl+klik na URL otvorí prehliadač, na cestu k súboru editor (aj na riadku). */
 function setupLinks(rt: Runtime, s: Session) {
-  const hint = (text: string) => () => (rt.host.title = text);
+  const hint = (key: Key) => () => (rt.host.title = t(key));
   const leave = () => (rt.host.title = "");
   const wantsOpen = (e: MouseEvent) => e.ctrlKey || e.metaKey;
   rt.term.loadAddon(
     new WebLinksAddon(
       (e, uri) => {
-        if (wantsOpen(e)) void openUrl(uri).catch((err) => toast(`Odkaz sa nepodarilo otvoriť: ${err}`));
+        if (wantsOpen(e)) void openUrl(uri).catch((err) => toast(t("link.openFailed", { detail: String(err) })));
       },
-      { hover: hint("Ctrl+klik otvorí odkaz v prehliadači"), leave },
+      { hover: hint("link.urlHint"), leave },
     ),
   );
   rt.term.registerLinkProvider({
@@ -381,7 +391,7 @@ function setupLinks(rt: Runtime, s: Session) {
               activate: (e: MouseEvent) => {
                 if (wantsOpen(e)) openEditor(file, r.line);
               },
-              hover: hint("Ctrl+klik otvorí súbor v editore"),
+              hover: hint("link.fileHint"),
               leave,
             },
           ];
@@ -452,7 +462,7 @@ async function start(s: Session) {
     rt.running = false;
     disposeRuntime(s.id);
     statuses.delete(s.id);
-    toast(String(e));
+    toast(errorText(e));
     layout();
     renderSidebar();
     return;
@@ -588,10 +598,10 @@ function createSession(p: Project, provider: Provider) {
 async function closeSession(s: Session) {
   const rt = runtimes.get(s.id);
   if (rt?.running) {
-    const ok = await confirmBox("Zavrieť terminál?", `„${s.title}“ sa ukončí vrátane procesu, ktorý v ňom beží. Položka zmizne zo zoznamu.`, "Zavrieť");
+    const ok = await confirmBox(t("close.title"), t("close.body", { title: s.title }), t("common.close"));
     if (!ok) return;
     rt.closing = true;
-    await invoke("pty_kill", { id: s.id }).catch((e) => toast(String(e)));
+    await invoke("pty_kill", { id: s.id }).catch((e) => toast(errorText(e)));
     return; // onExit uprace
   }
   state.sessions = state.sessions.filter((x) => x.id !== s.id);
@@ -645,9 +655,9 @@ function renameInput(): HTMLInputElement {
 }
 
 async function addProject() {
-  const picked = await openDialog({ directory: true, multiple: false, title: "Vyber priečinok projektu" });
+  const picked = await openDialog({ directory: true, multiple: false, title: t("project.pick") });
   if (typeof picked !== "string") return;
-  if (state.projects.some((p) => p.path.toLowerCase() === picked.toLowerCase())) return toast("Tento priečinok už v zozname je.");
+  if (state.projects.some((p) => p.path.toLowerCase() === picked.toLowerCase())) return toast(t("project.exists"));
   state.projects.push({ id: crypto.randomUUID(), name: folderName(picked), path: picked });
   save();
   renderSidebar();
@@ -656,10 +666,8 @@ async function addProject() {
 async function removeProject(p: Project) {
   const all = sessionsOf(state, p.id);
   const live = all.filter((s) => runtimes.get(s.id)?.running);
-  const body = live.length
-    ? `Ukončí sa ${live.length} bežiacich terminálov. Súbory projektu ostanú nedotknuté.`
-    : "Odstráni projekt zo zoznamu. Súbory ostanú nedotknuté.";
-  if (!(await confirmBox(`Odobrať projekt ${p.name}?`, body, "Odobrať"))) return;
+  const body = live.length ? t("project.removeLive", { n: live.length }) : t("project.removeBody");
+  if (!(await confirmBox(t("project.removeTitle", { name: p.name }), body, t("project.removeOk")))) return;
   for (const s of live) await invoke("pty_kill", { id: s.id }).catch(() => {});
   state.sessions = state.sessions.filter((s) => s.projectId !== p.id);
   state.templates = state.templates.filter((t) => t.projectId !== p.id);
@@ -671,7 +679,7 @@ async function removeProject(p: Project) {
 function openEditor(path: string, line?: number) {
   const { editorId: id, customEditorPath: customPath, customEditorArgs: customArgs } = state.settings;
   invoke("open_in_editor", { editor: { id, customPath, customArgs }, path, line: line ?? null }).catch((e) =>
-    toast(String(e)),
+    toast(errorText(e)),
   );
 }
 
@@ -752,19 +760,19 @@ function renderSidebar() {
     const box = el("div", "project");
     box.dataset.id = p.id;
     const row = el("div", "project-row");
-    row.title = `${p.path}\nŤahaním zmeníš poradie.`;
+    row.title = t("project.rowTitle", { path: p.path });
     const actions = el("span", "row-actions");
     actions.append(
-      iconButton(PROVIDER_ICON.claude, "Nová Claude relácia", () => void createSession(p, "claude")),
-      iconButton(PROVIDER_ICON.codex, "Nová Codex relácia", () => void createSession(p, "codex")),
-      iconButton(PROVIDER_ICON.shell, "Nový Shell", () => void createSession(p, "shell")),
-      iconButton("↗", "Otvoriť v editore", () => openEditor(p.path)),
-      iconButton(p.pinned ? "★" : "☆", p.pinned ? "Odopnúť" : "Pripnúť hore", () => {
+      iconButton(PROVIDER_ICON.claude, t("project.newClaude"), () => void createSession(p, "claude")),
+      iconButton(PROVIDER_ICON.codex, t("project.newCodex"), () => void createSession(p, "codex")),
+      iconButton(PROVIDER_ICON.shell, t("project.newShell"), () => void createSession(p, "shell")),
+      iconButton("↗", t("project.openEditor"), () => openEditor(p.path)),
+      iconButton(p.pinned ? "★" : "☆", t(p.pinned ? "project.unpin" : "project.pin"), () => {
         p.pinned = !p.pinned;
         save();
         renderSidebar();
       }),
-      iconButton("✕", "Odobrať projekt", () => void removeProject(p)),
+      iconButton("✕", t("project.remove"), () => void removeProject(p)),
     );
     const name = el("span", "name", p.name);
     if (p.pinned) name.prepend(el("span", "pin", "★ "));
@@ -793,12 +801,16 @@ function renderSidebar() {
         } else {
           body.append(el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`));
         }
-        body.append(el("div", "sub", `${STATUS_LABEL[st]}${contextLabel(s)}`));
+        body.append(el("div", "sub", `${statusLabel(st)}${contextLabel(s)}`));
         const actions = el("span", "row-actions");
         actions.append(
-          iconButton("ⓘ", "Info o relácii (pravý klik)", () => showInfo(s)),
-          iconButton("✎", "Premenovať", () => startRename(s)),
-          iconButton("✕", runtimes.get(s.id)?.running ? "Zavrieť terminál" : "Odstrániť zo zoznamu", () => void closeSession(s)),
+          iconButton("ⓘ", t("session.info"), () => showInfo(s)),
+          iconButton("✎", t("session.rename"), () => startRename(s)),
+          iconButton(
+            "✕",
+            t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"),
+            () => void closeSession(s),
+          ),
         );
         item.append(el("span", `dot ${st}`), body, actions);
         item.addEventListener("click", () => select(s.id));
@@ -860,7 +872,7 @@ function confirmBox(heading: string, text: string, okLabel: string): Promise<boo
     modal(
       (box, close) => {
         const ok = el("button", "danger", okLabel);
-        const cancel = el("button", "", "Zrušiť");
+        const cancel = el("button", "", t("common.cancel"));
         const actions = el("div", "actions");
         actions.append(cancel, ok);
         box.append(el("h3", "", heading), el("p", "", text), actions);
@@ -881,7 +893,7 @@ function quickSwitch() {
     (box, close) => {
       const input = el("input");
       input.type = "text";
-      input.placeholder = "Hľadaj podľa úlohy, projektu alebo nástroja…";
+      input.placeholder = t("switch.placeholder");
       const list = el("div", "switch-list");
       box.append(input, list);
       let items: Session[] = [];
@@ -895,7 +907,7 @@ function quickSwitch() {
             row.append(
               el("span", `dot ${statusOf(s.id)}`),
               el("span", "", `${PROVIDER_ICON[s.provider]}  ${s.title}`),
-              el("span", "meta", `${project(s.projectId)?.name ?? ""} · ${STATUS_LABEL[statusOf(s.id)]}`),
+              el("span", "meta", `${project(s.projectId)?.name ?? ""} · ${statusLabel(statusOf(s.id))}`),
             );
             row.onclick = () => {
               close();
@@ -904,7 +916,7 @@ function quickSwitch() {
             return row;
           }),
         );
-        if (!items.length) list.append(el("p", "", "Nič sa nenašlo."));
+        if (!items.length) list.append(el("p", "", t("common.noResults")));
       };
       input.oninput = () => {
         sel = 0;
@@ -929,35 +941,49 @@ function quickSwitch() {
   );
 }
 
-const dateTime = (ms: number | undefined) => (ms ? new Date(ms).toLocaleString("sk-SK", { dateStyle: "short", timeStyle: "short" }) : "–");
+const dateTime = (ms: number | undefined) =>
+  ms ? new Date(ms).toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) : "–";
 
 function infoRows(s: Session): [string, string][] {
   const p = project(s.projectId);
   const rows: [string, string][] = [
-    ["Projekt", `${p?.name ?? "–"} · ${p?.path ?? ""}`],
-    ["Nástroj", PROVIDER_LABEL[s.provider]],
-    ["Stav", STATUS_LABEL[statusOf(s.id)]],
+    [t("info.project"), `${p?.name ?? "–"} · ${p?.path ?? ""}`],
+    [t("info.tool"), PROVIDER_LABEL[s.provider]],
+    [t("info.status"), statusLabel(statusOf(s.id))],
   ];
-  if (s.provider !== "shell") rows.push(["Konverzácia", s.agentSessionId ?? "zatiaľ nezistená"]);
+  if (s.provider !== "shell") rows.push([t("info.conversation"), s.agentSessionId ?? t("info.notDetected")]);
   const st = statsOf(s);
   if (st) {
-    if (st.model) rows.push(["Model", st.model]);
+    if (st.model) rows.push([t("info.model"), st.model]);
     if (st.contextTokens) {
-      const pct = st.contextWindow ? ` z ${formatTokens(st.contextWindow)} (${Math.round((st.contextTokens / st.contextWindow) * 100)} %)` : "";
-      rows.push(["Kontext", `${formatTokens(st.contextTokens)}${pct}`]);
+      const pct = st.contextWindow
+        ? t("info.contextOf", {
+            window: formatTokens(st.contextWindow),
+            pct: Math.round((st.contextTokens / st.contextWindow) * 100),
+          })
+        : "";
+      rows.push([t("info.context"), `${formatTokens(st.contextTokens)}${pct}`]);
     }
     rows.push(
-      ["Vstup", `${formatTokens(st.inputTokens)} nových · ${formatTokens(st.cacheReadTokens)} z cache · ${formatTokens(st.cacheWriteTokens)} zápis do cache`],
-      ["Výstup", formatTokens(st.outputTokens)],
+      [
+        t("info.input"),
+        t("info.inputValue", {
+          fresh: formatTokens(st.inputTokens),
+          read: formatTokens(st.cacheReadTokens),
+          write: formatTokens(st.cacheWriteTokens),
+        }),
+      ],
+      [t("info.output"), formatTokens(st.outputTokens)],
     );
     if (st.limitUsedPercent != null) {
       const days = st.limitWindowMinutes ? Math.round(st.limitWindowMinutes / 1440) : 0;
-      rows.push(["Limit Codexu", `${st.limitUsedPercent.toFixed(0)} %${days ? ` za ${days} dní` : ""}`]);
+      const used = t("info.limitValue", { pct: st.limitUsedPercent.toFixed(0) });
+      rows.push([t("info.codexLimit"), `${used}${days ? t("info.limitDays", { days }) : ""}`]);
     }
   } else if (s.provider !== "shell") {
-    rows.push(["Tokeny", runtimes.get(s.id)?.running ? "zatiaľ žiadne (pribudnú po prvej odpovedi)" : "relácia spí"]);
+    rows.push([t("info.tokens"), t(runtimes.get(s.id)?.running ? "info.tokensNone" : "info.asleep")]);
   }
-  rows.push(["Vytvorená", dateTime(s.createdAt)], ["Naposledy použitá", dateTime(s.lastUsedAt)]);
+  rows.push([t("info.created"), dateTime(s.createdAt)], [t("info.lastUsed"), dateTime(s.lastUsedAt)]);
   return rows;
 }
 
@@ -969,19 +995,15 @@ function showInfo(s: Session) {
       const draw = () => grid.replaceChildren(...infoRows(s).flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v)]));
       draw();
       timer = window.setInterval(draw, 2000);
-      const note =
-        s.provider === "claude"
-          ? "Čísla platia pre aktuálnu konverzáciu. Po /clear začína Claude novú konverzáciu, takže sa počíta odznova; stará ostáva v claude --resume."
-          : s.provider === "codex"
-            ? "Čísla sú z Codex session súboru (iba počty, nie obsah)."
-            : "";
+      const note = s.provider === "claude" ? t("info.noteClaude") : s.provider === "codex" ? t("info.noteCodex") : "";
       const actions = el("div", "actions");
       if (s.agentSessionId) {
-        const copy = el("button", "", "Kopírovať ID");
-        copy.onclick = () => void navigator.clipboard.writeText(s.agentSessionId!).then(() => (copy.textContent = "Skopírované"));
+        const copy = el("button", "", t("info.copyId"));
+        copy.onclick = () =>
+          void navigator.clipboard.writeText(s.agentSessionId!).then(() => (copy.textContent = t("info.copied")));
         actions.append(copy);
       }
-      const ok = el("button", "primary", "Zavrieť");
+      const ok = el("button", "primary", t("common.close"));
       ok.onclick = close;
       actions.append(ok);
       box.append(el("h3", "", `${PROVIDER_ICON[s.provider]}  ${s.title}`), grid);
@@ -994,15 +1016,15 @@ function showInfo(s: Session) {
 }
 
 /** Vloží šablónu do aktívneho terminálu ako jeden paste; voliteľne ju hneď odošle. */
-function insertTemplate(t: PromptTemplate) {
+function insertTemplate(tpl: PromptTemplate) {
   const id = state.ui.activeSessionId;
   const rt = id ? runtimes.get(id) : undefined;
-  if (!id || !rt?.running) return toast("Najprv otvor reláciu, do ktorej sa má šablóna vložiť.");
-  void invoke("pty_write", { id, data: pasteSequence(t.text) })
+  if (!id || !rt?.running) return toast(t("tpl.needSession"));
+  void invoke("pty_write", { id, data: pasteSequence(tpl.text) })
     .then(() => {
-      if (t.send) window.setTimeout(() => void invoke("pty_write", { id, data: "\r" }), 150);
+      if (tpl.send) window.setTimeout(() => void invoke("pty_write", { id, data: "\r" }), 150);
     })
-    .catch((e) => toast(String(e)));
+    .catch((e) => toast(errorText(e)));
   rt.term.focus();
 }
 
@@ -1013,46 +1035,48 @@ function openTemplates() {
     (box, close) => {
       const input = el("input");
       input.type = "text";
-      input.placeholder = "Hľadaj šablónu…";
+      input.placeholder = t("tpl.search");
       const list = el("div", "switch-list");
-      box.append(el("h3", "", p ? `Šablóny · ${p.name}` : "Šablóny"), input, list);
+      box.append(el("h3", "", p ? t("tpl.titleProject", { name: p.name }) : t("tpl.title")), input, list);
       let items: PromptTemplate[] = [];
       let sel = 0;
-      const pick = (t: PromptTemplate) => {
+      const pick = (tpl: PromptTemplate) => {
         close();
-        insertTemplate(t);
+        insertTemplate(tpl);
       };
-      const edit = (t?: PromptTemplate) => {
+      const edit = (tpl?: PromptTemplate) => {
         close();
-        editTemplate(t, p);
+        editTemplate(tpl, p);
       };
       const draw = () => {
         const q = input.value.trim().toLowerCase();
-        items = templatesFor(state.templates, p?.id).filter((t) => !q || `${t.name} ${t.text}`.toLowerCase().includes(q));
+        items = templatesFor(state.templates, p?.id).filter(
+          (tpl) => !q || `${tpl.name} ${tpl.text}`.toLowerCase().includes(q),
+        );
         sel = Math.min(sel, Math.max(0, items.length - 1));
         list.replaceChildren(
-          ...items.map((t, i) => {
+          ...items.map((tpl, i) => {
             const row = el("div", `switch-item${i === sel ? " sel" : ""}`);
             const actions = el("span", "row-actions");
             actions.append(
-              iconButton("✎", "Upraviť", () => edit(t)),
-              iconButton("✕", "Zmazať", () => {
-                state.templates = state.templates.filter((x) => x.id !== t.id);
+              iconButton("✎", t("tpl.edit"), () => edit(tpl)),
+              iconButton("✕", t("tpl.delete"), () => {
+                state.templates = state.templates.filter((x) => x.id !== tpl.id);
                 save();
                 draw();
               }),
             );
             row.append(
-              el("span", "", `${t.send ? "⏎ " : ""}${t.name}`),
-              el("span", "meta", t.projectId ? "tento projekt" : "všetky projekty"),
+              el("span", "", `${tpl.send ? "⏎ " : ""}${tpl.name}`),
+              el("span", "meta", t(tpl.projectId ? "tpl.thisProject" : "tpl.allProjects")),
               actions,
             );
-            row.title = t.text;
-            row.onclick = () => pick(t);
+            row.title = tpl.text;
+            row.onclick = () => pick(tpl);
             return row;
           }),
         );
-        if (!items.length) list.append(el("p", "", state.templates.length ? "Nič sa nenašlo." : "Zatiaľ žiadne šablóny. Vytvor prvú."));
+        if (!items.length) list.append(el("p", "", t(state.templates.length ? "common.noResults" : "tpl.empty")));
       };
       input.oninput = () => {
         sel = 0;
@@ -1066,11 +1090,11 @@ function openTemplates() {
         e.preventDefault();
         draw();
       };
-      const add = el("button", "", "+ Nová šablóna");
+      const add = el("button", "", t("tpl.new"));
       add.onclick = () => edit();
       const actions = el("div", "actions");
       actions.append(add);
-      box.append(actions, el("div", "note", "Enter vloží šablónu do aktívnej relácie. Šablóny s ⏎ sa hneď aj odošlú."));
+      box.append(actions, el("div", "note", t("tpl.note")));
       draw();
       input.focus();
     },
@@ -1078,32 +1102,44 @@ function openTemplates() {
   );
 }
 
-function editTemplate(t: PromptTemplate | undefined, p: Project | undefined) {
+function editTemplate(tpl: PromptTemplate | undefined, p: Project | undefined) {
   modal(
     (box, close) => {
-      box.append(el("h3", "", t ? "Upraviť šablónu" : "Nová šablóna"));
+      box.append(el("h3", "", t(tpl ? "tpl.editTitle" : "tpl.newTitle")));
       const name = el("input");
       name.type = "text";
-      name.value = t?.name ?? "";
-      name.placeholder = "napr. Review posledného commitu";
+      name.value = tpl?.name ?? "";
+      name.placeholder = t("tpl.namePlaceholder");
       const text = el("textarea");
-      text.value = t?.text ?? "";
+      text.value = tpl?.text ?? "";
       text.rows = 8;
-      text.placeholder = "Text, ktorý sa vloží do terminálu";
+      text.placeholder = t("tpl.textPlaceholder");
       text.spellcheck = false;
       const scope = el("select");
-      const projectId = t ? t.projectId : p?.id;
-      const scopeProject = t?.projectId ? project(t.projectId) : p;
-      if (scopeProject) scope.append(new Option(`Iba ${scopeProject.name}`, scopeProject.id, false, projectId === scopeProject.id));
-      scope.append(new Option("Všetky projekty", "", false, !projectId));
+      const projectId = tpl ? tpl.projectId : p?.id;
+      const scopeProject = tpl?.projectId ? project(tpl.projectId) : p;
+      if (scopeProject) {
+        scope.append(
+          new Option(t("tpl.only", { name: scopeProject.name }), scopeProject.id, false, projectId === scopeProject.id),
+        );
+      }
+      scope.append(new Option(t("tpl.allScope"), "", false, !projectId));
       const sendLabel = el("label", "check");
       const send = el("input");
       send.type = "checkbox";
-      send.checked = t?.send ?? false;
-      sendLabel.append(send, document.createTextNode("Po vložení hneď odoslať (Enter)"));
-      box.append(el("label", "", "Názov"), name, el("label", "", "Text"), text, el("label", "", "Platí pre"), scope, sendLabel);
-      const ok = el("button", "primary", "Uložiť");
-      const cancel = el("button", "", "Zrušiť");
+      send.checked = tpl?.send ?? false;
+      sendLabel.append(send, document.createTextNode(t("tpl.send")));
+      box.append(
+        el("label", "", t("tpl.name")),
+        name,
+        el("label", "", t("tpl.text")),
+        text,
+        el("label", "", t("tpl.scope")),
+        scope,
+        sendLabel,
+      );
+      const ok = el("button", "primary", t("common.save"));
+      const cancel = el("button", "", t("common.cancel"));
       const actions = el("div", "actions");
       actions.append(cancel, ok);
       box.append(actions);
@@ -1114,15 +1150,15 @@ function editTemplate(t: PromptTemplate | undefined, p: Project | undefined) {
         openTemplates();
       };
       ok.onclick = () => {
-        if (!name.value.trim() || !text.value.trim()) return toast("Šablóna potrebuje názov aj text.");
+        if (!name.value.trim() || !text.value.trim()) return toast(t("tpl.invalid"));
         const next: PromptTemplate = {
-          id: t?.id ?? crypto.randomUUID(),
+          id: tpl?.id ?? crypto.randomUUID(),
           name: name.value.trim(),
           text: text.value.replace(/\s+$/, ""),
           send: send.checked,
           projectId: scope.value || undefined,
         };
-        state.templates = t ? state.templates.map((x) => (x.id === t.id ? next : x)) : [...state.templates, next];
+        state.templates = tpl ? state.templates.map((x) => (x.id === tpl.id ? next : x)) : [...state.templates, next];
         save();
         close();
         openTemplates();
@@ -1141,7 +1177,7 @@ type EditorPick = Pick<Settings, "editorId" | "customEditorPath" | "customEditor
  */
 function editorPicker(box: HTMLElement, st: Settings): () => EditorPick | string {
   const select = el("select");
-  select.append(new Option("Hľadám nainštalované editory…", st.editorId));
+  select.append(new Option(t("editor.searching"), st.editorId));
   const note = el("div", "note");
 
   const custom = el("div", "custom-editor");
@@ -1149,25 +1185,20 @@ function editorPicker(box: HTMLElement, st: Settings): () => EditorPick | string
   program.type = "text";
   program.value = st.customEditorPath;
   program.placeholder = info.platform === "windows" ? "C:\\Program Files\\…\\editor.exe" : "/Applications/Editor.app";
-  const browse = el("button", "", "Vybrať…");
+  const browse = el("button", "", t("editor.browse"));
   const programRow = el("div", "input-row");
   programRow.append(program, browse);
   const args = el("input");
   args.type = "text";
   args.value = st.customEditorArgs;
   custom.append(
-    el("label", "", "Program"),
+    el("label", "", t("editor.program")),
     programRow,
-    el("label", "", "Argumenty"),
+    el("label", "", t("editor.args")),
     args,
-    el(
-      "div",
-      "note",
-      "%TARGET_PATH% sa nahradí cestou k súboru alebo priečinku, %LINE% číslom riadku. " +
-        "Väčšine programov stačí %TARGET_PATH%. Program sa spúšťa priamo, bez shellu.",
-    ),
+    el("div", "note", t("editor.argsNote")),
   );
-  box.append(el("label", "", "Editor pre ↗ a Ctrl+klik na súbor"), select, note, custom);
+  box.append(el("label", "", t("editor.label")), select, note, custom);
 
   const sync = () => {
     custom.hidden = select.value !== CUSTOM_EDITOR;
@@ -1176,8 +1207,8 @@ function editorPicker(box: HTMLElement, st: Settings): () => EditorPick | string
   browse.onclick = async () => {
     const picked = await openDialog({
       multiple: false,
-      title: "Vyber program editora",
-      filters: info.platform === "windows" ? [{ name: "Programy", extensions: ["exe", "com"] }] : undefined,
+      title: t("editor.pickTitle"),
+      filters: info.platform === "windows" ? [{ name: t("editor.programs"), extensions: ["exe", "com"] }] : undefined,
     });
     if (typeof picked === "string") program.value = picked;
   };
@@ -1188,22 +1219,20 @@ function editorPicker(box: HTMLElement, st: Settings): () => EditorPick | string
       select.replaceChildren();
       for (const f of found) select.append(new Option(f.label, f.id));
       const known = st.editorId === "" || st.editorId === CUSTOM_EDITOR || found.some((f) => f.id === st.editorId);
-      if (!known) select.append(new Option(`${st.editorId} (nenájdený)`, st.editorId));
-      select.append(new Option("Iný program…", CUSTOM_EDITOR));
+      if (!known) select.append(new Option(t("editor.notFound", { id: st.editorId }), st.editorId));
+      select.append(new Option(t("editor.other"), CUSTOM_EDITOR));
       select.value = st.editorId || found[0]?.id || CUSTOM_EDITOR;
       sync();
-      note.textContent = found.length
-        ? "Na riadok skočí Cursor, VS Code, Windsurf, Zed, Sublime, JetBrains IDE a Notepad++."
-        : "Nenašiel som žiadny známy editor. Vyber program cez „Iný program…“.";
+      note.textContent = t(found.length ? "editor.lineNote" : "editor.noneFound");
     })
-    .catch((e) => (note.textContent = String(e)));
+    .catch((e) => (note.textContent = errorText(e)));
 
   return () => {
     if (select.value !== CUSTOM_EDITOR) {
       return { editorId: select.value, customEditorPath: st.customEditorPath, customEditorArgs: st.customEditorArgs };
     }
     const path = program.value.trim().replace(/^"(.*)"$/, "$1");
-    if (!path) return "Vyber program pre vlastný editor.";
+    if (!path) return t("err.editor.needProgram");
     return { editorId: CUSTOM_EDITOR, customEditorPath: path, customEditorArgs: args.value.trim() || "%TARGET_PATH%" };
   };
 }
@@ -1221,32 +1250,35 @@ function openSettings() {
         box.append(el("label", "", label), input);
         return input;
       };
-      box.append(el("h3", "", "Nastavenia"));
-      const claude = field("Príkaz pre Claude", st.claudeCommand, "claude");
-      const codex = field("Príkaz pre Codex", st.codexCommand, "codex");
-      const codexResume = field("Príkaz pre pokračovanie Codexu", st.codexResumeCommand, "codex resume");
-      const shell = field("Shell (prázdne = predvolený)", st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
+      box.append(el("h3", "", t("settings.title")));
+      const language = el("select");
+      for (const l of LANGUAGES) language.append(new Option(l.label, l.id, false, l.id === st.language));
+      box.append(el("label", "", t("settings.language")), language);
+      const claude = field(t("settings.claude"), st.claudeCommand, "claude");
+      const codex = field(t("settings.codex"), st.codexCommand, "codex");
+      const codexResume = field(t("settings.codexResume"), st.codexResumeCommand, "codex resume");
+      const shell = field(t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
       const editor = editorPicker(box, st);
       const notifLabel = el("label", "check");
       const notif = el("input");
       notif.type = "checkbox";
       notif.checked = st.notifications;
-      notifLabel.append(notif, document.createTextNode("Systémové notifikácie, keď agent skončí alebo čaká"));
+      notifLabel.append(notif, document.createTextNode(t("settings.notifications")));
       const resumeLabel = el("label", "check");
       const resume = el("input");
       resume.type = "checkbox";
       resume.checked = st.autoResume;
-      resumeLabel.append(resume, document.createTextNode("Po spustení aplikácie obnoviť všetky relácie"));
+      resumeLabel.append(resume, document.createTextNode(t("settings.autoResume")));
       box.append(notifLabel, resumeLabel);
       box.append(
         el(
           "div",
           "note",
-          `${info.hooksEnabled ? "Stav Claude sa číta z hookov (lokálny endpoint)." : "Hook server nebeží, stav Claude nebude dostupný."} Uložené v ${info.stateFile}. Zmena príkazov platí pre nové spustenia.`,
+          `${t(info.hooksEnabled ? "settings.hooksOn" : "settings.hooksOff")} ${t("settings.footer", { file: info.stateFile })}`,
         ),
       );
-      const save_ = el("button", "primary", "Uložiť");
-      const cancel = el("button", "", "Zrušiť");
+      const save_ = el("button", "primary", t("common.save"));
+      const cancel = el("button", "", t("common.cancel"));
       const actions = el("div", "actions");
       actions.append(cancel, save_);
       box.append(actions);
@@ -1261,13 +1293,24 @@ function openSettings() {
         Object.assign(st, pick);
         st.notifications = notif.checked;
         st.autoResume = resume.checked;
+        const langChanged = st.language !== language.value;
+        st.language = language.value;
         save();
         close();
+        if (langChanged) applyLanguage();
       };
       claude.focus();
     },
     () => {},
   );
+}
+
+/** Prepne jazyk bez reštartu: statické texty, zoznam, hlavičky terminálov a vyhľadávania. */
+function applyLanguage() {
+  setLang(state.settings.language);
+  translateDocument();
+  renderSidebar();
+  renderPaneHeads();
 }
 
 // ---------- klávesy, resizer, štart ----------
@@ -1331,7 +1374,9 @@ async function main() {
   info = await invoke<AppInfo>("app_info");
   const loaded = parseState(await invoke<string | null>("load_state"));
   state = loaded.state;
-  if (loaded.dropped) toast(`Uložený stav bol čiastočne poškodený (${loaded.dropped} záznamov vynechaných).`);
+  setLang(state.settings.language);
+  translateDocument();
+  if (loaded.dropped) toast(t("app.corrupted", { n: loaded.dropped }));
 
   setupResizer();
   $("#btn-add-project").onclick = () => void addProject();

@@ -106,12 +106,12 @@ impl PtyManager {
     pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<String>) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         if sessions.contains_key(&req.id) {
-            return Err("Terminál pre túto reláciu už beží.".into());
+            return Err("pty.alreadyRunning".into());
         }
 
         let pair = native_pty_system()
             .openpty(size(req.cols, req.rows))
-            .map_err(|e| format!("Nepodarilo sa otvoriť PTY: {e}"))?;
+            .map_err(|e| format!("pty.openFailed: {e}"))?;
 
         let mut cmd = build_command(req.shell.as_deref(), req.command.as_deref());
         cmd.cwd(&req.cwd);
@@ -124,7 +124,7 @@ impl PtyManager {
         let mut child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| format!("Nepodarilo sa spustiť shell: {e}"))?;
+            .map_err(|e| format!("pty.shellFailed: {e}"))?;
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -169,7 +169,7 @@ impl PtyManager {
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let s = sessions.get_mut(id).ok_or("Terminál nebeží.")?;
+        let s = sessions.get_mut(id).ok_or("pty.notRunning")?;
         s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
         s.writer.flush().map_err(|e| e.to_string())
     }

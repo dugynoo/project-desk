@@ -78,6 +78,12 @@ test("starý príkaz editora sa prevedie na ID, nový výber ostane", () => {
   assert.equal(parseState("{}").state.settings.customEditorArgs, "%TARGET_PATH%");
 });
 
+test("jazyk: predvolene angličtina, neznámy jazyk sa zahodí", () => {
+  assert.equal(parseState("{}").state.settings.language, "en");
+  assert.equal(parseState(JSON.stringify({ settings: { language: "cs" } })).state.settings.language, "cs");
+  assert.equal(parseState(JSON.stringify({ settings: { language: "de" } })).state.settings.language, "en");
+});
+
 test("stavy z hookov", () => {
   const ev = (event: string, notificationType?: string) => ({ deskSessionId: "s1", event, notificationType });
   assert.equal(statusAfter("idle", ev("UserPromptSubmit")), "working");

@@ -422,18 +422,18 @@ pub fn custom_args(template: &str, path: &str, line: Option<u32>) -> Vec<String>
 pub fn validate_custom(program: &str) -> Result<(), String> {
     let p = Path::new(program);
     if program.trim().is_empty() {
-        return Err("Vyber program pre vlastný editor.".into());
+        return Err("editor.needProgram".into());
     }
     if cfg!(target_os = "macos") && program.ends_with(".app") && p.is_dir() {
         return Ok(());
     }
     if !p.is_file() {
-        return Err(format!("Program {program} neexistuje."));
+        return Err(format!("editor.programMissing: {program}"));
     }
     if cfg!(windows) {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
         if ext != "exe" && ext != "com" {
-            return Err("Na Windows vyber .exe súbor (skripty .cmd a .bat nejde spustiť bez shellu).".into());
+            return Err("editor.windowsExe".into());
         }
     }
     Ok(())
@@ -447,14 +447,14 @@ pub fn resolve(choice: &Choice, installed: &[Found], path: &str, line: Option<u3
         return Ok(mac_app(&choice.custom_path, args));
     }
     let found = if choice.id.is_empty() {
-        installed.first().ok_or("Nenašiel som žiadny editor. Vyber ho v ⚙ Nastaveniach.")?
+        installed.first().ok_or("editor.noneInstalled")?
     } else {
         installed
             .iter()
             .find(|f| f.id == choice.id)
-            .ok_or("Vybraný editor sa nenašiel. Vyber iný v ⚙ Nastaveniach.")?
+            .ok_or("editor.missing")?
     };
-    let d = def(&found.id).ok_or("Neznámy editor.")?;
+    let d = def(&found.id).ok_or("editor.unknown")?;
     let args = family_args(d.family, path, line);
     if cfg!(target_os = "macos") {
         let cli = Path::new(&found.path).join(d.mac_cli);
@@ -494,7 +494,7 @@ pub fn launch(program: &str, args: &[String]) -> Result<(), String> {
     };
     #[cfg(not(windows))]
     let spawned = command().spawn();
-    let mut child = spawned.map_err(|e| format!("Editor sa nepodarilo spustiť: {e}"))?;
+    let mut child = spawned.map_err(|e| format!("editor.launchFailed: {e}"))?;
     // Nech po editore neostane zombie proces.
     std::thread::spawn(move || {
         let _ = child.wait();

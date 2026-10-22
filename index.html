@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="sk">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,20 +11,20 @@
         <header class="sidebar-head">
           <span class="brand">Project Desk</span>
           <span class="head-actions">
-            <button id="btn-switch" class="icon" title="Nájsť reláciu (Ctrl+K)">⌕</button>
-            <button id="btn-templates" class="icon" title="Šablóny promptov (Ctrl+Shift+T)">✦</button>
-            <button id="btn-grid" class="icon" title="Mriežka 2×2 (Ctrl+G)">⊞</button>
-            <button id="btn-settings" class="icon" title="Nastavenia">⚙</button>
+            <button id="btn-switch" class="icon" data-i18n-title="html.switch">⌕</button>
+            <button id="btn-templates" class="icon" data-i18n-title="html.templates">✦</button>
+            <button id="btn-grid" class="icon" data-i18n-title="html.grid">⊞</button>
+            <button id="btn-settings" class="icon" data-i18n-title="html.settings">⚙</button>
           </span>
         </header>
         <div id="projects"></div>
-        <button id="btn-add-project" class="add-project">+ Pridať projekt</button>
+        <button id="btn-add-project" class="add-project" data-i18n="html.addProject"></button>
       </aside>
-      <div id="resizer" title="Ťahaj pre zmenu šírky"></div>
+      <div id="resizer" data-i18n-title="html.resizer"></div>
       <main id="stage">
         <div id="empty" class="empty">
-          <p>Vyber reláciu vľavo alebo vytvor novú pri projekte.</p>
-          <p class="hint">Ctrl+K relácie · Ctrl+G mriežka · Ctrl+Shift+F hľadať v termináli · Ctrl+Shift+T šablóny · Ctrl+klik otvorí súbor alebo odkaz</p>
+          <p data-i18n="html.empty"></p>
+          <p class="hint" data-i18n="html.hint"></p>
         </div>
       </main>
     </div>
