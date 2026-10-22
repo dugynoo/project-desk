@@ -81,7 +81,7 @@ You need Node 22+, Rust (via rustup) and, on Windows, the MSVC Build Tools.
 npm install
 npm run app:dev       # dev build with separate state ("Project Desk (dev)")
 npm test              # unit tests for the domain logic and translations
-cd src-tauri; cargo test
+cd src-tauri; cargo test; cargo clippy --all-targets -- -D warnings   # CI runs both
 npm run tauri build   # local release: src-tauri\target\release\project-desk.exe and an NSIS installer
 ```
 
@@ -92,11 +92,16 @@ The app state is stored in `%APPDATA%\eu.effistream.projectdesk\state.json`. The
 npm version 0.2.0        # bumps the version, commits and tags v0.2.0
 git push --follow-tags
 ```
-The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb) and creates a draft release. Installed apps see the update once you publish the draft.
+`npm version` also writes the version to `src-tauri/Cargo.toml` and `Cargo.lock` (`scripts/sync-version.mjs`).
+
+The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb) and creates a draft release. The release notes list the commit subjects since the previous tag, and the app shows them when it offers the update. Installed apps see the update once you publish the draft.
 
 The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
 
 The installers are not code-signed, so Windows SmartScreen and macOS Gatekeeper warn on first install.
+
+- **Windows:** click *More info → Run anyway*.
+- **macOS:** if macOS says the app "is damaged and can't be opened", move it to Applications and run `xattr -cr "/Applications/Project Desk.app"` in Terminal once.
 
 ### Translations
 UI strings live in `src/i18n.ts`. English defines the set of keys, and TypeScript fails the build if Slovak or Czech is missing one. Rust returns error codes such as `editor.missing` or `pty.openFailed: <detail>`, and the UI translates them. A test checks that every error code in `src-tauri/src` has a translation.

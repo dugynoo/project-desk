@@ -870,7 +870,7 @@ function modal(build: (box: HTMLElement, close: () => void) => void, onClose: ()
   build(box, close);
 }
 
-function confirmBox(heading: string, text: string, okLabel: string): Promise<boolean> {
+function confirmBox(heading: string, text: string, okLabel: string, notes = ""): Promise<boolean> {
   return new Promise((resolve) => {
     let result = false;
     modal(
@@ -879,7 +879,9 @@ function confirmBox(heading: string, text: string, okLabel: string): Promise<boo
         const cancel = el("button", "", t("common.cancel"));
         const actions = el("div", "actions");
         actions.append(cancel, ok);
-        box.append(el("h3", "", heading), el("p", "", text), actions);
+        box.append(el("h3", "", heading), el("p", "", text));
+        if (notes) box.append(el("div", "notes", notes));
+        box.append(actions);
         ok.onclick = () => {
           result = true;
           close();
@@ -1332,10 +1334,15 @@ async function checkUpdate() {
   btn.hidden = false;
 }
 
+/** Zoznam zmien z release notes: len riadky „- …“, ktoré release workflow vytvorí z commitov. */
+function changesOf(body: string | undefined): string {
+  return (body ?? "").split(/\r?\n/).filter((l) => l.startsWith("- ")).join("\n");
+}
+
 async function installUpdate() {
   const update = pendingUpdate;
   if (!update) return;
-  const ok = await confirmBox(t("update.title", { version: update.version }), t("update.body"), t("update.ok"));
+  const ok = await confirmBox(t("update.title", { version: update.version }), t("update.body"), t("update.ok"), changesOf(update.body));
   if (!ok) return;
   const btn = $<HTMLButtonElement>("#btn-update");
   btn.disabled = true;

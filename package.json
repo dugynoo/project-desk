@@ -10,7 +10,8 @@
     "lint": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
     "tauri": "tauri",
-    "app:dev": "tauri dev --config src-tauri/tauri.dev.json"
+    "app:dev": "tauri dev --config src-tauri/tauri.dev.json",
+    "version": "node scripts/sync-version.mjs && git add src-tauri/Cargo.toml src-tauri/Cargo.lock"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

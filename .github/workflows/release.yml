@@ -24,8 +24,11 @@ jobs:
           - platform: ubuntu-22.04
             args: --bundles appimage,deb
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # kvôli predošlému tagu v release notes
 
       - name: Tag matches app version
         shell: bash
@@ -35,6 +38,20 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json"
             exit 1
           fi
+
+      # Commity od predošlého tagu. Appka ich ukáže pri ponuke aktualizácie (riadky začínajúce „- “).
+      - name: Release notes
+        id: notes
+        shell: bash
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo "body<<EOF_NOTES"
+            echo "Download the installer for your system below. Installed apps update themselves."
+            echo
+            git log --no-merges --format='- %s' "${prev:+$prev..}$GITHUB_REF_NAME" | grep -v '^- chore: release' || true
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
@@ -66,6 +83,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Project Desk ${{ github.ref_name }}
-          releaseBody: Download the installer for your system below. Installed apps update themselves.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           args: --config src-tauri/tauri.release.json ${{ matrix.args }}

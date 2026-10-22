@@ -98,6 +98,7 @@ button.icon.on { color: var(--accent); }
 .modal { width: min(520px, 92vw); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); padding: 14px; user-select: text; }
 .modal h3 { margin: 0 0 10px; font-size: 14px; }
 .modal p { margin: 0 0 12px; color: var(--muted); }
+.modal .notes { margin: 0 0 12px; max-height: 40vh; overflow: auto; white-space: pre-line; font-size: 12px; }
 .modal input[type="text"] { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; outline: none; }
 .modal input[type="text"]:focus { border-color: var(--accent); }
 .modal label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }

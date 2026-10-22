@@ -104,7 +104,7 @@ pub fn find_session(root: &Path, cwd: &str, since_ms: u64, exclude: &[String]) -
         if created < from || !same_dir(&meta.cwd, cwd) || exclude.iter().any(|e| e == &meta.id) {
             continue;
         }
-        if best.as_ref().map_or(true, |b| created < b.created_ms) {
+        if best.as_ref().is_none_or(|b| created < b.created_ms) {
             best = Some(Candidate { id: meta.id, created_ms: created });
         }
     }

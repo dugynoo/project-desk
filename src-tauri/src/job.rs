@@ -48,6 +48,7 @@ mod tests {
     /// Pomocný proces pre test nižšie: zapne poistku, spustí vnuka a čaká.
     #[test]
     #[ignore]
+    #[allow(clippy::zombie_processes)] // vnuka má zabiť Job Object, nie wait()
     fn helper() {
         if std::env::var_os("PD_JOB_HELPER").is_none() {
             return;
