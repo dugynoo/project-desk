@@ -20,7 +20,14 @@ const en = {
   "html.resizer": "Drag to resize",
   "html.empty": "Pick a session on the left or start a new one in a project.",
   "html.hint":
-    "Ctrl+K sessions · Ctrl+G grid · Ctrl+Shift+F search terminal · Ctrl+Shift+T templates · Ctrl+click opens a file or link",
+    "Ctrl+K sessions · Ctrl+1–9 jump to session · Ctrl+G grid · Ctrl+Shift+F search terminal · Ctrl+Shift+T templates · Ctrl+click opens a file or link",
+
+  "update.button": "⬆ Update to {version}",
+  "update.title": "Update to {version}?",
+  "update.body": "The update downloads and the app restarts. Terminals close and sessions resume after the restart.",
+  "update.ok": "Update and restart",
+  "update.downloading": "Downloading… {percent}",
+  "update.failed": "Update failed: {detail}",
 
   "common.cancel": "Cancel",
   "common.save": "Save",
@@ -175,7 +182,14 @@ const sk: Record<Key, string> = {
   "html.resizer": "Ťahaj pre zmenu šírky",
   "html.empty": "Vyber reláciu vľavo alebo vytvor novú pri projekte.",
   "html.hint":
-    "Ctrl+K relácie · Ctrl+G mriežka · Ctrl+Shift+F hľadať v termináli · Ctrl+Shift+T šablóny · Ctrl+klik otvorí súbor alebo odkaz",
+    "Ctrl+K relácie · Ctrl+1–9 skok na reláciu · Ctrl+G mriežka · Ctrl+Shift+F hľadať v termináli · Ctrl+Shift+T šablóny · Ctrl+klik otvorí súbor alebo odkaz",
+
+  "update.button": "⬆ Aktualizovať na {version}",
+  "update.title": "Aktualizovať na {version}?",
+  "update.body": "Aktualizácia sa stiahne a appka sa reštartuje. Terminály sa zavrú a relácie po reštarte pokračujú.",
+  "update.ok": "Aktualizovať a reštartovať",
+  "update.downloading": "Sťahuje sa… {percent}",
+  "update.failed": "Aktualizácia zlyhala: {detail}",
 
   "common.cancel": "Zrušiť",
   "common.save": "Uložiť",
@@ -327,7 +341,14 @@ const cs: Record<Key, string> = {
   "html.resizer": "Táhni pro změnu šířky",
   "html.empty": "Vyber relaci vlevo nebo vytvoř novou u projektu.",
   "html.hint":
-    "Ctrl+K relace · Ctrl+G mřížka · Ctrl+Shift+F hledat v terminálu · Ctrl+Shift+T šablony · Ctrl+klik otevře soubor nebo odkaz",
+    "Ctrl+K relace · Ctrl+1–9 skok na relaci · Ctrl+G mřížka · Ctrl+Shift+F hledat v terminálu · Ctrl+Shift+T šablony · Ctrl+klik otevře soubor nebo odkaz",
+
+  "update.button": "⬆ Aktualizovat na {version}",
+  "update.title": "Aktualizovat na {version}?",
+  "update.body": "Aktualizace se stáhne a aplikace se restartuje. Terminály se zavřou a relace po restartu pokračují.",
+  "update.ok": "Aktualizovat a restartovat",
+  "update.downloading": "Stahuje se… {percent}",
+  "update.failed": "Aktualizace selhala: {detail}",
 
   "common.cancel": "Zrušit",
   "common.save": "Uložit",

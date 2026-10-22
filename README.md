@@ -32,7 +32,7 @@ Press **✦** or **Ctrl+Shift+T**. Templates can be shared by all projects or be
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.
 - **Ctrl+click** a URL to open it in your browser. Ctrl+click a file path such as `src/main.ts:120` to open it in your editor at that line.
 - **2×2 grid:** Ctrl+G shows up to four running sessions at once.
-- **Find a session:** Ctrl+K.
+- **Find a session:** Ctrl+K. **Ctrl+1–8** jumps to a session by its position in the sidebar, **Ctrl+9** to the last one.
 - **Clipboard:** Ctrl+C copies the selection (with nothing selected it interrupts the process), Ctrl+V pastes, and Shift+Enter inserts a new line in Claude.
 
 ### Editor
@@ -49,6 +49,9 @@ Detection does not rely on `PATH` on Windows and macOS. Cursor, for example, put
 Supported editors: Cursor, VS Code, VS Code Insiders, Windsurf, VSCodium, Trae, Zed, Sublime Text, IntelliJ IDEA, WebStorm, PhpStorm, PyCharm, Rider, GoLand, RustRover, CLion and Notepad++. All of them open a file at the clicked line.
 
 **Other program…** is for anything else. Pick the program and set its arguments. `%TARGET_PATH%` is replaced with the file or folder path and `%LINE%` with the line number. The default `%TARGET_PATH%` is enough for most programs.
+
+### Updates
+The app checks [GitHub Releases](https://github.com/dugynoo/project-desk/releases) shortly after start and then every 6 hours. When a new version is out, an **⬆ Update** button appears in the sidebar. Updates are signed, and the app installs only an update signed with the project's key.
 
 ## Security
 
@@ -79,18 +82,24 @@ npm install
 npm run app:dev       # dev build with separate state ("Project Desk (dev)")
 npm test              # unit tests for the domain logic and translations
 cd src-tauri; cargo test
-npm run tauri build   # release: src-tauri\target\release\project-desk.exe and an NSIS installer
+npm run tauri build   # local release: src-tauri\target\release\project-desk.exe and an NSIS installer
 ```
 
 The app state is stored in `%APPDATA%\eu.effistream.projectdesk\state.json`. The dev build uses `eu.effistream.projectdesk.dev`.
 
+### Releases
+```powershell
+npm version 0.2.0        # bumps the version, commits and tags v0.2.0
+git push --follow-tags
+```
+The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb) and creates a draft release. Installed apps see the update once you publish the draft.
+
+The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
+
+The installers are not code-signed, so Windows SmartScreen and macOS Gatekeeper warn on first install.
+
 ### Translations
 UI strings live in `src/i18n.ts`. English defines the set of keys, and TypeScript fails the build if Slovak or Czech is missing one. Rust returns error codes such as `editor.missing` or `pty.openFailed: <detail>`, and the UI translates them. A test checks that every error code in `src-tauri/src` has a translation.
-
-## Ideas
-
-- Auto-update and macOS/Linux builds through GitHub Actions
-- Ctrl+1–9 shortcuts
 
 ## License
 

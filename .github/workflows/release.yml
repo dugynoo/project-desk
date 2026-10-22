@@ -1,0 +1,71 @@
+# Vydanie: npm version 0.2.0 (zvýši verziu, commitne a vytvorí tag v0.2.0), potom git push --follow-tags.
+# Workflow zbuilduje appku pre Windows, macOS a Linux a vytvorí koncept vydania (draft).
+# Appky si aktualizáciu nájdu, až keď koncept na GitHube zverejníš.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          - platform: ubuntu-22.04
+            args: --bundles appimage,deb
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches app version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - run: npm ci
+      - run: npm test
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Project Desk ${{ github.ref_name }}
+          releaseBody: Download the installer for your system below. Installed apps update themselves.
+          releaseDraft: true
+          args: --config src-tauri/tauri.release.json ${{ matrix.args }}

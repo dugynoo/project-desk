@@ -7,6 +7,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -39,6 +41,7 @@ import {
   type Provider,
   type Session,
   type Settings,
+  sessionByNumber,
   sessionsOf,
   type Status,
   statusAfter,
@@ -50,6 +53,7 @@ interface AppInfo {
   platform: string;
   hooksEnabled: boolean;
   stateFile: string;
+  updates: boolean;
 }
 
 interface Runtime {
@@ -76,7 +80,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 };
 
-let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "" };
+let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "", updates: false };
 let state: PersistedState = parseState(null).state;
 const runtimes = new Map<string, Runtime>();
 const statuses = new Map<string, Status>();
@@ -1313,17 +1317,72 @@ function applyLanguage() {
   renderPaneHeads();
 }
 
+// ---------- aktualizácie ----------
+
+let pendingUpdate: Update | undefined;
+
+/** Hľadá novú verziu v GitHub Releases. Bez siete alebo bez vydania ticho nič. */
+async function checkUpdate() {
+  if (pendingUpdate) return;
+  const update = await check().catch(() => null);
+  if (!update) return;
+  pendingUpdate = update;
+  const btn = $<HTMLButtonElement>("#btn-update");
+  btn.textContent = t("update.button", { version: update.version });
+  btn.hidden = false;
+}
+
+async function installUpdate() {
+  const update = pendingUpdate;
+  if (!update) return;
+  const ok = await confirmBox(t("update.title", { version: update.version }), t("update.body"), t("update.ok"));
+  if (!ok) return;
+  const btn = $<HTMLButtonElement>("#btn-update");
+  btn.disabled = true;
+  let total = 0;
+  let done = 0;
+  try {
+    await update.downloadAndInstall((e) => {
+      if (e.event === "Started") total = e.data.contentLength ?? 0;
+      else if (e.event === "Progress") done += e.data.chunkLength;
+      const percent = total ? `${Math.min(100, Math.round((done / total) * 100))} %` : "";
+      btn.textContent = t("update.downloading", { percent });
+    });
+    // Na Windows inštalátor appku zavrie sám; inde ju treba spustiť nanovo.
+    await relaunch();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = t("update.button", { version: update.version });
+    toast(t("update.failed", { detail: String(e) }));
+  }
+}
+
 // ---------- klávesy, resizer, štart ----------
 
-/** Ctrl+K, Ctrl+G, Ctrl+Shift+F a Ctrl+Shift+T patria aplikácii, nie procesu v termináli. */
+/** Číslo z Ctrl+1–9. Podľa `code`, lebo na slovenskej klávesnici je v hornom rade `+ľščťžýáí`. */
+function digitOf(e: KeyboardEvent): number | undefined {
+  const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** Ctrl+K, Ctrl+G, Ctrl+1–9, Ctrl+Shift+F a Ctrl+Shift+T patria aplikácii, nie procesu v termináli. */
 function isAppShortcut(e: KeyboardEvent): boolean {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
   const key = e.key.toLowerCase();
-  return e.shiftKey ? key === "f" || key === "t" : key === "k" || key === "g";
+  return e.shiftKey ? key === "f" || key === "t" : key === "k" || key === "g" || digitOf(e) !== undefined;
 }
 
 function handleGlobalKey(e: KeyboardEvent): boolean {
   const key = e.key.toLowerCase();
+  const n = digitOf(e);
+  if (n !== undefined && !e.shiftKey) {
+    e.preventDefault();
+    const s = sessionByNumber(state, n);
+    const p = s && state.projects.find((x) => x.id === s.projectId);
+    if (p?.collapsed) p.collapsed = false;
+    if (s) select(s.id);
+    return false;
+  }
   if (e.shiftKey) {
     e.preventDefault();
     if (key === "t") openTemplates();
@@ -1384,6 +1443,7 @@ async function main() {
   $("#btn-grid").onclick = toggleGrid;
   $("#btn-settings").onclick = openSettings;
   $("#btn-templates").onclick = openTemplates;
+  $("#btn-update").onclick = () => void installUpdate();
   document.addEventListener("keydown", (e) => {
     if (isAppShortcut(e) && $("#overlay").hidden) handleGlobalKey(e);
   });
@@ -1406,6 +1466,10 @@ async function main() {
   layout();
   window.setInterval(() => void lookupCodexSessions(), 3000);
   window.setInterval(() => void pollAgents(), 2000);
+  if (info.updates) {
+    window.setTimeout(() => void checkUpdate(), 10_000);
+    window.setInterval(() => void checkUpdate(), 6 * 3600_000);
+  }
 
   // Obnovenie po štarte: Claude cez `--resume <id>`, Codex cez `codex resume <id>`, shell nanovo.
   // Vypnuté = relácie spia, kým na ne používateľ neklikne.

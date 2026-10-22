@@ -13,6 +13,7 @@ import {
   folderName,
   matches,
   parseState,
+  sessionByNumber,
   statusAfter,
   type Session,
 } from "./model.ts";
@@ -27,6 +28,21 @@ const session = (over: Partial<Session> = {}): Session => ({
   createdAt: 1,
   lastUsedAt: 1,
   ...over,
+});
+
+test("Ctrl+číslo ide podľa poradia v zozname, pripnuté projekty prvé, Ctrl+9 je posledná", () => {
+  const st = parseState("{}").state;
+  st.projects = [
+    { id: "a", name: "a", path: "/a" },
+    { id: "b", name: "b", path: "/b", pinned: true, collapsed: true },
+  ];
+  st.sessions = [
+    session({ id: "a2", projectId: "a", createdAt: 2 }),
+    session({ id: "a1", projectId: "a", createdAt: 1 }),
+    session({ id: "b1", projectId: "b", createdAt: 3 }),
+  ];
+  assert.deepEqual([1, 2, 3, 4].map((n) => sessionByNumber(st, n)?.id), ["b1", "a1", "a2", undefined]);
+  assert.equal(sessionByNumber(st, 9)?.id, "a2");
 });
 
 test("nový Claude dostane --session-id a odkaz na hook settings cez env", () => {

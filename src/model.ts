@@ -369,6 +369,12 @@ export function sessionsOf(state: PersistedState, projectId: string): Session[] 
   return state.sessions.filter((s) => s.projectId === projectId).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/** Relácia pre Ctrl+1–8 v poradí zoznamu (aj zo zbalených projektov); Ctrl+9 je vždy posledná. */
+export function sessionByNumber(state: PersistedState, n: number): Session | undefined {
+  const all = orderedProjects(state.projects).flatMap((p) => sessionsOf(state, p.id));
+  return n === 9 ? all.at(-1) : all[n - 1];
+}
+
 /** Poradie pre Quick Switch: naposledy použité hore. */
 export function byRecent(sessions: Session[]): Session[] {
   return [...sessions].sort((a, b) => b.lastUsedAt - a.lastUsedAt);

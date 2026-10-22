@@ -28,6 +28,8 @@ struct AppInfo {
     platform: &'static str,
     hooks_enabled: bool,
     state_file: String,
+    /// Aktualizácie hľadá len vydaná verzia, dev build (`tauri.dev.json`) nie.
+    updates: bool,
 }
 
 #[derive(Deserialize)]
@@ -42,11 +44,12 @@ struct SpawnArgs {
 }
 
 #[tauri::command]
-fn app_info(state: State<'_, AppState>) -> AppInfo {
+fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
     AppInfo {
         platform: std::env::consts::OS,
         hooks_enabled: state.hooks.is_some(),
         state_file: state.state_file.to_string_lossy().into_owned(),
+        updates: !cfg!(debug_assertions) && !app.config().identifier.ends_with(".dev"),
     }
 }
 
@@ -190,6 +193,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let hooks = match hooks::start(app.handle().clone(), &config_dir) {
