@@ -1481,15 +1481,20 @@ async function installUpdate() {
   let total = 0;
   let done = 0;
   try {
-    await update.downloadAndInstall((e) => {
+    await update.download((e) => {
       if (e.event === "Started") total = e.data.contentLength ?? 0;
       else if (e.event === "Progress") done += e.data.chunkLength;
       const percent = total ? `${Math.min(100, Math.round((done / total) * 100))} %` : "";
       btn.textContent = t("update.downloading", { percent });
     });
+    // Na Windows updater spustí inštalátor a hneď ukončí appku; bez tohto by inštalátor
+    // zabil Job Object spolu s ňou. Púšťame až teraz, nech terminály počas sťahovania ostanú v jobe.
+    await invoke("prepare_update", { on: true });
+    await update.install();
     // Na Windows inštalátor appku zavrie sám; inde ju treba spustiť nanovo.
     await relaunch();
   } catch (e) {
+    void invoke("prepare_update", { on: false }).catch(() => {});
     btn.disabled = false;
     btn.textContent = t("update.button", { version: update.version });
     toast(t("update.failed", { detail: String(e) }));

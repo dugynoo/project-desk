@@ -142,6 +142,13 @@ async fn open_in_editor(
     editors::launch(&program, &args)
 }
 
+/// Pred aktualizáciou (`true`) pustí nové procesy z Job Objectu, aby inštalátor prežil
+/// ukončenie aplikácie. Ak aktualizácia zlyhá, frontend to vráti (`false`).
+#[tauri::command]
+fn prepare_update(on: bool) -> Result<(), String> {
+    job::let_new_processes_out(on)
+}
+
 /// Súbor v predvolenej aplikácii systému (HTML v prehliadači…). Spustiteľné súbory odmietne.
 #[tauri::command]
 async fn open_file_default(path: String) -> Result<(), String> {
@@ -236,6 +243,7 @@ pub fn run() {
             pty_kill,
             open_in_editor,
             open_file_default,
+            prepare_update,
             reveal_file,
             list_editors,
             resolve_file,
