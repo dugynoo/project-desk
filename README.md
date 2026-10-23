@@ -16,8 +16,9 @@ The UI is available in English, Slovak and Czech (⚙ Settings → Language). En
 - When a process exits, its terminal output stays visible with the exit code and a **Start again** button. Stopped sessions stay stopped after an app restart; terminal output itself is not saved to disk.
 
 ### Agent status
-- **Claude Code:** status comes from Claude Code hooks: *Working*, *Needs you*, *Done*, *Ready*, *Agent exited*. The app starts Claude with `--settings` pointing at HTTP hooks on a local endpoint. Your `~/.claude` settings are never modified.
-- **Codex:** status comes from the Codex session file in `~/.codex/sessions`: *Working*, *Done*. The app reads only the event type (`task_started`, `task_complete`, `turn_aborted`). Codex hooks would require changing its configuration, so they are not used.
+Green **Done** means the agent is ready for another prompt (including initial readiness or an interrupted turn); yellow **Working** means a turn is in progress; red **Waiting for input** means a reported approval request or question. Shells retain their neutral **Running** status.
+- **Claude Code:** status comes from Claude Code hooks: *Working*, *Waiting for input*, *Done*, *Agent exited*. The app starts Claude with `--settings` pointing at HTTP hooks on a local endpoint. Your `~/.claude` settings are never modified.
+- **Codex:** status comes from the Codex session file in `~/.codex/sessions`: *Working*, *Done*. The app reads only the event type (`task_started`, `task_complete`, `turn_aborted`). The last known state is restored without replaying old notifications. Approval requests are not persisted in this file, so Codex approval waiting cannot currently be detected.
 - **Antigravity CLI:** project-local hooks report activity, completion and explicit `ask_question` / `ask_permission` tools. Automatic permission dialogs are not exposed by these hooks; token usage is not tracked. See setup below.
 - **Notifications:** a system notification and an unread dot appear when an agent finishes or needs you while you are looking elsewhere.
 - **Attention overview:** the sidebar counts waiting, completed and working sessions. Click the counts to filter to waiting/completed sessions; **Ctrl+Shift+A** jumps to the next one.
@@ -105,6 +106,18 @@ State writes are serialized and flushed before closing the window or installing 
 
 Frontend orchestration lives in `src/main.ts`; settings, dialogs, updates, and the save queue have separate modules. Pure session lifecycle and grid rules live in `src/model.ts`; native state recovery lives in `src-tauri/src/persistence.rs`.
 
+### Linux packages
+
+Download the package from [GitHub Releases](https://github.com/dugynoo/project-desk/releases):
+
+- **Debian / Ubuntu:** install the `.deb` with `sudo apt install ./Project.Desk_<version>_amd64.deb`.
+- **Arch Linux (x86_64):** install the `.pkg.tar.zst` with `sudo pacman -U ./project-desk-bin-<version>-1-x86_64.pkg.tar.zst`. Pacman installs the required dependencies, desktop entry and icons. Upgrade by downloading the next package and running the same command.
+- **Other distributions:** the AppImage remains available with the built-in updater.
+
+The Arch package is a native pacman package containing the same executable as the Debian build, following [Tauri's Debian repackaging approach](https://v2.tauri.app/distribute/aur/). It is not an AppImage wrapper. It is attached to each new release; it is not currently published to AUR or a pacman repository, so `yay -S` and `pacman -Syu` do not fetch Project Desk updates.
+
+The release pipeline runs `scripts/build-arch.sh` after the Linux build. It generates a checksummed PKGBUILD from `packaging/arch/PKGBUILD.in`, builds it as an unprivileged user in an Arch container, installs it, checks shared libraries and validates its desktop entry before uploading. For a local packaging check, run the script on Linux with Node and Docker after building exactly one amd64 Debian package in `src-tauri/target/release/bundle/deb/`.
+
 ### Releases
 ```powershell
 npm version 0.2.0        # bumps the version, commits and tags v0.2.0
@@ -112,7 +125,7 @@ git push --follow-tags
 ```
 `npm version` also writes the version to `src-tauri/Cargo.toml` and `Cargo.lock` (`scripts/sync-version.mjs`).
 
-The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb) and creates a draft release. The release notes list the commit subjects since the previous tag, and the app shows them when it offers the update. Installed apps see the update once you publish the draft.
+The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb, Arch Linux x86_64 .pkg.tar.zst) and creates a draft release. The release notes list the commit subjects since the previous tag, and the app shows them when it offers the update. Windows, macOS and Linux AppImage installations see the update once you publish the draft. Debian and Arch packages are upgraded through the package manager.
 
 The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
 

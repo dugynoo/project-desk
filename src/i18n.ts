@@ -55,7 +55,7 @@ const en = {
   "status.running": "Running",
   "status.idle": "Ready",
   "status.working": "Working",
-  "status.needs-you": "Needs you",
+  "status.needs-you": "Waiting for input",
   "status.done": "Done",
   "status.agent-exited": "Agent exited · shell running",
 
@@ -254,7 +254,7 @@ const sk: Record<Key, string> = {
   "status.running": "Beží",
   "status.idle": "Pripravený",
   "status.working": "Pracuje",
-  "status.needs-you": "Čaká na teba",
+  "status.needs-you": "Čaká na potvrdenie / odpoveď",
   "status.done": "Hotovo",
   "status.agent-exited": "Agent skončil · shell beží",
 
@@ -450,7 +450,7 @@ const cs: Record<Key, string> = {
   "status.running": "Běží",
   "status.idle": "Připraveno",
   "status.working": "Pracuje",
-  "status.needs-you": "Čeká na tebe",
+  "status.needs-you": "Čeká na potvrzení / odpověď",
   "status.done": "Hotovo",
   "status.agent-exited": "Agent skončil · shell běží",
 

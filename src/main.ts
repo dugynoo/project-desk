@@ -122,11 +122,11 @@ function toast(msg: string, info = false) {
   window.setTimeout(() => t.remove(), 6000);
 }
 
-function setStatus(id: string, next: Status) {
+function setStatus(id: string, next: Status, silent = false) {
   const prev = statusOf(id);
   if (prev === next) return;
   statuses.set(id, next);
-  if (ATTENTION.has(next) && !isWatched(id)) {
+  if (!silent && ATTENTION.has(next) && !isWatched(id)) {
     unread.add(id);
     notify(id, next);
   }
@@ -577,7 +577,7 @@ async function start(s: Session) {
   s.started = true;
   s.stopped = false;
   s.exitCode = undefined;
-  statuses.set(s.id, (s.provider === "claude" || s.provider === "antigravity") && info.hooksEnabled ? "starting" : "running");
+  statuses.set(s.id, s.provider === "codex" || ((s.provider === "claude" || s.provider === "antigravity") && info.hooksEnabled) ? "starting" : "running");
   save();
   renderSidebar();
   renderPaneHeads();
@@ -617,13 +617,13 @@ async function pollAgents() {
     for (const s of [...state.sessions]) {
       const agentId = s.agentSessionId;
       if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
-      const r = await invoke<{ stats: AgentStats; events: string[] } | null>("agent_poll", { provider: s.provider, agentId }).catch(() => null);
+      const r = await invoke<{ stats: AgentStats; status: string | null; events: string[] } | null>("agent_poll", { provider: s.provider, agentId }).catch(() => null);
       if (!r || s.agentSessionId !== agentId) continue;
       const before = statsOf(s)?.contextTokens;
       agentStats.set(s.id, { agentId, stats: r.stats });
       if (before !== r.stats.contextTokens) changed = true;
-      const status = s.provider === "codex" ? codexStatusAfter(r.events.at(-1) ?? "") : undefined;
-      if (status && runtimes.get(s.id)?.running) setStatus(s.id, status);
+      const status = s.provider === "codex" ? codexStatusAfter(r.events.at(-1) ?? r.status ?? "task_complete") : undefined;
+      if (status && runtimes.get(s.id)?.running) setStatus(s.id, status, r.events.length === 0);
     }
   } finally {
     polling = false;
@@ -677,7 +677,7 @@ function onAgentEvent(ev: AgentEvent) {
   if (changed) save();
   if (!runtimes.get(s.id)?.running) return;
   const status = statusAfter(statusOf(s.id), ev);
-  if (status) setStatus(s.id, status);
+  if (status) setStatus(s.id, status, ev.event === "SessionStart");
 }
 
 // ---------- akcie ----------

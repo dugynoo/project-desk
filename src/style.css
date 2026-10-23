@@ -6,8 +6,8 @@
   --text: #e6e8ee;
   --muted: #8b91a0;
   --accent: #7cc4ff;
-  --working: #7cc4ff;
-  --needs: #ffb454;
+  --working: #ffcf60;
+  --needs: #ff6b6b;
   --done: #7ee2a8;
   --off: #4b5160;
   --danger: #ff6b6b;
@@ -68,10 +68,10 @@ button.icon.on { color: var(--accent); }
 .session.unread .title { font-weight: 600; }
 .session.unread .title::after { content: " ●"; color: var(--needs); font-size: 10px; }
 
-.dot.running, .dot.idle, .dot.starting, .dot.agent-exited { background: #9aa3b5; }
+.dot.running, .dot.starting, .dot.agent-exited { background: #9aa3b5; }
 .dot.working { background: var(--working); animation: pulse 1.2s ease-in-out infinite; }
 .dot.needs-you { background: var(--needs); }
-.dot.done { background: var(--done); }
+.dot.done, .dot.idle { background: var(--done); }
 .dot.sleeping { background: transparent; border: 1px solid var(--off); }
 @keyframes pulse { 50% { opacity: .35; } }
 

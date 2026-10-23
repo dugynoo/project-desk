@@ -294,7 +294,7 @@ const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicita
 export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
   switch (ev.event) {
     case "SessionStart":
-      return "idle";
+      return "done";
     case "PreInvocation":
     case "UserPromptSubmit":
     case "PostToolUse":
@@ -319,9 +319,9 @@ export const ATTENTION: ReadonlySet<Status> = new Set<Status>(["needs-you", "don
 
 /** Stav podľa udalosti zo session súboru Codexu. */
 export function codexStatusAfter(event: string): Status | undefined {
-  if (event === "task_started") return "working";
-  if (event === "task_complete") return "done";
-  if (event === "turn_aborted") return "idle";
+  if (event === "task_started" || event === "turn_started") return "working";
+  if (event === "task_complete" || event === "turn_complete") return "done";
+  if (event === "turn_aborted") return "done";
   return undefined;
 }
 

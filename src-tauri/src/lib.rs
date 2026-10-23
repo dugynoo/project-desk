@@ -54,7 +54,10 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
         platform: std::env::consts::OS,
         hooks_enabled: state.hooks.is_some(),
         state_file: state.state_file.to_string_lossy().into_owned(),
-        updates: !cfg!(debug_assertions) && !app.config().identifier.ends_with(".dev"),
+        // Package-managed Linux installs must be upgraded through their package manager.
+        updates: !cfg!(debug_assertions)
+            && !app.config().identifier.ends_with(".dev")
+            && (!cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some()),
     }
 }
 

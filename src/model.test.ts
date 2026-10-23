@@ -212,6 +212,10 @@ test("formátovanie tokenov", () => {
 });
 
 test("udalosti Codexu", () => {
+  assert.equal(codexStatusAfter("turn_aborted"), "done");
+  assert.equal(codexStatusAfter("turn_started"), "working");
+  assert.equal(codexStatusAfter("turn_complete"), "done");
+  assert.equal(statusAfter("starting", { deskSessionId: "s", event: "SessionStart" }), "done");
   assert.equal(codexStatusAfter("task_started"), "working");
   assert.equal(codexStatusAfter("task_complete"), "done");
   assert.equal(codexStatusAfter("token_count"), undefined);
@@ -353,7 +357,7 @@ test("Antigravity resumes only a validated conversation and survives state/histo
 
 test("Antigravity hooks distinguish questions, activity and background work", () => {
   const ev = { deskSessionId: "s1", provider: "antigravity" as const, event: "SessionStart" };
-  assert.equal(statusAfter("starting", ev), "idle");
+  assert.equal(statusAfter("starting", ev), "done");
   assert.equal(statusAfter("idle", { ...ev, event: "PreInvocation" }), "working");
   for (const toolName of ["ask_permission", "ask_question"]) {
     assert.equal(statusAfter("working", { ...ev, event: "PreToolUse", toolName }), "needs-you");
