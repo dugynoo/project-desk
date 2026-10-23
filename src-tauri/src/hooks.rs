@@ -20,6 +20,9 @@ const MAX_BODY: u64 = 1024 * 1024;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEvent {
+    pub provider: String,
+    pub tool_name: Option<String>,
+    pub fully_idle: Option<bool>,
     pub desk_session_id: String,
     pub agent_session_id: Option<String>,
     pub event: String,
@@ -27,6 +30,7 @@ pub struct AgentEvent {
 }
 
 pub struct HookServer {
+    pub port: u16,
     pub token: String,
     pub settings_path: PathBuf,
 }
@@ -36,7 +40,12 @@ pub fn parse_event(desk_session_id: &str, body: &str) -> Option<AgentEvent> {
     let v: Value = serde_json::from_str(body).ok()?;
     let event = v.get("hook_event_name")?.as_str()?.to_owned();
     let str_field = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
+    let provider = v.get("provider").and_then(Value::as_str).unwrap_or("claude");
+    if !matches!(provider, "claude" | "antigravity") { return None; }
     Some(AgentEvent {
+        provider: provider.to_owned(),
+        tool_name: str_field("tool_name"),
+        fully_idle: v.get("fully_idle").and_then(Value::as_bool),
         desk_session_id: desk_session_id.to_owned(),
         agent_session_id: str_field("session_id"),
         event,
@@ -94,7 +103,7 @@ pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
         }
     });
 
-    Ok(HookServer { token, settings_path })
+    Ok(HookServer { token, settings_path, port })
 }
 
 #[cfg(test)]

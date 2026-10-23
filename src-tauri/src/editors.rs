@@ -298,6 +298,7 @@ fn platform_detect() -> Vec<Found> {
     found
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // volá ho len Windows; testy bežia všade
 struct UninstallEntry {
     name: String,
     publisher: String,
@@ -306,12 +307,14 @@ struct UninstallEntry {
 }
 
 /// Uninstall záznam → editor. Vyhrá najdlhšia zhoda názvu („… Code Insiders“ pred „… Code“).
+#[cfg_attr(not(windows), allow(dead_code))] // volá ho len Windows; testy bežia všade
 fn match_entry(e: &UninstallEntry) -> Option<Found> {
     let d = match_def(e)?;
     let exe = win_exe(d, e)?;
     Some(Found { id: d.id.into(), label: d.label.into(), path: exe.to_string_lossy().into_owned() })
 }
 
+#[cfg_attr(not(windows), allow(dead_code))] // volá ho len Windows; testy bežia všade
 fn match_def(e: &UninstallEntry) -> Option<&'static Def> {
     DEFS.iter()
         .filter(|d| d.win_publishers.is_empty() || d.win_publishers.contains(&e.publisher.trim()))
@@ -321,6 +324,7 @@ fn match_def(e: &UninstallEntry) -> Option<&'static Def> {
 }
 
 /// Exe z DisplayIcon (ak sa volá ako editor), inak InstallLocation + známa relatívna cesta.
+#[cfg_attr(not(windows), allow(dead_code))] // volá ho len Windows; testy bežia všade
 fn win_exe(d: &Def, e: &UninstallEntry) -> Option<PathBuf> {
     let icon = e.icon.split(',').next().unwrap_or("").trim().trim_matches('"');
     let file_names: Vec<&str> = d.win_exe.iter().map(|p| p.rsplit('/').next().unwrap_or(p)).collect();

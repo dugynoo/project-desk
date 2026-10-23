@@ -1,8 +1,11 @@
+mod antigravity;
 mod codex;
 mod editors;
+mod files;
 mod hooks;
 mod job;
 mod pty;
+mod persistence;
 mod usage;
 
 use std::path::{Path, PathBuf};
@@ -18,6 +21,7 @@ struct AppState {
     pty: PtyManager,
     hooks: Option<hooks::HookServer>,
     state_file: PathBuf,
+    state_write: Mutex<()>,
     usage: Arc<usage::Watcher>,
     editors: Mutex<Option<Vec<editors::Found>>>,
 }
@@ -35,6 +39,7 @@ struct AppInfo {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnArgs {
+    provider: Option<String>,
     id: String,
     cwd: String,
     command: Option<String>,
@@ -49,25 +54,23 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
         platform: std::env::consts::OS,
         hooks_enabled: state.hooks.is_some(),
         state_file: state.state_file.to_string_lossy().into_owned(),
-        updates: !cfg!(debug_assertions) && !app.config().identifier.ends_with(".dev"),
+        // Package-managed Linux installs must be upgraded through their package manager.
+        updates: !cfg!(debug_assertions)
+            && !app.config().identifier.ends_with(".dev")
+            && (!cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some()),
     }
 }
 
 #[tauri::command]
-fn load_state(state: State<'_, AppState>) -> Option<String> {
-    std::fs::read_to_string(&state.state_file).ok()
+fn load_state(state: State<'_, AppState>) -> Result<persistence::Loaded, String> {
+    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    persistence::load(&state.state_file)
 }
 
-/// Zápis cez dočasný súbor, aby pád uprostred nezničil uložený stav.
 #[tauri::command]
 fn save_state(state: State<'_, AppState>, json: String) -> Result<(), String> {
-    serde_json::from_str::<serde_json::Value>(&json).map_err(|e| e.to_string())?;
-    if let Some(dir) = state.state_file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let tmp = state.state_file.with_extension("json.tmp");
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &state.state_file).map_err(|e| e.to_string())
+    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    persistence::save(&state.state_file, &json)
 }
 
 #[tauri::command]
@@ -82,6 +85,10 @@ fn pty_spawn(
     }
     let mut env = vec![(hooks::SESSION_ENV.to_owned(), args.id.clone())];
     if let Some(h) = &state.hooks {
+        if args.provider.as_deref() == Some("antigravity") {
+            antigravity::install(Path::new(&args.cwd))?;
+            env.push(("PROJECT_DESK_HOOK_PORT".into(), h.port.to_string()));
+        }
         env.push((hooks::TOKEN_ENV.to_owned(), h.token.clone()));
         env.push((hooks::SETTINGS_ENV.to_owned(), h.settings_path.to_string_lossy().into_owned()));
     }
@@ -139,6 +146,25 @@ async fn open_in_editor(
     };
     let (program, args) = editors::resolve(&editor, &installed, &path, line)?;
     editors::launch(&program, &args)
+}
+
+/// Pred aktualizáciou (`true`) pustí nové procesy z Job Objectu, aby inštalátor prežil
+/// ukončenie aplikácie. Ak aktualizácia zlyhá, frontend to vráti (`false`).
+#[tauri::command]
+fn prepare_update(on: bool) -> Result<(), String> {
+    job::let_new_processes_out(on)
+}
+
+/// Súbor v predvolenej aplikácii systému (HTML v prehliadači…). Spustiteľné súbory odmietne.
+#[tauri::command]
+async fn open_file_default(path: String) -> Result<(), String> {
+    files::open_default(&path)
+}
+
+/// Ukáže súbor v Prieskumníkovi, Finderi alebo správcovi súborov.
+#[tauri::command]
+async fn reveal_file(path: String) -> Result<(), String> {
+    files::reveal(&path)
 }
 
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
@@ -209,6 +235,7 @@ pub fn run() {
                 hooks,
                 state_file: config_dir.join("state.json"),
                 usage: Arc::default(),
+                state_write: Mutex::default(),
                 editors: Mutex::default(),
             });
             Ok(())
@@ -222,6 +249,9 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_in_editor,
+            open_file_default,
+            prepare_update,
+            reveal_file,
             list_editors,
             resolve_file,
             find_codex_session,
