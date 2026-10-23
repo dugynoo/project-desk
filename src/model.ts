@@ -1,8 +1,8 @@
 // Čistá doménová logika bez DOM a Tauri, aby sa dala testovať v Node.
 
-export type Provider = "claude" | "codex" | "shell";
-export const PROVIDERS: Provider[] = ["claude", "codex", "shell"];
-export const PROVIDER_LABEL: Record<Provider, string> = { claude: "Claude", codex: "Codex", shell: "Shell" };
+export type Provider = "claude" | "codex" | "antigravity" | "shell";
+export const PROVIDERS: Provider[] = ["claude", "codex", "antigravity", "shell"];
+export const PROVIDER_LABEL: Record<Provider, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity", shell: "Shell" };
 
 export interface Project {
   id: string;
@@ -37,12 +37,16 @@ export interface Session {
   hasConversation?: boolean;
   /** Proces už niekedy bežal (pre Codex: ponúknuť `codex resume` namiesto nového štartu). */
   started?: boolean;
+  stopped?: boolean;
+  exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
 }
 
 export interface Settings {
+  defaultProvider: Provider;
   claudeCommand: string;
+  antigravityCommand: string;
   codexCommand: string;
   codexResumeCommand: string;
   shell: string;
@@ -88,15 +92,18 @@ export interface PersistedState {
   projects: Project[];
   sessions: Session[];
   templates: PromptTemplate[];
+  closedSessions: Session[];
   settings: Settings;
   settingsRev: number;
-  ui: { sidebarWidth: number; grid: boolean; activeSessionId?: string };
+  ui: { sidebarWidth: number; grid: boolean; pinnedSessionIds: string[]; activeSessionId?: string };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  defaultProvider: "claude",
   claudeCommand: "claude --dangerously-skip-permissions",
   codexCommand: "codex --dangerously-bypass-approvals-and-sandbox",
   codexResumeCommand: "codex resume --dangerously-bypass-approvals-and-sandbox",
+  antigravityCommand: "agy",
   shell: "",
   language: "en",
   editorId: "",
@@ -116,9 +123,10 @@ export function emptyState(): PersistedState {
     projects: [],
     sessions: [],
     templates: [],
+    closedSessions: [],
     settings: { ...DEFAULT_SETTINGS },
     settingsRev: SETTINGS_REV,
-    ui: { sidebarWidth: 280, grid: false },
+    ui: { sidebarWidth: 280, grid: false, pinnedSessionIds: [] },
   };
 }
 
@@ -173,17 +181,26 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         agentSessionId: isUuid(s.agentSessionId) ? s.agentSessionId : undefined,
         hasConversation: s.hasConversation === true,
         started: s.started === true,
+        stopped: s.stopped === true,
+        exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),
         lastUsedAt: num(s.lastUsedAt, Date.now()),
       });
     } else dropped++;
   }
+  if (Array.isArray(data.closedSessions)) {
+    const archived = parseState(JSON.stringify({ projects: state.projects, sessions: data.closedSessions }));
+    const activeIds = new Set(state.sessions.map((s) => s.id));
+    state.closedSessions = archived.state.sessions.filter((s) => !activeIds.has(s.id)).slice(0, 20);
+    dropped += archived.dropped;
+  }
   if (isObj(data.settings)) {
     for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
       const v = data.settings[key];
       if (typeof v === typeof DEFAULT_SETTINGS[key]) (state.settings as unknown as Record<string, unknown>)[key] = v;
     }
+    if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
     if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
     if (typeof data.settings.editorId !== "string" && typeof data.settings.editorCommand === "string") {
       state.settings.editorId = migrateEditorCommand(data.settings.editorCommand);
@@ -198,6 +215,10 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
   if (isObj(data.ui)) {
     state.ui.sidebarWidth = clampSidebar(num(data.ui.sidebarWidth, 280));
     state.ui.grid = data.ui.grid === true;
+    if (Array.isArray(data.ui.pinnedSessionIds)) {
+      state.ui.pinnedSessionIds = [...new Set(data.ui.pinnedSessionIds.filter((id): id is string =>
+        typeof id === "string" && state.sessions.some((s) => s.id === id)))].slice(0, 4);
+    }
     if (str(data.ui.activeSessionId)) state.ui.activeSessionId = data.ui.activeSessionId;
   }
   return { state, dropped };
@@ -228,6 +249,10 @@ export function agentCommand(
   hooksEnabled: boolean,
 ): string | undefined {
   if (s.provider === "shell") return undefined;
+  if (s.provider === "antigravity") {
+    const base = settings.antigravityCommand.trim() || "agy";
+    return isUuid(s.agentSessionId) ? `${base} --conversation ${s.agentSessionId}` : base;
+  }
   if (s.provider === "codex") {
     if (!s.started) return settings.codexCommand.trim() || "codex";
     const resume = settings.codexResumeCommand.trim() || "codex resume";
@@ -243,6 +268,7 @@ export function agentCommand(
 }
 
 export type Status =
+  | "exited"
   | "sleeping"
   | "starting"
   | "running"
@@ -257,6 +283,9 @@ export interface AgentEvent {
   agentSessionId?: string | null;
   event: string;
   notificationType?: string | null;
+  provider?: "claude" | "antigravity";
+  toolName?: string | null;
+  fullyIdle?: boolean | null;
 }
 
 const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]);
@@ -266,11 +295,14 @@ export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
   switch (ev.event) {
     case "SessionStart":
       return "idle";
+    case "PreInvocation":
     case "UserPromptSubmit":
     case "PostToolUse":
       return "working";
+    case "PreToolUse":
+      return ev.toolName === "ask_permission" || ev.toolName === "ask_question" ? "needs-you" : "working";
     case "Stop":
-      return "done";
+      return ev.provider === "antigravity" && ev.fullyIdle === false ? "working" : "done";
     case "SessionEnd":
       return "agent-exited";
     case "Notification":
@@ -420,4 +452,46 @@ export function relativePath(root: string, file: string): string | undefined {
   const f = norm(file);
   if (f.length <= r.length + 1 || f[r.length] !== "/" || f.slice(0, r.length).toLowerCase() !== r.toLowerCase()) return undefined;
   return f.slice(r.length + 1);
+}
+
+/** Close explicitly, retaining only metadata for the last 20 closed sessions. */
+export function archiveSession(state: PersistedState, id: string): void {
+  const s = state.sessions.find((s) => s.id === id);
+  if (!s) return;
+  state.closedSessions = [{ ...s, stopped: true }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
+  state.sessions = state.sessions.filter((s) => s.id !== id);
+  state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
+  if (state.ui.activeSessionId === id) state.ui.activeSessionId = byRecent(state.sessions)[0]?.id;
+}
+
+export function restoreSession(state: PersistedState, id: string): Session | undefined {
+  const s = state.closedSessions.find((s) => s.id === id);
+  if (!s || !state.projects.some((p) => p.id === s.projectId) || state.sessions.some((x) => x.id === id)) return;
+  state.closedSessions = state.closedSessions.filter((s) => s.id !== id);
+  state.sessions.push(s);
+  return s;
+}
+
+export function recordSessionExit(state: PersistedState, id: string, code: number | null, closing: boolean): void {
+  if (closing) { archiveSession(state, id); return; }
+  const s = state.sessions.find((s) => s.id === id);
+  if (s) { s.stopped = true; s.exitCode = code; }
+}
+
+/** Pins retain their order; the active unpinned session gets a free slot. */
+export function gridSessions(sessions: Session[], available: ReadonlySet<string>, pins: string[], active?: string): string[] {
+  const pinned = [...new Set(pins)].filter((id) => available.has(id)).slice(0, 4);
+  const recent = byRecent(sessions).map((s) => s.id).filter((id) => available.has(id) && !pinned.includes(id));
+  if (active && recent.includes(active)) recent.splice(0, 0, ...recent.splice(recent.indexOf(active), 1));
+  return [...pinned, ...recent].slice(0, 4);
+}
+
+export function nextAttention(sessions: Session[], statuses: ReadonlyMap<string, Status>, active?: string): string | undefined {
+  const ids = sessions.filter((s) => ATTENTION.has(statuses.get(s.id) ?? "sleeping")).map((s) => s.id);
+  return ids.length ? ids[(ids.indexOf(active ?? "") + 1) % ids.length] : undefined;
+}
+
+/** Validate before constructing new settings; callers commit only successful results. */
+export function settingsDraft(current: Settings, changes: Partial<Settings>, editor: Partial<Settings> | string): Settings | string {
+  return typeof editor === "string" ? editor : { ...current, ...changes, ...editor };
 }

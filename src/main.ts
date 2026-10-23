@@ -1,15 +1,18 @@
+import { createSettings } from "./settings.ts";
+import { openSessionMenu } from "./session-menu.ts";
+import { createUpdates } from "./updates.ts";
+import { $, el } from "./dom.ts";
+import { createSaveQueue } from "./persistence.ts";
+import { createDialogs } from "./dialogs.ts";
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
 
-import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type Update } from "@tauri-apps/plugin-updater";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -18,14 +21,17 @@ import { Terminal } from "@xterm/xterm";
 
 import {
   agentCommand,
+  archiveSession,
+  restoreSession,
+  recordSessionExit,
+  gridSessions,
+  nextAttention,
   type AgentStats,
   ATTENTION,
   type AgentEvent,
   byRecent,
   clampSidebar,
   codexStatusAfter,
-  CUSTOM_EDITOR,
-  type EditorInfo,
   findFileRefs,
   folderName,
   formatTokens,
@@ -43,14 +49,13 @@ import {
   relativePath,
   type Provider,
   type Session,
-  type Settings,
   sessionByNumber,
   sessionsOf,
   type Status,
   statusAfter,
   templatesFor,
 } from "./model.ts";
-import { errorText, type Key, LANGUAGES, locale, setLang, t, translateDocument } from "./i18n.ts";
+import { errorText, type Key, locale, setLang, t, translateDocument } from "./i18n.ts";
 
 interface AppInfo {
   platform: string;
@@ -74,16 +79,7 @@ interface Runtime {
   hoverLink?: { url: string } | { file: string; line?: number };
 }
 
-const PROVIDER_ICON: Record<Provider, string> = { claude: "✳", codex: "‹›", shell: "▣" };
-const MAX_GRID = 4;
-
-const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
-const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-};
+const PROVIDER_ICON: Record<Provider, string> = { claude: "✳", codex: "‹›", antigravity: "△", shell: "▣" };
 
 let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "", updates: false };
 let state: PersistedState = parseState(null).state;
@@ -96,21 +92,19 @@ let windowFocused = true;
 
 // ---------- perzistencia ----------
 
-let saveTimer: number | undefined;
-function save() {
-  window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
-    invoke("save_state", { json: JSON.stringify(state, null, 2) }).catch((e) =>
-      toast(t("app.saveFailed", { detail: String(e) })),
-    );
-  }, 250);
-}
+const saves = createSaveQueue(
+  () => JSON.stringify(state, null, 2),
+  (json) => invoke("save_state", { json }),
+  (e) => toast(t("app.saveFailed", { detail: String(e) })),
+);
+const save = saves.schedule;
+let closingWindow = false;
 
 // ---------- pomocníci ----------
 
 const project = (id: string) => state.projects.find((p) => p.id === id);
 const session = (id: string | undefined) => (id ? state.sessions.find((s) => s.id === id) : undefined);
-const statusOf = (id: string): Status => statuses.get(id) ?? "sleeping";
+const statusOf = (id: string): Status => statuses.get(id) ?? (session(id)?.stopped ? "exited" : "sleeping");
 const statsOf = (s: Session) => {
   const entry = agentStats.get(s.id);
   return entry && entry.agentId === s.agentSessionId ? entry.stats : undefined;
@@ -164,11 +158,7 @@ async function notify(id: string, status: Status) {
 function visibleIds(): string[] {
   const active = state.ui.activeSessionId;
   if (!state.ui.grid) return active && runtimes.has(active) ? [active] : [];
-  const running = byRecent(state.sessions.filter((s) => runtimes.has(s.id))).map((s) => s.id);
-  if (active && runtimes.has(active) && !running.slice(0, MAX_GRID).includes(active)) {
-    running.splice(MAX_GRID - 1, 0, active);
-  }
-  return running.slice(0, MAX_GRID).sort((a, b) => session(a)!.createdAt - session(b)!.createdAt);
+  return gridSessions(state.sessions, new Set(runtimes.keys()), state.ui.pinnedSessionIds, active);
 }
 
 function layout() {
@@ -224,6 +214,9 @@ function renderPaneHeads() {
     if (!s) continue;
     const p = project(s.projectId);
     rt.head.textContent = `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`;
+    rt.head.append(iconButton(state.ui.pinnedSessionIds.includes(id) ? "★" : "☆", t("grid.pin"), () => togglePin(id)));
+    if (!rt.running) rt.head.append(iconButton("↻", t("session.restart"), () => void start(s)));
+    rt.head.classList.toggle("stopped", s.stopped === true);
   }
 }
 
@@ -285,7 +278,7 @@ function createRuntime(s: Session): Runtime {
   });
   term.onBell(() => {
     // Claude a Codex so známou konverzáciou hlásia stav inak; zvonček by notifikáciu zdvojil.
-    const tracked = s.provider === "claude" || (s.provider === "codex" && isUuid(s.agentSessionId));
+    const tracked = (s.provider === "claude" || s.provider === "antigravity") || (s.provider === "codex" && isUuid(s.agentSessionId));
     if (!tracked && !isWatched(s.id)) {
       unread.add(s.id);
       renderSidebar();
@@ -531,13 +524,14 @@ function disposeRuntime(id: string) {
 
 async function start(s: Session) {
   const p = project(s.projectId);
-  if (!p) return;
+  if (!p || runtimes.get(s.id)?.running || closingWindow) return;
   // Bez prvého promptu nie je čo obnoviť; nové ID zabráni kolízii s nedokončenou reláciou.
   if (s.provider === "claude" && (!s.hasConversation || !isUuid(s.agentSessionId))) {
     s.agentSessionId = crypto.randomUUID();
     s.hasConversation = false;
   }
   const command = agentCommand(s, state.settings, info.platform, info.hooksEnabled);
+  s.exitCode = undefined;
   s.lastStartAt = Date.now();
   if (s.provider === "codex" && !s.started) codexLookup.add(s.id);
   const rt = runtimes.get(s.id) ?? createRuntime(s);
@@ -552,11 +546,13 @@ async function start(s: Session) {
   const output = new Channel<string>();
   output.onmessage = (chunk) => rt.term.write(chunk);
   rt.running = true;
+  rt.closing = false;
   try {
     await invoke("pty_spawn", {
       args: {
         id: s.id,
         cwd: p.path,
+        provider: s.provider,
         command: command ?? null,
         shell: state.settings.shell || null,
         cols: rt.term.cols,
@@ -566,15 +562,22 @@ async function start(s: Session) {
     });
   } catch (e) {
     rt.running = false;
-    disposeRuntime(s.id);
-    statuses.delete(s.id);
+    s.stopped = true;
+    statuses.set(s.id, "exited");
+    rt.term.writeln(`\r\n${errorText(e)}`);
+    codexLookup.delete(s.id);
+    save();
     toast(errorText(e));
     layout();
     renderSidebar();
+    renderPaneHeads();
     return;
   }
+  if (!rt.running || !session(s.id)) return;
   s.started = true;
-  statuses.set(s.id, s.provider === "claude" && info.hooksEnabled ? "starting" : "running");
+  s.stopped = false;
+  s.exitCode = undefined;
+  statuses.set(s.id, (s.provider === "claude" || s.provider === "antigravity") && info.hooksEnabled ? "starting" : "running");
   save();
   renderSidebar();
   renderPaneHeads();
@@ -613,14 +616,14 @@ async function pollAgents() {
   try {
     for (const s of [...state.sessions]) {
       const agentId = s.agentSessionId;
-      if (s.provider === "shell" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
+      if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
       const r = await invoke<{ stats: AgentStats; events: string[] } | null>("agent_poll", { provider: s.provider, agentId }).catch(() => null);
       if (!r || s.agentSessionId !== agentId) continue;
       const before = statsOf(s)?.contextTokens;
       agentStats.set(s.id, { agentId, stats: r.stats });
       if (before !== r.stats.contextTokens) changed = true;
       const status = s.provider === "codex" ? codexStatusAfter(r.events.at(-1) ?? "") : undefined;
-      if (status && runtimes.has(s.id)) setStatus(s.id, status);
+      if (status && runtimes.get(s.id)?.running) setStatus(s.id, status);
     }
   } finally {
     polling = false;
@@ -631,35 +634,48 @@ async function pollAgents() {
   }
 }
 
-function onExit(id: string) {
-  const rt = runtimes.get(id);
-  if (rt) rt.running = false;
-  // Zavretý terminál = zmizne aj položka (rovnako ako v rozšírení).
+function forgetRuntime(id: string) {
   disposeRuntime(id);
   statuses.delete(id);
   unread.delete(id);
-  state.sessions = state.sessions.filter((s) => s.id !== id);
-  if (state.ui.activeSessionId === id) state.ui.activeSessionId = byRecent(state.sessions.filter((s) => runtimes.has(s.id)))[0]?.id;
+  agentStats.delete(id);
+  codexLookup.delete(id);
+}
+
+function onExit(id: string, code: number | null) {
+  const rt = runtimes.get(id);
+  const s = session(id);
+  if (!s) { forgetRuntime(id); return; }
+  if (rt) rt.running = false;
+  recordSessionExit(state, id, code, rt?.closing ?? false);
+  if (rt?.closing) {
+    forgetRuntime(id);
+  } else {
+    statuses.set(id, "exited");
+    rt?.term.writeln(`\r\n${t("session.exitCode", { code: code ?? "?" })}`);
+    if (!isWatched(id)) unread.add(id);
+  }
   save();
   layout();
   renderSidebar();
+  renderPaneHeads();
 }
 
 function onAgentEvent(ev: AgentEvent) {
   const s = session(ev.deskSessionId);
-  if (!s || s.provider !== "claude") return;
+  if (!s || s.provider !== (ev.provider ?? "claude") || !runtimes.get(s.id)?.running) return;
   let changed = false;
   if (isUuid(ev.agentSessionId) && ev.agentSessionId !== s.agentSessionId) {
     s.agentSessionId = ev.agentSessionId;
     s.hasConversation = ev.event !== "SessionStart";
     changed = true;
   }
-  if ((ev.event === "UserPromptSubmit" || ev.event === "Stop") && !s.hasConversation) {
+  if ((ev.event === "UserPromptSubmit" || ev.event === "PreInvocation" || ev.event === "Stop") && !s.hasConversation) {
     s.hasConversation = true;
     changed = true;
   }
   if (changed) save();
-  if (!runtimes.has(s.id)) return;
+  if (!runtimes.get(s.id)?.running) return;
   const status = statusAfter(statusOf(s.id), ev);
   if (status) setStatus(s.id, status);
 }
@@ -669,12 +685,15 @@ function onAgentEvent(ev: AgentEvent) {
 function select(id: string, focus = true) {
   const s = session(id);
   if (!s) return;
+  if (attentionOnly && !ATTENTION.has(statusOf(id))) attentionOnly = false;
   state.ui.activeSessionId = id;
   s.lastUsedAt = Date.now();
   unread.delete(id);
   save();
-  if (!runtimes.has(id)) {
-    void start(s);
+  if (state.ui.grid && !state.ui.pinnedSessionIds.includes(id) && state.ui.pinnedSessionIds.length === 4) state.ui.grid = false;
+  if (!runtimes.has(id) || (!runtimes.get(id)?.running && !s.stopped)) {
+    if (s.stopped) { createRuntime(s); layout(); renderPaneHeads(); }
+    else void start(s);
     renderSidebar();
     return;
   }
@@ -706,13 +725,17 @@ async function closeSession(s: Session) {
   if (rt?.running) {
     const ok = await confirmBox(t("close.title"), t("close.body", { title: s.title }), t("common.close"));
     if (!ok) return;
-    rt.closing = true;
-    await invoke("pty_kill", { id: s.id }).catch((e) => toast(errorText(e)));
-    return; // onExit uprace
+    // It may have exited while the confirmation dialog was open.
+    if (rt.running) {
+      rt.closing = true;
+      await invoke("pty_kill", { id: s.id }).catch((e) => { rt.closing = false; toast(errorText(e)); });
+      return; // onExit uprace
+    }
   }
-  state.sessions = state.sessions.filter((x) => x.id !== s.id);
-  statuses.delete(s.id);
+  archiveSession(state, s.id);
+  forgetRuntime(s.id);
   save();
+  layout();
   renderSidebar();
 }
 
@@ -774,11 +797,18 @@ async function removeProject(p: Project) {
   const live = all.filter((s) => runtimes.get(s.id)?.running);
   const body = live.length ? t("project.removeLive", { n: live.length }) : t("project.removeBody");
   if (!(await confirmBox(t("project.removeTitle", { name: p.name }), body, t("project.removeOk")))) return;
-  for (const s of live) await invoke("pty_kill", { id: s.id }).catch(() => {});
+  for (const s of live) {
+    try { await invoke("pty_kill", { id: s.id }); }
+    catch (e) { toast(errorText(e)); return; }
+  }
+  for (const s of all) forgetRuntime(s.id);
+  state.closedSessions = state.closedSessions.filter((s) => s.projectId !== p.id);
+  state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((id) => !all.some((s) => s.id === id));
   state.sessions = state.sessions.filter((s) => s.projectId !== p.id);
   state.templates = state.templates.filter((t) => t.projectId !== p.id);
   state.projects = state.projects.filter((x) => x.id !== p.id);
   save();
+  layout();
   renderSidebar();
 }
 
@@ -795,11 +825,75 @@ function toggleGrid() {
   layout();
 }
 
+let attentionOnly = false;
+
+function togglePin(id: string) {
+  const pins = state.ui.pinnedSessionIds;
+  if (pins.includes(id)) state.ui.pinnedSessionIds = pins.filter((x) => x !== id);
+  else {
+    if (pins.length === 4) { toast(t("grid.full"), true); return; }
+    pins.push(id);
+  }
+  save();
+  layout();
+  renderPaneHeads();
+}
+
+function jumpAttention() {
+  const id = nextAttention(state.sessions, statuses, state.ui.activeSessionId);
+  const s = session(id);
+  const p = s && project(s.projectId);
+  if (p) p.collapsed = false;
+  if (id) select(id);
+}
+
+function renderAttention() {
+  const root = $("#attention");
+  const count = (status: Status) => state.sessions.filter((s) => statusOf(s.id) === status).length;
+  const filter = el("button", attentionOnly ? "on" : "", t("attention.summary", {
+    waiting: count("needs-you"), done: count("done"), working: count("working"),
+  }));
+  filter.title = t("attention.filter");
+  filter.setAttribute("aria-pressed", String(attentionOnly));
+  filter.onclick = () => { attentionOnly = !attentionOnly; renderSidebar(); };
+  const next = iconButton("→", t("attention.next"), jumpAttention);
+  next.disabled = !state.sessions.some((s) => ATTENTION.has(statusOf(s.id)));
+  const history = el("button", "", t("session.history", { n: state.closedSessions.length }));
+  history.onclick = showClosedSessions;
+  root.replaceChildren(filter, next, history);
+}
+
+function showClosedSessions() {
+  modal((box, close) => {
+    box.append(el("h3", "", t("session.history", { n: state.closedSessions.length })));
+    const list = el("div", "switch-list");
+    for (const s of state.closedSessions) {
+      const row = el("button", "history-row", `${s.title} · ${project(s.projectId)?.name ?? ""}`);
+      row.title = t("session.restart");
+      row.onclick = () => {
+        const restored = restoreSession(state, s.id);
+        if (!restored) return;
+        close();
+        save();
+        select(restored.id);
+        void start(restored);
+      };
+      list.append(row);
+    }
+    if (!state.closedSessions.length) list.append(el("p", "", t("common.noResults")));
+    const cancel = el("button", "", t("common.close"));
+    cancel.onclick = close;
+    box.append(list, cancel);
+    cancel.focus();
+  }, () => {});
+}
+
 // ---------- sidebar ----------
 
 function iconButton(label: string, title: string, onClick: () => void) {
   const b = el("button", "icon", label);
   b.title = title;
+  b.setAttribute("aria-label", title);
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     onClick();
@@ -853,8 +947,13 @@ function startProjectDrag(e: PointerEvent, p: Project, box: HTMLElement) {
   window.addEventListener("pointerup", up);
 }
 
+let closeSessionMenu: (() => void) | undefined;
+
 function renderSidebar() {
   if (projectDrag) return;
+  closeSessionMenu?.();
+  closeSessionMenu = undefined;
+  renderAttention();
   const root = $("#projects");
   const prevInput = root.querySelector<HTMLInputElement>("input.title-edit");
   const caret = prevInput ? [prevInput.selectionStart ?? 0, prevInput.selectionEnd ?? 0] : undefined;
@@ -863,15 +962,28 @@ function renderSidebar() {
   rerendering = false;
   let editInput: HTMLInputElement | undefined;
   for (const p of orderedProjects(state.projects)) {
+    if (attentionOnly && !sessionsOf(state, p.id).some((s) => ATTENTION.has(statusOf(s.id)))) continue;
     const box = el("div", "project");
     box.dataset.id = p.id;
     const row = el("div", "project-row");
     row.title = t("project.rowTitle", { path: p.path });
     const actions = el("span", "row-actions");
+    const defaultProvider = state.settings.defaultProvider;
+    const launch = iconButton("+", t("project.newDefault", { provider: PROVIDER_LABEL[defaultProvider] }), () => void createSession(p, state.settings.defaultProvider));
+    const more = iconButton("▾", t("project.otherSessions"), () => {
+      const wasOpen = more.getAttribute("aria-expanded") === "true";
+      closeSessionMenu?.();
+      closeSessionMenu = wasOpen ? undefined : openSessionMenu(more, state.settings.defaultProvider, (provider) => void createSession(p, provider));
+    });
+    more.setAttribute("aria-haspopup", "menu");
+    more.setAttribute("aria-expanded", "false");
+    more.onkeydown = (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); more.click(); }
+    };
+    const launcher = el("span", "session-launcher");
+    launcher.append(launch, more);
     actions.append(
-      iconButton(PROVIDER_ICON.claude, t("project.newClaude"), () => void createSession(p, "claude")),
-      iconButton(PROVIDER_ICON.codex, t("project.newCodex"), () => void createSession(p, "codex")),
-      iconButton(PROVIDER_ICON.shell, t("project.newShell"), () => void createSession(p, "shell")),
+      launcher,
       iconButton("↗", t("project.openEditor"), () => openEditor(p.path)),
       iconButton(p.pinned ? "★" : "☆", t(p.pinned ? "project.unpin" : "project.pin"), () => {
         p.pinned = !p.pinned;
@@ -892,8 +1004,9 @@ function renderSidebar() {
     });
     box.append(row);
 
-    if (!p.collapsed) {
+    if (!p.collapsed || attentionOnly) {
       for (const s of sessionsOf(state, p.id)) {
+        if (attentionOnly && !ATTENTION.has(statusOf(s.id))) continue;
         const st = statusOf(s.id);
         const item = el("div", "session");
         item.classList.toggle("active", s.id === state.ui.activeSessionId);
@@ -907,8 +1020,9 @@ function renderSidebar() {
         } else {
           body.append(el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`));
         }
-        body.append(el("div", "sub", `${statusLabel(st)}${contextLabel(s)}`));
+        body.append(el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`));
         const actions = el("span", "row-actions");
+        if (!runtimes.get(s.id)?.running) actions.append(iconButton("↻", t("session.restart"), () => void start(s)));
         actions.append(
           iconButton("ⓘ", t("session.info"), () => showInfo(s)),
           iconButton("✎", t("session.rename"), () => startRename(s)),
@@ -944,57 +1058,7 @@ function renderSidebar() {
 
 // ---------- modálne okná ----------
 
-function modal(build: (box: HTMLElement, close: () => void) => void, onClose: () => void) {
-  const overlay = $("#overlay");
-  const box = el("div", "modal");
-  overlay.replaceChildren(box);
-  overlay.hidden = false;
-  let done = false;
-  const close = () => {
-    if (done) return;
-    done = true;
-    overlay.hidden = true;
-    overlay.replaceChildren();
-    document.removeEventListener("keydown", esc, true);
-    onClose();
-    runtimes.get(state.ui.activeSessionId ?? "")?.term.focus();
-  };
-  const esc = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-    }
-  };
-  document.addEventListener("keydown", esc, true);
-  overlay.onclick = (e) => {
-    if (e.target === overlay) close();
-  };
-  build(box, close);
-}
-
-function confirmBox(heading: string, text: string, okLabel: string, notes = ""): Promise<boolean> {
-  return new Promise((resolve) => {
-    let result = false;
-    modal(
-      (box, close) => {
-        const ok = el("button", "danger", okLabel);
-        const cancel = el("button", "", t("common.cancel"));
-        const actions = el("div", "actions");
-        actions.append(cancel, ok);
-        box.append(el("h3", "", heading), el("p", "", text));
-        if (notes) box.append(el("div", "notes", notes));
-        box.append(actions);
-        ok.onclick = () => {
-          result = true;
-          close();
-        };
-        cancel.onclick = close;
-        cancel.focus();
-      },
-      () => resolve(result),
-    );
-  });
-}
+const { modal, confirmBox } = createDialogs(() => runtimes.get(state.ui.activeSessionId ?? "")?.term.focus());
 
 function quickSwitch() {
   modal(
@@ -1103,7 +1167,7 @@ function showInfo(s: Session) {
       const draw = () => grid.replaceChildren(...infoRows(s).flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v)]));
       draw();
       timer = window.setInterval(draw, 2000);
-      const note = s.provider === "claude" ? t("info.noteClaude") : s.provider === "codex" ? t("info.noteCodex") : "";
+      const note = s.provider === "claude" ? t("info.noteClaude") : s.provider === "codex" ? t("info.noteCodex") : s.provider === "antigravity" ? t("info.noteAntigravity") : "";
       const actions = el("div", "actions");
       if (s.agentSessionId) {
         const copy = el("button", "", t("info.copyId"));
@@ -1277,159 +1341,6 @@ function editTemplate(tpl: PromptTemplate | undefined, p: Project | undefined) {
   );
 }
 
-type EditorPick = Pick<Settings, "editorId" | "customEditorPath" | "customEditorArgs">;
-
-/**
- * Výber editora: nainštalované editory (z registra / bundle ID / PATH) a „Iný program…“
- * s cestou k programu a argumentmi. Vráti funkciu, ktorá prečíta výber, alebo chybu.
- */
-function editorPicker(box: HTMLElement, st: Settings): () => EditorPick | string {
-  const select = el("select");
-  select.append(new Option(t("editor.searching"), st.editorId));
-  const note = el("div", "note");
-
-  const custom = el("div", "custom-editor");
-  const program = el("input");
-  program.type = "text";
-  program.value = st.customEditorPath;
-  program.placeholder = info.platform === "windows" ? "C:\\Program Files\\…\\editor.exe" : "/Applications/Editor.app";
-  const browse = el("button", "", t("editor.browse"));
-  const programRow = el("div", "input-row");
-  programRow.append(program, browse);
-  const args = el("input");
-  args.type = "text";
-  args.value = st.customEditorArgs;
-  custom.append(
-    el("label", "", t("editor.program")),
-    programRow,
-    el("label", "", t("editor.args")),
-    args,
-    el("div", "note", t("editor.argsNote")),
-  );
-  box.append(el("label", "", t("editor.label")), select, note, custom);
-
-  const sync = () => {
-    custom.hidden = select.value !== CUSTOM_EDITOR;
-  };
-  select.onchange = sync;
-  browse.onclick = async () => {
-    const picked = await openDialog({
-      multiple: false,
-      title: t("editor.pickTitle"),
-      filters: info.platform === "windows" ? [{ name: t("editor.programs"), extensions: ["exe", "com"] }] : undefined,
-    });
-    if (typeof picked === "string") program.value = picked;
-  };
-  sync();
-
-  invoke<EditorInfo[]>("list_editors")
-    .then((found) => {
-      select.replaceChildren();
-      for (const f of found) select.append(new Option(f.label, f.id));
-      const known = st.editorId === "" || st.editorId === CUSTOM_EDITOR || found.some((f) => f.id === st.editorId);
-      if (!known) select.append(new Option(t("editor.notFound", { id: st.editorId }), st.editorId));
-      select.append(new Option(t("editor.other"), CUSTOM_EDITOR));
-      select.value = st.editorId || found[0]?.id || CUSTOM_EDITOR;
-      sync();
-      note.textContent = t(found.length ? "editor.lineNote" : "editor.noneFound");
-    })
-    .catch((e) => (note.textContent = errorText(e)));
-
-  return () => {
-    if (select.value !== CUSTOM_EDITOR) {
-      return { editorId: select.value, customEditorPath: st.customEditorPath, customEditorArgs: st.customEditorArgs };
-    }
-    const path = program.value.trim().replace(/^"(.*)"$/, "$1");
-    if (!path) return t("err.editor.needProgram");
-    return { editorId: CUSTOM_EDITOR, customEditorPath: path, customEditorArgs: args.value.trim() || "%TARGET_PATH%" };
-  };
-}
-
-
-function openSettings() {
-  const st = state.settings;
-  modal(
-    (box, close) => {
-      const field = (label: string, value: string, placeholder = "") => {
-        const input = el("input");
-        input.type = "text";
-        input.value = value;
-        input.placeholder = placeholder;
-        box.append(el("label", "", label), input);
-        return input;
-      };
-      box.append(el("h3", "", t("settings.title")));
-      const language = el("select");
-      for (const l of LANGUAGES) language.append(new Option(l.label, l.id, false, l.id === st.language));
-      box.append(el("label", "", t("settings.language")), language);
-      const claude = field(t("settings.claude"), st.claudeCommand, "claude");
-      const codex = field(t("settings.codex"), st.codexCommand, "codex");
-      const codexResume = field(t("settings.codexResume"), st.codexResumeCommand, "codex resume");
-      const shell = field(t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
-      const editor = editorPicker(box, st);
-      const systemExts = field(t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
-      box.append(el("div", "note", t("settings.systemOpenNote")));
-      const notifLabel = el("label", "check");
-      const notif = el("input");
-      notif.type = "checkbox";
-      notif.checked = st.notifications;
-      notifLabel.append(notif, document.createTextNode(t("settings.notifications")));
-      const resumeLabel = el("label", "check");
-      const resume = el("input");
-      resume.type = "checkbox";
-      resume.checked = st.autoResume;
-      resumeLabel.append(resume, document.createTextNode(t("settings.autoResume")));
-      box.append(notifLabel, resumeLabel);
-      box.append(
-        el(
-          "div",
-          "note",
-          `${t(info.hooksEnabled ? "settings.hooksOn" : "settings.hooksOff")} ${t("settings.footer", { file: info.stateFile })}`,
-        ),
-      );
-      const save_ = el("button", "primary", t("common.save"));
-      const cancel = el("button", "", t("common.cancel"));
-      const actions = el("div", "actions");
-      if (info.updates) {
-        const checkBtn = el("button", "left", t("update.check"));
-        checkBtn.onclick = async () => {
-          checkBtn.disabled = true;
-          checkBtn.textContent = t("update.checking");
-          if (await checkUpdate(true)) {
-            close();
-            return installUpdate();
-          }
-          checkBtn.disabled = false;
-          checkBtn.textContent = t("update.check");
-        };
-        actions.append(checkBtn);
-      }
-      actions.append(cancel, save_);
-      box.append(actions);
-      cancel.onclick = close;
-      save_.onclick = () => {
-        st.claudeCommand = claude.value.trim() || "claude";
-        st.codexCommand = codex.value.trim() || "codex";
-        st.codexResumeCommand = codexResume.value.trim() || "codex resume";
-        st.shell = shell.value.trim();
-        const pick = editor();
-        if (typeof pick === "string") return toast(pick);
-        Object.assign(st, pick);
-        st.systemOpenExts = systemExts.value.trim();
-        st.notifications = notif.checked;
-        st.autoResume = resume.checked;
-        const langChanged = st.language !== language.value;
-        st.language = language.value;
-        save();
-        close();
-        if (langChanged) applyLanguage();
-      };
-      claude.focus();
-    },
-    () => {},
-  );
-}
-
 /** Prepne jazyk bez reštartu: statické texty, zoznam, hlavičky terminálov a vyhľadávania. */
 function applyLanguage() {
   setLang(state.settings.language);
@@ -1440,66 +1351,14 @@ function applyLanguage() {
 
 // ---------- aktualizácie ----------
 
-let pendingUpdate: Update | undefined;
+const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, saves.flush);
+const showSettings = createSettings(
+  () => state.settings,
+  (draft, langChanged) => { state.settings = draft; save(); if (langChanged) applyLanguage(); else renderSidebar(); },
+  modal, toast, checkUpdate, installUpdate,
+);
+const openSettings = () => showSettings(info);
 
-/**
- * Hľadá novú verziu v GitHub Releases. Automatická kontrola bez siete alebo bez vydania ticho nič;
- * ručná (`manual`, z Nastavení) povie, keď nič nenašla. Vráti true, ak je k dispozícii nová verzia.
- */
-async function checkUpdate(manual = false): Promise<boolean> {
-  if (pendingUpdate) return true;
-  let update: Update | null;
-  try {
-    update = await check();
-  } catch (e) {
-    if (manual) toast(t("update.checkFailed", { detail: String(e) }));
-    return false;
-  }
-  if (!update) {
-    if (manual) toast(t("update.upToDate", { version: await getVersion() }), true);
-    return false;
-  }
-  pendingUpdate = update;
-  const btn = $<HTMLButtonElement>("#btn-update");
-  btn.textContent = t("update.button", { version: update.version });
-  btn.hidden = false;
-  return true;
-}
-
-/** Zoznam zmien z release notes: len riadky „- …“, ktoré release workflow vytvorí z commitov. */
-function changesOf(body: string | undefined): string {
-  return (body ?? "").split(/\r?\n/).filter((l) => l.startsWith("- ")).join("\n");
-}
-
-async function installUpdate() {
-  const update = pendingUpdate;
-  if (!update) return;
-  const ok = await confirmBox(t("update.title", { version: update.version }), t("update.body"), t("update.ok"), changesOf(update.body));
-  if (!ok) return;
-  const btn = $<HTMLButtonElement>("#btn-update");
-  btn.disabled = true;
-  let total = 0;
-  let done = 0;
-  try {
-    await update.download((e) => {
-      if (e.event === "Started") total = e.data.contentLength ?? 0;
-      else if (e.event === "Progress") done += e.data.chunkLength;
-      const percent = total ? `${Math.min(100, Math.round((done / total) * 100))} %` : "";
-      btn.textContent = t("update.downloading", { percent });
-    });
-    // Na Windows updater spustí inštalátor a hneď ukončí appku; bez tohto by inštalátor
-    // zabil Job Object spolu s ňou. Púšťame až teraz, nech terminály počas sťahovania ostanú v jobe.
-    await invoke("prepare_update", { on: true });
-    await update.install();
-    // Na Windows inštalátor appku zavrie sám; inde ju treba spustiť nanovo.
-    await relaunch();
-  } catch (e) {
-    void invoke("prepare_update", { on: false }).catch(() => {});
-    btn.disabled = false;
-    btn.textContent = t("update.button", { version: update.version });
-    toast(t("update.failed", { detail: String(e) }));
-  }
-}
 
 // ---------- klávesy, resizer, štart ----------
 
@@ -1513,7 +1372,7 @@ function digitOf(e: KeyboardEvent): number | undefined {
 function isAppShortcut(e: KeyboardEvent): boolean {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
   const key = e.key.toLowerCase();
-  return e.shiftKey ? key === "f" || key === "t" : key === "k" || key === "g" || digitOf(e) !== undefined;
+  return e.shiftKey ? key === "f" || key === "t" || key === "a" : key === "k" || key === "g" || digitOf(e) !== undefined;
 }
 
 function handleGlobalKey(e: KeyboardEvent): boolean {
@@ -1529,7 +1388,8 @@ function handleGlobalKey(e: KeyboardEvent): boolean {
   }
   if (e.shiftKey) {
     e.preventDefault();
-    if (key === "t") openTemplates();
+    if (key === "a") jumpAttention();
+    else if (key === "t") openTemplates();
     else if (key === "f") {
       const rt = runtimes.get(state.ui.activeSessionId ?? "");
       if (rt) openSearch(rt);
@@ -1575,10 +1435,12 @@ function setupResizer() {
 
 async function main() {
   info = await invoke<AppInfo>("app_info");
-  const loaded = parseState(await invoke<string | null>("load_state"));
+  const stored = await invoke<{ json: string | null; recovered: boolean }>("load_state");
+  const loaded = parseState(stored.json);
   state = loaded.state;
   setLang(state.settings.language);
   translateDocument();
+  if (stored.recovered) toast(t("app.recovered"), true);
   if (loaded.dropped) toast(t("app.corrupted", { n: loaded.dropped }));
 
   setupResizer();
@@ -1594,10 +1456,17 @@ async function main() {
 
   new ResizeObserver(() => requestAnimationFrame(fitVisible)).observe($("#stage"));
 
-  await listen<{ id: string; code: number | null }>("pty-exit", (e) => onExit(e.payload.id));
+  await listen<{ id: string; code: number | null }>("pty-exit", (e) => onExit(e.payload.id, e.payload.code));
   await listen<AgentEvent>("agent-event", (e) => onAgentEvent(e.payload));
 
   const win = getCurrentWindow();
+  await win.onCloseRequested(async (event) => {
+    event.preventDefault();
+    if (closingWindow) return;
+    closingWindow = true;
+    try { await saves.flush(); await win.destroy(); }
+    catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
+  });
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
@@ -1621,9 +1490,22 @@ async function main() {
     const order = [...state.sessions].sort((a, b) => a.createdAt - b.createdAt);
     const active = session(state.ui.activeSessionId);
     for (const s of active ? [active, ...order.filter((x) => x !== active)] : order) {
-      if (session(s.id) && !runtimes.has(s.id)) await start(s);
+      if (session(s.id) && !s.stopped && !runtimes.has(s.id)) await start(s);
     }
   }
+  if (state.ui.grid) {
+    for (const id of state.ui.pinnedSessionIds) {
+      const pinned = session(id);
+      if (pinned && !runtimes.has(id)) createRuntime(pinned);
+    }
+    layout();
+    renderPaneHeads();
+  }
+  const active = session(state.ui.activeSessionId);
+  if (active?.stopped && !runtimes.has(active.id)) { createRuntime(active); layout(); renderPaneHeads(); }
 }
 
-void main();
+void main().catch((error) => {
+  const empty = $("#empty");
+  empty.replaceChildren(el("p", "", t("app.loadFailed")), el("p", "hint", String(error)));
+});

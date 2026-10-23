@@ -15,7 +15,7 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     pid: Option<u32>,
 }
 
@@ -27,7 +27,28 @@ impl PtySession {
             // SAFETY: killpg iba posiela signál, nepracuje s pamäťou.
             unsafe { libc::killpg(pid as libc::pid_t, libc::SIGHUP) };
         }
+        // portable-pty 0.9's cloned Windows killer reverses the BOOL success
+        // check. Use the native result while the child handle is still held by
+        // the wait thread (and the session registry lock prevents its removal).
+        #[cfg(windows)]
+        if let Some(pid) = self.pid {
+            return kill_windows_process(pid);
+        }
         self.killer.kill()
+    }
+}
+
+#[cfg(windows)]
+fn kill_windows_process(pid: u32) -> std::io::Result<()> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // SAFETY: OpenProcess creates an owned handle; it is closed on every path.
+    unsafe {
+        let process = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if process.is_null() { return Err(std::io::Error::last_os_error()); }
+        let result = if TerminateProcess(process, 1) != 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+        CloseHandle(process);
+        result
     }
 }
 
@@ -203,6 +224,21 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[cfg(windows)]
+    #[test]
+    fn killing_a_live_windows_process_reports_success() {
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"])
+            .creation_flags(0x08000000)
+            .spawn().unwrap();
+        let result = super::kill_windows_process(child.id());
+        if result.is_err() { let _ = child.kill(); }
+        let status = child.wait().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!status.success());
+    }
 
     #[test]
     fn keeps_split_multibyte_char_for_next_chunk() {

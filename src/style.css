@@ -48,6 +48,14 @@ button.icon.on { color: var(--accent); }
 .project-row .missing { color: var(--danger); font-weight: 400; font-size: 11px; margin-left: 4px; }
 .row-actions { display: flex; gap: 0; opacity: 0; }
 .project-row:hover .row-actions, .session:hover .row-actions { opacity: 1; }
+.project-row:focus-within .row-actions, .session:focus-within .row-actions { opacity: 1; }
+.row-actions:has([aria-expanded="true"]) { opacity: 1; }
+.session-launcher { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; }
+.session-launcher button.icon { padding: 0 5px; }
+.session-launcher button + button { border-left: 1px solid var(--line); border-radius: 0 4px 4px 0; }
+.session-menu { position: fixed; z-index: 1000; min-width: 155px; padding: 4px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 6px 20px #0008; }
+.session-menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 3px; padding: 7px 10px; background: none; cursor: pointer; }
+.session-menu button:hover, .session-menu button:focus-visible { background: var(--panel-2); outline: 1px solid var(--accent); }
 
 .session { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 26px; cursor: pointer; border-left: 2px solid transparent; }
 .session:hover { background: var(--panel-2); }
@@ -132,3 +140,16 @@ button.icon.on { color: var(--accent); }
 .switch-item .meta { color: var(--muted); font-size: 11px; margin-left: auto; white-space: nowrap; }
 
 .toast { position: fixed; bottom: 14px; right: 14px; max-width: 420px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--danger); padding: 10px 12px; border-radius: 6px; z-index: 20; user-select: text; }
+
+/* Session recovery, pinned panes and attention overview. */
+#attention { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+#attention button, .history-row { border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--text); padding: 5px 7px; cursor: pointer; font: inherit; font-size: 11px; }
+#attention button.on { border-color: var(--accent); color: var(--accent); }
+#attention button:disabled { opacity: .4; cursor: default; }
+.history-row { display: block; width: 100%; text-align: left; margin-bottom: 5px; }
+.pane-head, #stage[class*="grid-"] .pane-head { display: flex; align-items: center; gap: 5px; min-height: 28px; flex-shrink: 0; }
+.pane-head .icon:first-of-type { margin-left: auto; }
+.pane-head.stopped { color: var(--danger); }
+.dot.exited { background: var(--danger); }
+.search-bar { top: 28px; }
+.modal { max-height: 80vh; overflow-y: auto; }

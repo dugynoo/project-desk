@@ -11,6 +11,18 @@ export const LANGUAGES: { id: Lang; label: string }[] = [
 const LOCALE: Record<Lang, string> = { en: "en-GB", sk: "sk-SK", cs: "cs-CZ" };
 
 const en = {
+  "status.exited": "Stopped",
+  "session.restart": "Start again / resume conversation",
+  "session.exitCode": "Process exited (code {code}). Use Start again to resume.",
+  "session.history": "Recently closed ({n})",
+  "grid.pin": "Pin / unpin pane in grid",
+  "grid.full": "All four panes are pinned. Unpin one first.",
+  "attention.summary": "{waiting} waiting · {done} done · {working} working",
+  "attention.filter": "Show only waiting and completed sessions",
+  "attention.next": "Next session needing attention (Ctrl+Shift+A)",
+  "app.recovered": "Saved state recovered from the last valid backup.",
+  "app.loadFailed": "Could not load the app. Check the error below and restart. If state could not be loaded, it has not been overwritten.",
+
   // index.html
   "html.switch": "Find session (Ctrl+K)",
   "html.templates": "Prompt templates (Ctrl+Shift+T)",
@@ -73,6 +85,9 @@ const en = {
   "project.rowTitle": "{path}\nDrag to reorder.",
   "project.newClaude": "New Claude session",
   "project.newCodex": "New Codex session",
+  "project.newAntigravity": "New Antigravity session",
+  "settings.antigravity": "Antigravity command",
+  "info.noteAntigravity": "Requires agy and Node.js in PATH. Project hooks provide status and conversation resume; token counts and automatic permission prompts are not tracked.",
   "project.newShell": "New shell",
   "project.openEditor": "Open in editor",
   "project.pin": "Pin to top",
@@ -150,6 +165,9 @@ const en = {
 
   "settings.title": "Settings",
   "settings.language": "Language",
+  "settings.defaultProvider": "Default session for +",
+  "project.newDefault": "New session: {provider}",
+  "project.otherSessions": "Other session types",
   "settings.claude": "Claude command",
   "settings.codex": "Codex command",
   "settings.codexResume": "Codex resume command",
@@ -193,6 +211,18 @@ const en = {
 export type Key = keyof typeof en;
 
 const sk: Record<Key, string> = {
+  "status.exited": "Ukončené",
+  "session.restart": "Spustiť znova / obnoviť konverzáciu",
+  "session.exitCode": "Proces sa ukončil (kód {code}). Pokračujte cez Spustiť znova.",
+  "session.history": "Nedávno zatvorené ({n})",
+  "grid.pin": "Pripnúť / odopnúť panel v mriežke",
+  "grid.full": "Všetky štyri panely sú pripnuté. Najprv jeden odopnite.",
+  "attention.summary": "{waiting} čakajú · {done} hotové · {working} pracujú",
+  "attention.filter": "Zobraziť iba čakajúce a dokončené relácie",
+  "attention.next": "Ďalšia relácia vyžadujúca pozornosť (Ctrl+Shift+A)",
+  "app.recovered": "Uložený stav sa obnovil z poslednej platnej zálohy.",
+  "app.loadFailed": "Aplikáciu sa nepodarilo načítať. Skontrolujte chybu nižšie a reštartujte ju. Ak sa stav nenačítal, nebol prepísaný.",
+
   "html.switch": "Nájsť reláciu (Ctrl+K)",
   "html.templates": "Šablóny promptov (Ctrl+Shift+T)",
   "html.grid": "Mriežka 2×2 (Ctrl+G)",
@@ -254,6 +284,9 @@ const sk: Record<Key, string> = {
   "project.rowTitle": "{path}\nŤahaním zmeníš poradie.",
   "project.newClaude": "Nová Claude relácia",
   "project.newCodex": "Nová Codex relácia",
+  "project.newAntigravity": "Nová Antigravity relácia",
+  "settings.antigravity": "Príkaz pre Antigravity",
+  "info.noteAntigravity": "Vyžaduje agy a Node.js v PATH. Projektové hooks poskytujú stav a obnovenie konverzácie; tokeny a automatické žiadosti o povolenie nesledujeme.",
   "project.newShell": "Nový shell",
   "project.openEditor": "Otvoriť v editore",
   "project.pin": "Pripnúť hore",
@@ -331,6 +364,9 @@ const sk: Record<Key, string> = {
 
   "settings.title": "Nastavenia",
   "settings.language": "Jazyk",
+  "settings.defaultProvider": "Predvolená relácia pre +",
+  "project.newDefault": "Nová relácia: {provider}",
+  "project.otherSessions": "Ďalšie typy relácií",
   "settings.claude": "Príkaz pre Claude",
   "settings.codex": "Príkaz pre Codex",
   "settings.codexResume": "Príkaz pre pokračovanie Codexu",
@@ -371,6 +407,18 @@ const sk: Record<Key, string> = {
 };
 
 const cs: Record<Key, string> = {
+  "status.exited": "Ukončeno",
+  "session.restart": "Spustit znovu / obnovit konverzaci",
+  "session.exitCode": "Proces se ukončil (kód {code}). Pokračujte přes Spustit znovu.",
+  "session.history": "Nedávno zavřené ({n})",
+  "grid.pin": "Připnout / odepnout panel v mřížce",
+  "grid.full": "Všechny čtyři panely jsou připnuté. Nejprve jeden odepněte.",
+  "attention.summary": "{waiting} čekají · {done} hotové · {working} pracují",
+  "attention.filter": "Zobrazit pouze čekající a dokončené relace",
+  "attention.next": "Další relace vyžadující pozornost (Ctrl+Shift+A)",
+  "app.recovered": "Uložený stav byl obnoven z poslední platné zálohy.",
+  "app.loadFailed": "Aplikaci se nepodařilo načíst. Zkontrolujte chybu níže a restartujte ji. Pokud se stav nenačetl, nebyl přepsán.",
+
   "html.switch": "Najít relaci (Ctrl+K)",
   "html.templates": "Šablony promptů (Ctrl+Shift+T)",
   "html.grid": "Mřížka 2×2 (Ctrl+G)",
@@ -432,6 +480,9 @@ const cs: Record<Key, string> = {
   "project.rowTitle": "{path}\nTažením změníš pořadí.",
   "project.newClaude": "Nová Claude relace",
   "project.newCodex": "Nová Codex relace",
+  "project.newAntigravity": "Nová Antigravity relace",
+  "settings.antigravity": "Příkaz pro Antigravity",
+  "info.noteAntigravity": "Vyžaduje agy a Node.js v PATH. Projektové hooks poskytují stav a obnovení konverzace; tokeny a automatické žádosti o povolení nesledujeme.",
   "project.newShell": "Nový shell",
   "project.openEditor": "Otevřít v editoru",
   "project.pin": "Připnout nahoru",
@@ -509,6 +560,9 @@ const cs: Record<Key, string> = {
 
   "settings.title": "Nastavení",
   "settings.language": "Jazyk",
+  "settings.defaultProvider": "Výchozí relace pro +",
+  "project.newDefault": "Nová relace: {provider}",
+  "project.otherSessions": "Další typy relací",
   "settings.claude": "Příkaz pro Claude",
   "settings.codex": "Příkaz pro Codex",
   "settings.codexResume": "Příkaz pro pokračování Codexu",

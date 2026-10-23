@@ -22,14 +22,15 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
+# Releases use Tauri v2 artifacts; legacy v1 ZIP support pulls in zip 4.x.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
-winreg = "0.55"
+winreg = "0.56"
 
 [profile.release]
 codegen-units = 1

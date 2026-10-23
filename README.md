@@ -1,6 +1,6 @@
 # Project Desk
 
-A desktop app for running Claude Code, Codex and plain shell sessions across many projects from one window. Each project lists its sessions with a live status, so you can see at a glance which agent is working, which one is done and which one is waiting for you.
+A desktop app for running Claude Code, Codex, Antigravity CLI and plain shell sessions across many projects from one window. Each project lists its sessions with a live status, so you can see at a glance which agent is working, which one is done and which one is waiting for you.
 
 It replaces the earlier Cursor extension. Your editor opens only when you ask for it.
 
@@ -9,21 +9,33 @@ The UI is available in English, Slovak and Czech (⚙ Settings → Language). En
 ## Features
 
 ### Projects and sessions
-- Projects live in the sidebar. Each project row has buttons for a new **✳ Claude**, **‹› Codex** or **▣ Shell** session, **↗** open in editor, **☆** pin and **✕** remove.
+- Projects live in the sidebar. Each project row has **+** to start your default session and **▾** to choose another provider, plus **↗** open in editor, **☆** pin and **✕** remove. Set the default in Settings: Claude (initial default), Codex, Antigravity or Shell. The dropdown shows the other providers and supports arrow keys and Escape.
 - Drag projects to reorder them. Pinned projects always stay on top.
 - Drag the sidebar edge to resize it.
-- Rename a session inline (double-click or ✎). Closing a terminal (✕ or `exit`) removes it from the list.
+- Rename a session inline (double-click or ✎). Closing a terminal with ✕ moves it to **Recently closed** (up to 20 sessions), where it can be resumed with its conversation ID.
+- When a process exits, its terminal output stays visible with the exit code and a **Start again** button. Stopped sessions stay stopped after an app restart; terminal output itself is not saved to disk.
 
 ### Agent status
 - **Claude Code:** status comes from Claude Code hooks: *Working*, *Needs you*, *Done*, *Ready*, *Agent exited*. The app starts Claude with `--settings` pointing at HTTP hooks on a local endpoint. Your `~/.claude` settings are never modified.
 - **Codex:** status comes from the Codex session file in `~/.codex/sessions`: *Working*, *Done*. The app reads only the event type (`task_started`, `task_complete`, `turn_aborted`). Codex hooks would require changing its configuration, so they are not used.
+- **Antigravity CLI:** project-local hooks report activity, completion and explicit `ask_question` / `ask_permission` tools. Automatic permission dialogs are not exposed by these hooks; token usage is not tracked. See setup below.
 - **Notifications:** a system notification and an unread dot appear when an agent finishes or needs you while you are looking elsewhere.
+- **Attention overview:** the sidebar counts waiting, completed and working sessions. Click the counts to filter to waiting/completed sessions; **Ctrl+Shift+A** jumps to the next one.
 
 ### Session info
 Click **ⓘ** or right-click a session to see the model, context size, tokens (new, from cache, output) and, for Codex, the used rate limit. The conversation ID can be copied. The numbers apply to the current conversation and restart after `/clear`.
 
 ### Resume after restart
-On start, sessions resume where they left off: Claude with `--resume <id>`, Codex with `codex resume <id>`. You can turn this off in Settings.
+On start, sessions resume where they left off: Claude with `--resume <id>`, Codex with `codex resume <id>`, Antigravity with `agy --conversation <id>` once a hook has reported the conversation ID. You can turn this off in Settings.
+
+### Antigravity setup
+Install and sign in to [Antigravity CLI](https://www.antigravity.google/docs/cli/reference/) (`agy`), and make Node.js 22+ available on `PATH` for the hook relay. The Antigravity IDE launcher alone is not sufficient. Choose **Antigravity** in the project's **▾** menu, or set it as the default and use **+**. The launch command is configurable in Settings; the default `agy` preserves the CLI's permission policy.
+
+On first launch in a project, Desk adds a **project-desk** entry to `.agents/hooks.json`, preserving other entries. Invalid JSON or a conflicting/disabled entry stops launch with an error instead of replacing your configuration. This file is a visible workspace change; keep it local or review it before committing. It contains a constant Node relay command, no credentials or machine paths. The entry remains after closing Desk; remove just that entry to uninstall it. Global Antigravity configuration is never changed.
+
+The relay reads hooks from stdin, forwards only event/conversation/tool-name/idle metadata to Desk's authenticated loopback endpoint, and leaves tool approvals to the CLI. Outside a Desk-launched session it does nothing. Conversation IDs enable exact resume; before the first hook arrives, a restart opens a fresh session rather than selecting an unrelated recent conversation. Grid, pinning, history, search and prompt templates work as for other agents.
+
+Status support follows the [documented hooks](https://www.antigravity.google/docs/hooks). A Stop event with background work still active does not mark the session done. Token counts and automatic permission prompts are currently unavailable. Real CLI compatibility still needs an authenticated end-to-end check; automated tests cover the documented payloads and local relay.
 
 ### Prompt templates
 Press **✦** or **Ctrl+Shift+T**. Templates can be shared by all projects or belong to one project. A template is pasted into the active session as a single bracketed paste and can optionally be sent right away.
@@ -32,7 +44,7 @@ Press **✦** or **Ctrl+Shift+T**. Templates can be shared by all projects or be
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.
 - **Ctrl+click** a URL to open it in your browser. Ctrl+click a file path such as `src/main.ts:120` to open it in your editor at that line. File types listed in ⚙ Settings (by default HTML, PDF and images) open in the default app instead, so an HTML file opens in the browser.
 - **Right-click** a file path for more: open in the editor, open with the default app, show in Explorer / Finder / the file manager, copy the full or relative path. Right-click a URL to open or copy it.
-- **2×2 grid:** Ctrl+G shows up to four running sessions at once.
+- **2×2 grid:** Ctrl+G shows up to four sessions at once. Use ☆ / ★ in a terminal header to pin a pane; pins retain their order and survive restarts. Unpinned slots follow recent activity. Selecting a different session when all four panes are pinned switches to single-session view without changing the pins.
 - **Find a session:** Ctrl+K. **Ctrl+1–8** jumps to a session by its position in the sidebar, **Ctrl+9** to the last one.
 - **Clipboard:** Ctrl+C copies the selection (with nothing selected it interrupts the process), Ctrl+V pastes, and Shift+Enter inserts a new line in Claude.
 
@@ -89,6 +101,10 @@ npm run tauri build   # local release: src-tauri\target\release\project-desk.exe
 
 The app state is stored in `%APPDATA%\eu.effistream.projectdesk\state.json`. The dev build uses `eu.effistream.projectdesk.dev`.
 
+State writes are serialized and flushed before closing the window or installing an update. `state.json.bak` keeps the previous valid state. If the main file is damaged or missing, the app recovers from that backup and reports it. A damaged main file is preserved as `state.json.corrupt-<id>` on the next save. If neither file can be loaded, startup reports the error instead of silently replacing the data with an empty workspace.
+
+Frontend orchestration lives in `src/main.ts`; settings, dialogs, updates, and the save queue have separate modules. Pure session lifecycle and grid rules live in `src/model.ts`; native state recovery lives in `src-tauri/src/persistence.rs`.
+
 ### Releases
 ```powershell
 npm version 0.2.0        # bumps the version, commits and tags v0.2.0
@@ -99,6 +115,8 @@ git push --follow-tags
 The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb) and creates a draft release. The release notes list the commit subjects since the previous tag, and the app shows them when it offers the update. Installed apps see the update once you publish the draft.
 
 The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
+
+Keep `createUpdaterArtifacts: true` (Tauri v2 format). The updater's legacy v1 ZIP feature is disabled to avoid the vulnerable `zip` 4.x dependency. Windows uses the signed installer directly, Linux uses the AppImage, and macOS retains its required tar.gz support. TLS, system proxy support, and signature verification remain enabled.
 
 The installers are not code-signed, so Windows SmartScreen and macOS Gatekeeper warn on first install.
 
