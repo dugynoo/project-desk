@@ -88,6 +88,7 @@ export function migrateEditorCommand(command: string): string {
 export const SETTINGS_REV = 2;
 
 export interface PersistedState {
+  notifications: AttentionEvent[];
   version: 1;
   projects: Project[];
   sessions: Session[];
@@ -95,7 +96,7 @@ export interface PersistedState {
   closedSessions: Session[];
   settings: Settings;
   settingsRev: number;
-  ui: { sidebarWidth: number; grid: boolean; pinnedSessionIds: string[]; activeSessionId?: string };
+  ui: { sidebarWidth: number; grid: boolean; paneLayout: PaneLayout; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -119,6 +120,7 @@ const REV1_DEFAULTS: Partial<Settings> = { codexCommand: "codex", codexResumeCom
 
 export function emptyState(): PersistedState {
   return {
+    notifications: [],
     version: 1,
     projects: [],
     sessions: [],
@@ -126,7 +128,7 @@ export function emptyState(): PersistedState {
     closedSessions: [],
     settings: { ...DEFAULT_SETTINGS },
     settingsRev: SETTINGS_REV,
-    ui: { sidebarWidth: 280, grid: false, pinnedSessionIds: [] },
+    ui: { sidebarWidth: 280, grid: false, paneLayout: "grid", paneSizes: {}, pinnedSessionIds: [] },
   };
 }
 
@@ -195,6 +197,20 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     state.closedSessions = archived.state.sessions.filter((s) => !activeIds.has(s.id)).slice(0, 20);
     dropped += archived.dropped;
   }
+  const notificationIds = new Set<string>();
+  for (const n of Array.isArray(data.notifications) ? data.notifications : []) {
+    if (!isObj(n) || !str(n.id) || notificationIds.has(n.id) || !str(n.sessionId)
+      || typeof n.sessionTitle !== "string" || typeof n.projectName !== "string"
+      || !PROVIDERS.includes(n.provider as Provider) || n.provider === "shell"
+      || (n.kind !== "done" && n.kind !== "needs-you")
+      || typeof n.at !== "number" || !Number.isFinite(n.at) || n.at < 0 || n.at > 8_640_000_000_000_000) { dropped++; continue; }
+    notificationIds.add(n.id);
+    state.notifications.push({ id: n.id, sessionId: n.sessionId, sessionTitle: n.sessionTitle.slice(0, 300),
+      projectName: n.projectName.slice(0, 300), provider: n.provider as Provider,
+      kind: n.kind, at: n.at, read: n.read === true });
+  }
+  state.notifications.sort((a, b) => b.at - a.at);
+  state.notifications = state.notifications.slice(0, ATTENTION_HISTORY_LIMIT);
   if (isObj(data.settings)) {
     for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
       const v = data.settings[key];
@@ -215,6 +231,15 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
   if (isObj(data.ui)) {
     state.ui.sidebarWidth = clampSidebar(num(data.ui.sidebarWidth, 280));
     state.ui.grid = data.ui.grid === true;
+    if (["grid", "columns", "rows"].includes(data.ui.paneLayout as string)) state.ui.paneLayout = data.ui.paneLayout as PaneLayout;
+    if (isObj(data.ui.paneSizes)) {
+      for (const [key, value] of Object.entries(data.ui.paneSizes)) {
+        if (/^(columns|rows)-[234]$|^grid-[xy]$/.test(key)) {
+          const count = key.startsWith("grid") ? 2 : Number(key.at(-1));
+          state.ui.paneSizes[key] = paneWeights(value, count);
+        }
+      }
+    }
     if (Array.isArray(data.ui.pinnedSessionIds)) {
       state.ui.pinnedSessionIds = [...new Set(data.ui.pinnedSessionIds.filter((id): id is string =>
         typeof id === "string" && state.sessions.some((s) => s.id === id)))].slice(0, 4);
@@ -271,12 +296,26 @@ export type Status =
   | "exited"
   | "sleeping"
   | "starting"
+  | "untracked"
   | "running"
   | "idle"
   | "working"
   | "needs-you"
   | "done"
   | "agent-exited";
+
+/** Spawning the shell must not overwrite an agent event received during IPC. */
+export function statusAfterSpawn(prev: Status, s: Pick<Session, "provider" | "started" | "agentSessionId">, hooksEnabled: boolean): Status {
+  if (prev !== "starting") return prev;
+  if (s.provider === "shell") return "running";
+  if (s.provider === "codex") return s.started && !isUuid(s.agentSessionId) ? "untracked" : "starting";
+  return hooksEnabled ? "starting" : "untracked";
+}
+
+/** A missing readiness event is not proof that the agent finished or is working. */
+export function statusAfterStartupTimeout(prev: Status): Status {
+  return prev === "starting" ? "untracked" : prev;
+}
 
 export interface AgentEvent {
   deskSessionId: string;
@@ -286,6 +325,28 @@ export interface AgentEvent {
   provider?: "claude" | "antigravity";
   toolName?: string | null;
   fullyIdle?: boolean | null;
+}
+
+export interface SessionObservation {
+  event: string;
+  receivedAt: number;
+  snapshot: boolean;
+}
+
+/** Snapshot timestamps describe when Desk read the file, not when the event happened. */
+export function observeSession(previous: SessionObservation | undefined, event: string, snapshot: boolean, now: number): SessionObservation {
+  if (snapshot && previous?.event === event) return previous;
+  return { event, snapshot, receivedAt: now };
+}
+
+export function sessionDiagnostics(s: Pick<Session, "provider" | "agentSessionId">, running: boolean, hooksEnabled: boolean, observation?: SessionObservation) {
+  const linked = isUuid(s.agentSessionId);
+  const method = s.provider === "shell" ? "none" : s.provider === "codex" ? "file" : "hooks";
+  const reason = !running ? "stopped" : method === "none" ? "shell"
+    : method === "hooks" && !hooksEnabled ? "hooksUnavailable"
+    : s.provider === "codex" && !linked ? "missingId"
+    : !observation ? (method === "file" ? "awaitingFile" : "awaitingHook") : "receiving";
+  return { linked, method, reason } as const;
 }
 
 const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]);
@@ -307,7 +368,7 @@ export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
       return "agent-exited";
     case "Notification":
       if (ev.notificationType && NEEDS_INPUT.has(ev.notificationType)) return "needs-you";
-      if (ev.notificationType === "idle_prompt" && prev === "working") return "done";
+      if (ev.notificationType === "idle_prompt" && ["working", "starting", "untracked", "idle"].includes(prev)) return "done";
       return undefined;
     default:
       return undefined;
@@ -316,6 +377,41 @@ export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
 
 /** Stavy, pri ktorých má zmysel upozorniť, ak sa používateľ práve nepozerá. */
 export const ATTENTION: ReadonlySet<Status> = new Set<Status>(["needs-you", "done"]);
+
+export interface AttentionEvent {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  projectName: string;
+  provider: Provider;
+  kind: "done" | "needs-you";
+  at: number;
+  read: boolean;
+}
+export const ATTENTION_HISTORY_LIMIT = 100;
+
+/** Readiness and restored snapshots are not new work completions. */
+export function attentionEventKind(previous: Status, next: Status, silent: boolean): AttentionEvent["kind"] | undefined {
+  if (silent || previous === next) return;
+  if (next === "needs-you") return next;
+  if (next === "done" && (previous === "working" || previous === "needs-you")) return next;
+}
+
+export function recordAttention(state: PersistedState, s: Session, kind: AttentionEvent["kind"], id: string, at: number, read: boolean) {
+  if (s.provider === "shell") return;
+  state.notifications.unshift({ id, sessionId: s.id, sessionTitle: s.title.slice(0, 300),
+    projectName: (state.projects.find(p => p.id === s.projectId)?.name ?? "").slice(0, 300),
+    provider: s.provider, kind, at, read });
+  state.notifications = state.notifications.slice(0, ATTENTION_HISTORY_LIMIT);
+}
+
+export function readAttention(state: PersistedState, sessionId?: string): boolean {
+  let changed = false;
+  for (const n of state.notifications) {
+    if (!n.read && (sessionId === undefined || n.sessionId === sessionId)) { n.read = true; changed = true; }
+  }
+  return changed;
+}
 
 /** Stav podľa udalosti zo session súboru Codexu. */
 export function codexStatusAfter(event: string): Status | undefined {
@@ -478,12 +574,56 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
   if (s) { s.stopped = true; s.exitCode = code; }
 }
 
-/** Pins retain their order; the active unpinned session gets a free slot. */
-export function gridSessions(sessions: Session[], available: ReadonlySet<string>, pins: string[], active?: string): string[] {
+/** Focus never reorders visible panels. A newly selected session replaces one unpinned slot. */
+export function gridSessions(sessions: Session[], available: ReadonlySet<string>, pins: string[], active?: string, previous: string[] = []): string[] {
   const pinned = [...new Set(pins)].filter((id) => available.has(id)).slice(0, 4);
   const recent = byRecent(sessions).map((s) => s.id).filter((id) => available.has(id) && !pinned.includes(id));
   if (active && recent.includes(active)) recent.splice(0, 0, ...recent.splice(recent.indexOf(active), 1));
-  return [...pinned, ...recent].slice(0, 4);
+  const capacity = 4 - pinned.length;
+  const stable = [...new Set(previous)].filter(id => recent.includes(id)).slice(0, capacity);
+  if (capacity && active && recent.includes(active) && !stable.includes(active)) {
+    if (stable.length === capacity) stable[capacity - 1] = active;
+    else stable.push(active);
+  }
+  return [...pinned, ...stable, ...recent.filter(id => !stable.includes(id))].slice(0, 4);
+}
+
+export type PaneLayout = "grid" | "columns" | "rows";
+
+/** Normalized tracks, with a minimum 10% share so a pane cannot disappear. */
+export function paneWeights(value: unknown, count: number): number[] {
+  const equal = () => Array.from({ length: count }, () => 1 / count);
+  if (!Array.isArray(value) || value.length !== count || value.some(v => typeof v !== "number" || !Number.isFinite(v) || v <= 0)) return equal();
+  const sum = value.reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(sum)) return equal();
+  const normalized = value.map(v => v / sum);
+  return normalized.some(v => v < 0.099999) ? equal() : normalized;
+}
+
+/** Moving a boundary changes only its adjacent tracks. Position is a fraction of usable space. */
+export function resizePaneTracks(weights: number[], boundary: number, position: number): number[] {
+  if (boundary < 0 || boundary >= weights.length - 1 || !Number.isFinite(position)) return weights;
+  const next = [...weights];
+  const before = weights.slice(0, boundary).reduce((a, b) => a + b, 0);
+  const pair = weights[boundary] + weights[boundary + 1];
+  next[boundary] = Math.max(0.1, Math.min(pair - 0.1, position - before));
+  next[boundary + 1] = pair - next[boundary];
+  return next;
+}
+
+export function paneGeometry(mode: PaneLayout, count: number) {
+  const columns = mode === "columns" ? count : mode === "rows" ? 1 : Math.min(2, count);
+  const rows = mode === "rows" ? count : mode === "columns" ? 1 : Math.ceil(count / 2);
+  return {
+    columns, rows,
+    xKey: mode === "grid" ? "grid-x" : `${mode}-${count}`,
+    yKey: mode === "grid" ? "grid-y" : `${mode}-${count}`,
+    cells: Array.from({ length: count }, (_, i) => ({
+      column: (i % columns) * 2 + 1,
+      row: Math.floor(i / columns) * 2 + 1,
+      span: mode === "grid" && count === 3 && i === 2 ? 3 : 1,
+    })),
+  };
 }
 
 export function nextAttention(sessions: Session[], statuses: ReadonlyMap<string, Status>, active?: string): string | undefined {
@@ -494,4 +634,30 @@ export function nextAttention(sessions: Session[], statuses: ReadonlyMap<string,
 /** Validate before constructing new settings; callers commit only successful results. */
 export function settingsDraft(current: Settings, changes: Partial<Settings>, editor: Partial<Settings> | string): Settings | string {
   return typeof editor === "string" ? editor : { ...current, ...changes, ...editor };
+}
+
+/** Serialize discovery and invalidate results when a launch is replaced or removed. */
+export function createDiscovery() {
+  const entries = new Map<string, { path: string; ambiguous: boolean }>();
+  let busy = false;
+  return {
+    add(id: string, path: string) {
+      const entry = { path, ambiguous: false };
+      for (const [otherId, other] of entries) {
+        if (otherId !== id && other.path === path) other.ambiguous = entry.ambiguous = true;
+      }
+      entries.set(id, entry);
+    },
+    delete(id: string) { entries.delete(id); },
+    async run(lookup: (id: string, current: () => boolean) => Promise<void>) {
+      if (busy) return;
+      busy = true;
+      try {
+        for (const [id, entry] of [...entries]) {
+          const current = () => entries.get(id) === entry && !entry.ambiguous;
+          if (current()) await lookup(id, current);
+        }
+      } finally { busy = false; }
+    },
+  };
 }

@@ -68,7 +68,7 @@ button.icon.on { color: var(--accent); }
 .session.unread .title { font-weight: 600; }
 .session.unread .title::after { content: " ●"; color: var(--needs); font-size: 10px; }
 
-.dot.running, .dot.starting, .dot.agent-exited { background: #9aa3b5; }
+.dot.running, .dot.starting, .dot.untracked, .dot.agent-exited { background: #9aa3b5; }
 .dot.working { background: var(--working); animation: pulse 1.2s ease-in-out infinite; }
 .dot.needs-you { background: var(--needs); }
 .dot.done, .dot.idle { background: var(--done); }
@@ -79,8 +79,12 @@ button.icon.on { color: var(--accent); }
 #resizer:hover, #resizer.drag { background: var(--accent); }
 
 #stage { flex: 1; position: relative; min-width: 0; display: grid; grid-template: 1fr / 1fr; background: var(--bg); }
-#stage.grid-2 { grid-template: 1fr / 1fr 1fr; gap: 2px; background: var(--line); }
-#stage.grid-3, #stage.grid-4 { grid-template: 1fr 1fr / 1fr 1fr; gap: 2px; background: var(--line); }
+#stage.multi-pane { background: var(--line); }
+.pane-divider { background: var(--line); z-index: 2; touch-action: none; user-select: none; }
+.pane-divider.x { cursor: col-resize; }
+.pane-divider.y { cursor: row-resize; }
+.pane-divider:hover, .pane-divider.drag, .pane-divider:focus-visible { background: var(--accent); outline: none; }
+.pane-mode { max-width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px; font: inherit; }
 
 .pane { display: none; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
 .search-bar { position: absolute; top: 6px; right: 14px; z-index: 5; display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .4); }
@@ -88,10 +92,12 @@ button.icon.on { color: var(--accent); }
 .search-bar input { width: 200px; padding: 3px 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font: inherit; outline: none; user-select: text; }
 .search-bar input:focus { border-color: var(--accent); }
 .search-bar .count { min-width: 44px; text-align: center; color: var(--muted); font-size: 11px; }
-#stage[class*="grid-"] .search-bar { top: 28px; }
+#stage.multi-pane .search-bar { top: 28px; }
 .pane.visible { display: flex; }
 .pane-head { display: none; padding: 3px 10px; font-size: 11px; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-#stage[class*="grid-"] .pane-head { display: block; }
+#stage.multi-pane .pane-head { display: flex; align-items: center; flex-shrink: 0; }
+.pane-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pane-head button { flex-shrink: 0; }
 .pane.focused .pane-head { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 /* Padding musí byť na .xterm, nie na hoste: FitAddon odpočítava iba padding terminálu
    a pri paddingu na hoste vyrátal o riadok viac, takže spodok presakoval. */
@@ -131,6 +137,14 @@ button.icon.on { color: var(--accent); }
 .modal dl.info { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; }
 .modal dl.info dt { color: var(--muted); }
 .modal dl.info dd { margin: 0; overflow-wrap: anywhere; }
+.notification-list { display: flex; flex-direction: column; gap: 6px; max-height: 48vh; overflow: auto; margin-top: 12px; }
+.notification-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
+.notification-row.unread { border-left: 3px solid var(--accent); }
+.notification-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.notification-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.notification-text { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notification-row time { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.notification-center .actions { flex-wrap: wrap; }
 .switch-item .row-actions { margin-left: 4px; }
 .switch-item:hover .row-actions { opacity: 1; }
 

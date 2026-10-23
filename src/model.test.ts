@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  createDiscovery,
+  paneGeometry,
+  paneWeights,
+  resizePaneTracks,
+  attentionEventKind,
+  recordAttention,
+  readAttention,
+  observeSession,
+  sessionDiagnostics,
   agentCommand,
   archiveSession,
   restoreSession,
@@ -24,10 +33,140 @@ import {
   parseState,
   sessionByNumber,
   statusAfter,
+  statusAfterSpawn,
+  statusAfterStartupTimeout,
   type Session,
 } from "./model.ts";
 
 const ID = "0b8c5a8e-4f3c-4d2a-9b8e-1c2d3e4f5a6b";
+test("panel geometry supports rows, columns and a full-width third grid pane", () => {
+  for (const count of [1, 2, 3, 4]) {
+    const columns = paneGeometry("columns", count);
+    const rows = paneGeometry("rows", count);
+    assert.equal(columns.columns, count);
+    assert.equal(columns.rows, 1);
+    assert.equal(rows.rows, count);
+    assert.equal(rows.columns, 1);
+    assert.equal(new Set(columns.cells.map(c => c.column)).size, count);
+    assert.equal(new Set(rows.cells.map(c => c.row)).size, count);
+  }
+  assert.deepEqual(paneGeometry("grid", 3).cells, [
+    { column: 1, row: 1, span: 1 }, { column: 3, row: 1, span: 1 }, { column: 1, row: 3, span: 3 },
+  ]);
+  assert.equal(paneGeometry("grid", 4).cells[3].column, 3);
+});
+
+test("resizing preserves adjacent total and other panes, with bounded nonzero sizes", () => {
+  assert.deepEqual(resizePaneTracks([0.5, 0.5], 0, 0.7), [0.7, 0.30000000000000004]);
+  const sizes = resizePaneTracks([0.25, 0.25, 0.25, 0.25], 1, 0.99);
+  assert.equal(sizes[0], 0.25);
+  assert.equal(sizes[3], 0.25);
+  assert.ok(Math.abs(sizes[1] - 0.4) < 1e-9);
+  assert.ok(Math.abs(sizes[2] - 0.1) < 1e-9);
+  assert.deepEqual(resizePaneTracks([0.5, 0.5], 0, -1), [0.1, 0.9]);
+  assert.deepEqual(paneWeights([NaN, 1], 2), [0.5, 0.5]);
+  assert.deepEqual(paneWeights([0, 1], 2), [0.5, 0.5]);
+  assert.deepEqual(paneWeights([1, 1, 1], 2), [0.5, 0.5]);
+});
+
+test("panel preferences migrate and round-trip without accepting invalid layouts or ratios", () => {
+  const old = parseState('{"ui":{"grid":true}}').state;
+  assert.equal(old.ui.paneLayout, "grid");
+  assert.deepEqual(old.ui.paneSizes, {});
+  old.ui.paneLayout = "rows";
+  old.ui.paneSizes = { "rows-2": [0.7, 0.3], "grid-x": [0.4, 0.6] };
+  assert.deepEqual(parseState(JSON.stringify(old)).state.ui, old.ui);
+  const bad = parseState(JSON.stringify({ ui: { paneLayout: "bad", paneSizes: { arbitrary: [1, 2], "grid-x": [0, 1], "rows-4": [1, 1] } } })).state;
+  assert.equal(bad.ui.paneLayout, "grid");
+  assert.deepEqual(bad.ui.paneSizes, { "grid-x": [0.5, 0.5], "rows-4": [0.25, 0.25, 0.25, 0.25] });
+});
+test("attention history excludes readiness, snapshots and duplicate states but includes quick Codex turns", () => {
+  for (const prev of ["starting", "untracked", "sleeping", "idle", "done"] as const) assert.equal(attentionEventKind(prev, "done", false), undefined);
+  assert.equal(attentionEventKind("working", "done", true), undefined);
+  assert.equal(attentionEventKind("working", "done", false), "done");
+  assert.equal(attentionEventKind("working", "needs-you", false), "needs-you");
+  assert.equal(attentionEventKind("needs-you", "needs-you", false), undefined);
+  assert.equal(attentionEventKind("needs-you", "done", false), "done");
+  let previous: import("./model.ts").Status = "done";
+  const events = [];
+  for (const event of ["task_started", "task_complete"]) {
+    const next = codexStatusAfter(event)!;
+    const kind = attentionEventKind(previous, next, false);
+    if (kind) events.push(kind);
+    previous = next;
+  }
+  assert.deepEqual(events, ["done"]);
+});
+
+test("attention history is bounded, metadata-only, persisted and readable after session removal", () => {
+  const state = emptyState();
+  state.projects.push({ id: "p", name: "Project", path: "/tmp/test" });
+  const s: Session = { id: "s", projectId: "p", provider: "claude", title: "Task", createdAt: 1, lastUsedAt: 1 };
+  for (let i = 0; i < 105; i++) recordAttention(state, s, "done", `n${i}`, i, false);
+  assert.equal(state.notifications.length, 100);
+  assert.equal(state.notifications[0].id, "n104");
+  assert.equal(readAttention(state, "other"), false);
+  assert.equal(readAttention(state, "s"), true);
+  assert.equal(readAttention(state, "s"), false);
+  recordAttention(state, { ...s, id: "second" }, "needs-you", "second", 106, false);
+  const restored = parseState(JSON.stringify(state));
+  assert.equal(restored.dropped, 0);
+  assert.deepEqual(restored.state.notifications, state.notifications);
+  assert.equal(readAttention(restored.state), true);
+  const bad = { ...state.notifications[0], prompt: "must not persist", read: "false" };
+  const parsed = parseState(JSON.stringify({ notifications: [bad, bad, { ...bad, id: "bad", at: 1e20 }] }));
+  assert.equal(parsed.dropped, 2);
+  assert.equal(parsed.state.notifications.length, 1);
+  assert.equal(parsed.state.notifications[0].read, false);
+  assert.equal("prompt" in parsed.state.notifications[0], false);
+  assert.deepEqual(parseState('{"projects":[],"sessions":[]}').state.notifications, []);
+});
+test("diagnostics distinguish missing IDs, missing evidence, disabled hooks and stopped processes", () => {
+  const codex = { provider: "codex" as const, agentSessionId: ID };
+  assert.equal(sessionDiagnostics(codex, true, false).reason, "awaitingFile");
+  assert.equal(sessionDiagnostics({ ...codex, agentSessionId: "invalid" }, true, true).reason, "missingId");
+  const observation = observeSession(undefined, "task_complete", true, 100);
+  assert.equal(sessionDiagnostics(codex, true, false, observation).reason, "receiving");
+  assert.equal(sessionDiagnostics(codex, false, true, observation).reason, "stopped");
+  for (const provider of ["claude", "antigravity"] as const) {
+    assert.equal(sessionDiagnostics({ provider }, true, false).reason, "hooksUnavailable");
+    assert.equal(sessionDiagnostics({ provider, agentSessionId: ID }, true, true).reason, "awaitingHook");
+    assert.equal(sessionDiagnostics({ provider }, true, true, observation).method, "hooks");
+  }
+  assert.equal(sessionDiagnostics({ provider: "shell" }, true, false).reason, "shell");
+  assert.equal(sessionDiagnostics({ provider: "shell" }, false, false).reason, "stopped");
+});
+
+test("repeated snapshots do not invent fresh events or replace live receipt times", () => {
+  const saved = observeSession(undefined, "task_complete", true, 100);
+  assert.equal(observeSession(saved, "task_complete", true, 200), saved);
+  const live = observeSession(saved, "task_complete", false, 300);
+  assert.deepEqual(live, { event: "task_complete", snapshot: false, receivedAt: 300 });
+  assert.equal(observeSession(live, "task_complete", true, 400), live);
+  assert.deepEqual(observeSession(live, "task_started", true, 500), { event: "task_started", snapshot: true, receivedAt: 500 });
+});
+test("spawn completion preserves early agent events and missing readiness stays unknown", () => {
+  for (const provider of ["claude", "codex", "antigravity"] as const) {
+    const s = { provider, started: true, agentSessionId: ID };
+    for (const status of ["done", "working", "needs-you", "agent-exited", "exited"] as const) {
+      assert.equal(statusAfterSpawn(status, s, true), status);
+      assert.equal(statusAfterStartupTimeout(status), status);
+    }
+    assert.equal(statusAfterSpawn("starting", s, true), "starting");
+  }
+  assert.equal(statusAfterStartupTimeout("starting"), "untracked");
+  assert.equal(statusAfterSpawn("starting", { provider: "codex", started: true }, true), "untracked");
+  assert.equal(statusAfterSpawn("starting", { provider: "codex", started: false }, true), "starting");
+  assert.equal(statusAfterSpawn("starting", { provider: "claude" }, false), "untracked");
+  assert.equal(statusAfterSpawn("starting", { provider: "shell" }, false), "running");
+});
+
+test("late Claude readiness recovers missing startup hook without clearing approval requests", () => {
+  const idle = { deskSessionId: "s", event: "Notification", notificationType: "idle_prompt" };
+  for (const status of ["starting", "untracked", "working"] as const) assert.equal(statusAfter(status, idle), "done");
+  for (const status of ["needs-you", "agent-exited", "exited", "done"] as const) assert.equal(statusAfter(status, idle), undefined);
+  assert.equal(statusAfter("untracked", { deskSessionId: "s", event: "UserPromptSubmit" }), "working");
+});
 test("default provider migrates safely and preserves every supported selection", () => {
   for (const provider of [undefined, "unknown", null, 42]) {
     assert.equal(parseState(JSON.stringify({ settings: { defaultProvider: provider } })).state.settings.defaultProvider, "claude");
@@ -317,6 +456,21 @@ test("grid pins stay in place when activity changes, leaving room for the select
   assert.deepEqual(gridSessions(sessions, available, ["0", "1"], "2"), ["1", "2", "5", "4"]);
 });
 
+test("clicking any visible unpinned panel preserves positions despite recency changes", () => {
+  const sessions = Array.from({ length: 6 }, (_, i) => session({ id: String(i), lastUsedAt: i }));
+  const available = new Set(sessions.map(s => s.id));
+  const original = ["0", "1", "2", "3"];
+  for (const id of original) {
+    sessions[Number(id)].lastUsedAt = 100 + Number(id);
+    assert.deepEqual(gridSessions(sessions, available, [], id, original), original);
+    assert.deepEqual(gridSessions(sessions, available, ["0"], id, original), original);
+  }
+  assert.deepEqual(gridSessions(sessions, available, ["0"], "5", original), ["0", "1", "2", "5"]);
+  available.delete("2");
+  assert.deepEqual(gridSessions(sessions, available, ["0"], "3", original), ["0", "1", "3", "5"]);
+  assert.deepEqual(gridSessions(sessions, available, ["3", "0"], "1", original), ["3", "0", "1", "5"]);
+});
+
 test("attention navigation wraps and skips working sessions", () => {
   const sessions = [session({ id: "a" }), session({ id: "b" }), session({ id: "c" })];
   const statuses = new Map<string, import("./model.ts").Status>([["a", "needs-you"], ["b", "working"], ["c", "done"]]);
@@ -367,4 +521,43 @@ test("Antigravity hooks distinguish questions, activity and background work", ()
   assert.equal(statusAfter("working", { ...ev, event: "Stop", fullyIdle: false }), "working");
   assert.equal(statusAfter("working", { ...ev, event: "Stop", fullyIdle: true }), "done");
   assert.equal(statusAfter("working", { ...ev, event: "PostInvocation" }), undefined);
+});
+
+
+test("overlapping launches in one directory remain ambiguous after one closes", async () => {
+  const d = createDiscovery();
+  d.add("a", "/project");
+  d.add("b", "/project");
+  d.add("c", "/other");
+  d.delete("b");
+  const visited: string[] = [];
+  await d.run(async (id) => { visited.push(id); });
+  assert.deepEqual(visited, ["c"]);
+});
+
+test("slow discovery cannot overlap or apply after removal, replacement, or a competing launch", async () => {
+  for (const change of ["remove", "replace", "compete"] as const) {
+    const d = createDiscovery();
+    d.add("a", "/project");
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    let applied = false;
+    const first = d.run(async (_, current) => { await wait; applied = current(); });
+    await d.run(async () => { assert.fail("overlapping lookup"); });
+    if (change === "remove") d.delete("a");
+    if (change === "replace") d.add("a", "/project");
+    if (change === "compete") d.add("b", "/project");
+    release();
+    await first;
+    assert.equal(applied, false, change);
+  }
+});
+
+test("lookup errors release the lock for a later retry", async () => {
+  const d = createDiscovery();
+  d.add("a", "/project");
+  await assert.rejects(d.run(async () => { throw new Error("failed"); }));
+  let applied = false;
+  await d.run(async (_, current) => { applied = current(); });
+  assert.equal(applied, true);
 });

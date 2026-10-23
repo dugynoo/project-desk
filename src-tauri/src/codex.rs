@@ -27,11 +27,34 @@ struct Meta {
     id: String,
     cwd: String,
     timestamp: Option<String>,
+    source: Option<serde_json::Value>,
 }
 
-struct Candidate {
-    id: String,
-    created_ms: u64,
+/// Recover a missed ID before launching resume. Only accept one original
+/// conversation created near the Desk item, never the most recently active one.
+pub fn recover_session(root: &Path, cwd: &str, created_ms: u64, exclude: &[String]) -> Option<String> {
+    let from = created_ms.saturating_sub(SLACK_MS);
+    let until = created_ms.checked_add(60_000)?;
+    let mut found = None;
+    // Directory dates use local time, metadata uses UTC. Include adjacent days.
+    for day in (from / DAY_MS).saturating_sub(1)..=until / DAY_MS + 1 {
+        let (y, m, d) = civil(day as i64);
+        let dir = root.join(format!("{y:04}")).join(format!("{m:02}")).join(format!("{d:02}"));
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.extension().is_none_or(|e| e != "jsonl") { continue; }
+            let Some((meta, created)) = read_meta(&path) else { continue };
+            if created < from || created > until || !same_dir(&meta.cwd, cwd)
+                || uuid::Uuid::parse_str(&meta.id).is_err()
+                || exclude.contains(&meta.id)
+                || meta.source.as_ref().is_some_and(|s| !matches!(s.as_str(), Some("cli" | "vscode"))) {
+                continue;
+            }
+            if found.as_ref().is_some_and(|id| id != &meta.id) { return None; }
+            found = Some(meta.id);
+        }
+    }
+    found
 }
 
 pub fn sessions_root() -> Option<PathBuf> {
@@ -94,21 +117,21 @@ fn modified_ms(path: &Path) -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Najstaršia konverzácia v `cwd`, ktorá vznikla po štarte našej relácie.
-/// Najstaršia preto, aby si dve relácie v tom istom projekte nezobrali tú istú.
+/// Only one eligible conversation may match; ordering cannot establish ownership.
 pub fn find_session(root: &Path, cwd: &str, since_ms: u64, exclude: &[String]) -> Option<String> {
     let from = since_ms.saturating_sub(SLACK_MS);
-    let mut best: Option<Candidate> = None;
+    let mut found = None;
     for path in recent_files(root, from) {
         let Some((meta, created)) = read_meta(&path) else { continue };
-        if created < from || !same_dir(&meta.cwd, cwd) || exclude.iter().any(|e| e == &meta.id) {
+        if created < from || !same_dir(&meta.cwd, cwd) || exclude.contains(&meta.id)
+            || uuid::Uuid::parse_str(&meta.id).is_err()
+            || meta.source.as_ref().is_some_and(|s| !matches!(s.as_str(), Some("cli" | "vscode"))) {
             continue;
         }
-        if best.as_ref().is_none_or(|b| created < b.created_ms) {
-            best = Some(Candidate { id: meta.id, created_ms: created });
-        }
+        if found.as_ref().is_some_and(|id| id != &meta.id) { return None; }
+        found = Some(meta.id);
     }
-    best.map(|b| b.id)
+    found
 }
 
 const DAY_MS: u64 = 86_400_000;
@@ -203,7 +226,32 @@ mod tests {
     }
 
     #[test]
-    fn picks_oldest_unclaimed_session_in_cwd_after_start() {
+    fn recovery_uses_original_creation_and_refuses_ambiguous_or_claimed_threads() {
+        let root = std::env::temp_dir().join(format!("pd-recover-{}", uuid::Uuid::new_v4().simple()));
+        // Older than the live discovery window: recovery must not depend on mtime or today.
+        let created = parse_utc_ms("2025-01-01T23:59:58.000Z").unwrap();
+        let day = root.join("2025/01/02");
+        std::fs::create_dir_all(&day).unwrap();
+        let id = "01a165d4-170c-7bd0-b97c-bcf0870d54a2";
+        let other = "01a16610-5859-74d3-b102-386ed44e0c30";
+        write_session(&day, "original.jsonl", id, "/project", &iso(created - 709));
+        write_session(&day, "later.jsonl", other, "/project", &iso(created + 120_000));
+        assert_eq!(recover_session(&root, "/project", created, &[]).as_deref(), Some(id));
+        assert_eq!(recover_session(&root, "/different", created, &[]), None);
+        assert_eq!(recover_session(&root, "/project", created, &[id.into()]), None);
+        write_session(&day, "ambiguous.jsonl", other, "/project", &iso(created + 500));
+        assert_eq!(recover_session(&root, "/project", created, &[]), None);
+        let subagent = serde_json::json!({"type":"session_meta", "payload":{
+            "id":other, "cwd":"/project", "timestamp":iso(created + 500),
+            "source":{"subagent":{"parent_thread_id":id}}
+        }});
+        std::fs::write(day.join("ambiguous.jsonl"), format!("{subagent}\n")).unwrap();
+        assert_eq!(recover_session(&root, "/project", created, &[]).as_deref(), Some(id));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovery_rejects_ambiguous_threads_and_ignores_invalid_or_claimed_ids() {
         let root = std::env::temp_dir().join(format!("pd-codex-{}", uuid::Uuid::new_v4().simple()));
         // Súbory sú čerstvo zapísané, takže mtime filter ich pustí; rozhoduje timestamp v meta.
         let base = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 - 60_000;
@@ -211,13 +259,22 @@ mod tests {
         let day = root.join(format!("{y:04}")).join(format!("{m:02}")).join(format!("{d:02}"));
         std::fs::create_dir_all(&day).unwrap();
         write_session(&day, "a.jsonl", "old", r"C:\p", &iso(base - 60_000));
-        write_session(&day, "b.jsonl", "claimed", r"C:\p", &iso(base + 1_000));
-        write_session(&day, "c.jsonl", "mine", r"C:\p\", &iso(base + 2_000));
-        write_session(&day, "d.jsonl", "later", r"C:\p", &iso(base + 9_000));
+        write_session(&day, "b.jsonl", "11111111-1111-4111-8111-111111111111", r"C:\p", &iso(base + 1_000));
+        write_session(&day, "c.jsonl", "22222222-2222-4222-8222-222222222222", r"C:\p\", &iso(base + 2_000));
+        write_session(&day, "d.jsonl", "33333333-3333-4333-8333-333333333333", r"C:\p", &iso(base + 9_000));
         write_session(&day, "e.jsonl", "other-dir", r"C:\q", &iso(base + 1_500));
 
-        let found = find_session(&root, r"C:\p", base, &["claimed".to_owned()]);
-        assert_eq!(found.as_deref(), Some("mine"));
+        let claimed = vec!["11111111-1111-4111-8111-111111111111".to_owned()];
+        assert_eq!(find_session(&root, r"C:\p", base, &claimed), None);
+        std::fs::remove_file(day.join("d.jsonl")).unwrap();
+        assert_eq!(find_session(&root, r"C:\p", base, &claimed).as_deref(), Some("22222222-2222-4222-8222-222222222222"));
+        write_session(&day, "invalid.jsonl", "not-a-uuid", r"C:\p", &iso(base + 3_000));
+        let subagent = serde_json::json!({"type":"session_meta", "payload":{
+            "id":"33333333-3333-4333-8333-333333333333", "cwd":r"C:\p", "timestamp":iso(base + 500),
+            "source":{"subagent":{}}
+        }});
+        std::fs::write(day.join("subagent.jsonl"), format!("{subagent}\n")).unwrap();
+        assert_eq!(find_session(&root, r"C:\p", base, &claimed).as_deref(), Some("22222222-2222-4222-8222-222222222222"));
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

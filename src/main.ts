@@ -1,4 +1,6 @@
 import { createSettings } from "./settings.ts";
+import { createNotificationCenter } from "./notifications.ts";
+import { createPaneLayout } from "./panes.ts";
 import { openSessionMenu } from "./session-menu.ts";
 import { createUpdates } from "./updates.ts";
 import { $, el } from "./dom.ts";
@@ -20,6 +22,14 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 
 import {
+  createDiscovery,
+  attentionEventKind,
+  recordAttention,
+  readAttention,
+  observeSession,
+  sessionDiagnostics,
+  type SessionObservation,
+  type PaneLayout,
   agentCommand,
   archiveSession,
   restoreSession,
@@ -53,6 +63,8 @@ import {
   sessionsOf,
   type Status,
   statusAfter,
+  statusAfterSpawn,
+  statusAfterStartupTimeout,
   templatesFor,
 } from "./model.ts";
 import { errorText, type Key, locale, setLang, t, translateDocument } from "./i18n.ts";
@@ -75,6 +87,7 @@ interface Runtime {
   head: HTMLElement;
   running: boolean;
   closing: boolean;
+  observation?: SessionObservation;
   /** Odkaz pod myšou, pre menu na pravom kliku. */
   hoverLink?: { url: string } | { file: string; line?: number };
 }
@@ -126,6 +139,12 @@ function setStatus(id: string, next: Status, silent = false) {
   const prev = statusOf(id);
   if (prev === next) return;
   statuses.set(id, next);
+  const kind = attentionEventKind(prev, next, silent);
+  const s = session(id);
+  if (kind && s) {
+    recordAttention(state, s, kind, crypto.randomUUID(), Date.now(), isWatched(id));
+    save();
+  }
   if (!silent && ATTENTION.has(next) && !isWatched(id)) {
     unread.add(id);
     notify(id, next);
@@ -155,21 +174,32 @@ async function notify(id: string, status: Status) {
 
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
+let zoomedId: string | undefined;
+let gridOrder: string[] = [];
+const paneLayout = createPaneLayout($("#stage"), fitVisible, save);
+
 function visibleIds(): string[] {
+  if (zoomedId && state.ui.grid && runtimes.has(zoomedId)) return [zoomedId];
+  zoomedId = undefined;
   const active = state.ui.activeSessionId;
   if (!state.ui.grid) return active && runtimes.has(active) ? [active] : [];
-  return gridSessions(state.sessions, new Set(runtimes.keys()), state.ui.pinnedSessionIds, active);
+  return gridSessions(state.sessions, new Set(runtimes.keys()), state.ui.pinnedSessionIds, active, gridOrder);
 }
 
 function layout() {
   const ids = visibleIds();
+  if (state.ui.grid && !zoomedId) gridOrder = ids;
   const stage = $("#stage");
-  stage.className = state.ui.grid && ids.length > 1 ? `grid-${ids.length}` : "";
+  stage.className = state.ui.grid && (ids.length > 1 || zoomedId) ? "multi-pane" : "";
+  const cells = paneLayout.apply(state.ui.paneLayout, ids.length, state.ui.paneSizes);
   $("#empty").style.display = ids.length ? "none" : "";
   for (const [id, rt] of runtimes) {
     const show = ids.includes(id);
     rt.pane.classList.toggle("visible", show);
     rt.pane.style.order = String(ids.indexOf(id));
+    const cell = cells[ids.indexOf(id)];
+    rt.pane.style.gridColumn = cell ? `${cell.column} / span ${cell.span}` : "";
+    rt.pane.style.gridRow = cell ? String(cell.row) : "";
     rt.pane.classList.toggle("focused", id === state.ui.activeSessionId);
     // WebGL kontext len pre viditeľné terminály: šetrí GPU pamäť a obchádza limit kontextov.
     if (show && !rt.webgl) attachWebgl(rt);
@@ -180,6 +210,13 @@ function layout() {
   }
   requestAnimationFrame(fitVisible);
   $("#btn-grid").classList.toggle("on", state.ui.grid);
+  renderPaneHeads();
+}
+
+function togglePaneZoom(id: string) {
+  if (!state.ui.grid) return;
+  zoomedId = zoomedId === id ? undefined : id;
+  layout();
 }
 
 function attachWebgl(rt: Runtime) {
@@ -213,8 +250,9 @@ function renderPaneHeads() {
     const s = session(id);
     if (!s) continue;
     const p = project(s.projectId);
-    rt.head.textContent = `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`;
+    rt.head.replaceChildren(el("span", "pane-title", `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`));
     rt.head.append(iconButton(state.ui.pinnedSessionIds.includes(id) ? "★" : "☆", t("grid.pin"), () => togglePin(id)));
+    if (state.ui.grid) rt.head.append(iconButton(zoomedId === id ? "⊟" : "⤢", t(zoomedId === id ? "panes.restore" : "panes.maximize"), () => togglePaneZoom(id)));
     if (!rt.running) rt.head.append(iconButton("↻", t("session.restart"), () => void start(s)));
     rt.head.classList.toggle("stopped", s.stopped === true);
   }
@@ -522,9 +560,26 @@ function disposeRuntime(id: string) {
   runtimes.delete(id);
 }
 
+const pendingStarts = new Set<string>();
+
 async function start(s: Session) {
   const p = project(s.projectId);
-  if (!p || runtimes.get(s.id)?.running || closingWindow) return;
+  if (!p || pendingStarts.has(s.id) || runtimes.get(s.id)?.running || closingWindow) return;
+  if (s.provider === "codex" && s.started && !isUuid(s.agentSessionId)) {
+    pendingStarts.add(s.id);
+    try {
+      const exclude = state.sessions.filter((x) => x.id !== s.id && x.agentSessionId).map((x) => x.agentSessionId!);
+      const found = await invoke<string | null>("recover_codex_session", { cwd: p.path, createdMs: s.createdAt, exclude }).catch(() => null);
+      if (session(s.id) !== s || closingWindow) return;
+      // Another asynchronous recovery may already have claimed this ID.
+      if (isUuid(found) && !state.sessions.some((x) => x.id !== s.id && x.agentSessionId === found)) {
+        s.agentSessionId = found;
+        save();
+      }
+    } finally {
+      pendingStarts.delete(s.id);
+    }
+  }
   // Bez prvého promptu nie je čo obnoviť; nové ID zabráni kolízii s nedokončenou reláciou.
   if (s.provider === "claude" && (!s.hasConversation || !isUuid(s.agentSessionId))) {
     s.agentSessionId = crypto.randomUUID();
@@ -533,8 +588,13 @@ async function start(s: Session) {
   const command = agentCommand(s, state.settings, info.platform, info.hooksEnabled);
   s.exitCode = undefined;
   s.lastStartAt = Date.now();
-  if (s.provider === "codex" && !s.started) codexLookup.add(s.id);
+  codexLookup.delete(s.id);
+  if (s.provider === "codex" && !s.started) {
+    const path = p.path.replace(/\\/g, "/").replace(/\/+$/, "");
+    codexLookup.add(s.id, info.platform === "windows" ? path.toLowerCase() : path);
+  }
   const rt = runtimes.get(s.id) ?? createRuntime(s);
+  rt.observation = undefined;
   statuses.set(s.id, "starting");
   layout();
   try {
@@ -574,10 +634,16 @@ async function start(s: Session) {
     return;
   }
   if (!rt.running || !session(s.id)) return;
+  const initialStatus = statusAfterSpawn(statusOf(s.id), s, info.hooksEnabled);
   s.started = true;
   s.stopped = false;
   s.exitCode = undefined;
-  statuses.set(s.id, s.provider === "codex" || ((s.provider === "claude" || s.provider === "antigravity") && info.hooksEnabled) ? "starting" : "running");
+  statuses.set(s.id, initialStatus);
+  const startedAt = s.lastStartAt;
+  window.setTimeout(() => {
+    if (runtimes.get(s.id) !== rt || !rt.running || s.lastStartAt !== startedAt) return;
+    setStatus(s.id, statusAfterStartupTimeout(statusOf(s.id)), true);
+  }, 15_000);
   save();
   renderSidebar();
   renderPaneHeads();
@@ -587,24 +653,28 @@ async function start(s: Session) {
 // Codex si ID konverzácie vytvorí sám (najneskôr pri prvom prompte), preto ho dohľadávame
 // v jeho session súboroch. Len pri úplne novej relácii: tá, čo sa otvorila cez výber
 // v `codex resume`, by si inak mohla privlastniť cudziu konverzáciu z toho istého projektu.
-const codexLookup = new Set<string>();
+const codexLookup = createDiscovery();
 
 async function lookupCodexSessions() {
-  for (const id of [...codexLookup]) {
+  await codexLookup.run(async (id, current) => {
     const s = session(id);
     const p = s && project(s.projectId);
     if (!s || !p || !s.lastStartAt || !runtimes.get(id)?.running || isUuid(s.agentSessionId)) {
       codexLookup.delete(id);
-      continue;
+      return;
     }
     const exclude = state.sessions.filter((x) => x.id !== id && x.agentSessionId).map((x) => x.agentSessionId!);
+    const runtime = runtimes.get(id);
+    const startedAt = s.lastStartAt;
     const found = await invoke<string | null>("find_codex_session", { cwd: p.path, sinceMs: s.lastStartAt, exclude }).catch(() => null);
-    if (isUuid(found) && !isUuid(s.agentSessionId)) {
+    if (!current() || closingWindow || session(id) !== s || project(s.projectId) !== p
+      || runtimes.get(id) !== runtime || !runtime?.running || runtime.closing || s.lastStartAt !== startedAt) return;
+    if (isUuid(found) && !isUuid(s.agentSessionId) && !state.sessions.some((x) => x.id !== id && x.agentSessionId === found)) {
       s.agentSessionId = found;
       codexLookup.delete(id);
       save();
     }
-  }
+  });
 }
 
 // Tokeny a kontext pre Claude aj Codex, pri Codexe aj stav (Codex nemá hooky bez zásahu do jeho konfigurácie).
@@ -617,13 +687,25 @@ async function pollAgents() {
     for (const s of [...state.sessions]) {
       const agentId = s.agentSessionId;
       if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
+      const runtime = runtimes.get(s.id)!;
+      const startedAt = s.lastStartAt;
       const r = await invoke<{ stats: AgentStats; status: string | null; events: string[] } | null>("agent_poll", { provider: s.provider, agentId }).catch(() => null);
-      if (!r || s.agentSessionId !== agentId) continue;
+      if (!r || session(s.id) !== s || s.agentSessionId !== agentId || runtimes.get(s.id) !== runtime
+        || !runtime.running || runtime.closing || s.lastStartAt !== startedAt) continue;
       const before = statsOf(s)?.contextTokens;
       agentStats.set(s.id, { agentId, stats: r.stats });
       if (before !== r.stats.contextTokens) changed = true;
-      const status = s.provider === "codex" ? codexStatusAfter(r.events.at(-1) ?? r.status ?? "task_complete") : undefined;
-      if (status && runtimes.get(s.id)?.running) setStatus(s.id, status, r.events.length === 0);
+      const observedEvent = r.events.at(-1) ?? r.status;
+      if (s.provider === "codex" && observedEvent && codexStatusAfter(observedEvent)) {
+        runtime.observation = observeSession(runtime.observation, observedEvent, r.events.length === 0, Date.now());
+      }
+      if (s.provider === "codex") {
+        // A complete turn may arrive between polls; retain its start/completion sequence.
+        for (const event of r.events.length ? r.events : [r.status ?? "task_complete"]) {
+          const status = codexStatusAfter(event);
+          if (status) setStatus(s.id, status, r.events.length === 0);
+        }
+      }
     }
   } finally {
     polling = false;
@@ -666,6 +748,7 @@ function onAgentEvent(ev: AgentEvent) {
   if (!s || s.provider !== (ev.provider ?? "claude") || !runtimes.get(s.id)?.running) return;
   let changed = false;
   if (isUuid(ev.agentSessionId) && ev.agentSessionId !== s.agentSessionId) {
+    runtimes.get(s.id)!.observation = undefined;
     s.agentSessionId = ev.agentSessionId;
     s.hasConversation = ev.event !== "SessionStart";
     changed = true;
@@ -677,6 +760,10 @@ function onAgentEvent(ev: AgentEvent) {
   if (changed) save();
   if (!runtimes.get(s.id)?.running) return;
   const status = statusAfter(statusOf(s.id), ev);
+  if (status || (ev.event === "Notification" && ev.notificationType === "idle_prompt")) {
+    const rt = runtimes.get(s.id)!;
+    rt.observation = observeSession(rt.observation, ev.event, false, Date.now());
+  }
   if (status) setStatus(s.id, status, ev.event === "SessionStart");
 }
 
@@ -685,10 +772,12 @@ function onAgentEvent(ev: AgentEvent) {
 function select(id: string, focus = true) {
   const s = session(id);
   if (!s) return;
+  if (zoomedId && zoomedId !== id) zoomedId = undefined;
   if (attentionOnly && !ATTENTION.has(statusOf(id))) attentionOnly = false;
   state.ui.activeSessionId = id;
   s.lastUsedAt = Date.now();
   unread.delete(id);
+  readAttention(state, id);
   save();
   if (state.ui.grid && !state.ui.pinnedSessionIds.includes(id) && state.ui.pinnedSessionIds.length === 4) state.ui.grid = false;
   if (!runtimes.has(id) || (!runtimes.get(id)?.running && !s.stopped)) {
@@ -820,9 +909,11 @@ function openEditor(path: string, line?: number) {
 }
 
 function toggleGrid() {
+  zoomedId = undefined;
   state.ui.grid = !state.ui.grid;
   save();
   layout();
+  renderSidebar();
 }
 
 let attentionOnly = false;
@@ -860,7 +951,29 @@ function renderAttention() {
   next.disabled = !state.sessions.some((s) => ATTENTION.has(statusOf(s.id)));
   const history = el("button", "", t("session.history", { n: state.closedSessions.length }));
   history.onclick = showClosedSessions;
-  root.replaceChildren(filter, next, history);
+  const alerts = el("button", "", t("notifications.button", { n: state.notifications.filter(n => !n.read).length }));
+  alerts.id = "btn-notifications";
+  alerts.onclick = notificationCenter.show;
+  root.replaceChildren(filter, next, history, alerts);
+  if (state.ui.grid) {
+    const modes = el("select", "pane-mode");
+    modes.setAttribute("aria-label", t("panes.layout"));
+    modes.title = t("panes.layout");
+    for (const mode of ["grid", "columns", "rows"] as const) {
+      const option = el("option", "", t(`panes.${mode}`));
+      option.value = mode;
+      modes.append(option);
+    }
+    modes.value = state.ui.paneLayout;
+    modes.onchange = () => {
+      state.ui.paneLayout = modes.value as PaneLayout;
+      zoomedId = undefined;
+      save();
+      layout();
+    };
+    root.append(modes);
+  }
+  notificationCenter.refresh();
 }
 
 function showClosedSessions() {
@@ -1010,7 +1123,7 @@ function renderSidebar() {
         const st = statusOf(s.id);
         const item = el("div", "session");
         item.classList.toggle("active", s.id === state.ui.activeSessionId);
-        item.classList.toggle("unread", unread.has(s.id));
+        item.classList.toggle("unread", unread.has(s.id) || state.notifications.some(n => n.sessionId === s.id && !n.read));
         const body = el("div", "body");
         if (editing?.id === s.id) {
           editInput = renameInput();
@@ -1059,6 +1172,23 @@ function renderSidebar() {
 // ---------- modálne okná ----------
 
 const { modal, confirmBox } = createDialogs(() => runtimes.get(state.ui.activeSessionId ?? "")?.term.focus());
+const notificationCenter = createNotificationCenter({
+  state: () => state,
+  modal,
+  changed: () => {
+    for (const n of state.notifications) {
+      if (n.read && !state.notifications.some(other => other.sessionId === n.sessionId && !other.read)) unread.delete(n.sessionId);
+    }
+    save();
+    renderSidebar();
+  },
+  select: (id) => {
+    const s = session(id);
+    const p = s && project(s.projectId);
+    if (p) p.collapsed = false;
+    select(id);
+  },
+});
 
 function quickSwitch() {
   modal(
@@ -1123,6 +1253,21 @@ function infoRows(s: Session): [string, string][] {
     [t("info.tool"), PROVIDER_LABEL[s.provider]],
     [t("info.status"), statusLabel(statusOf(s.id))],
   ];
+  const rt = runtimes.get(s.id);
+  const diagnostic = sessionDiagnostics(s, rt?.running ?? false, info.hooksEnabled, rt?.observation);
+  rows.push([t("diag.process"), t(rt?.running ? "diag.running" : "diag.stopped")]);
+  if (s.exitCode != null && !rt?.running) rows.push([t("diag.exitCode"), String(s.exitCode)]);
+  if (s.provider !== "shell") rows.push([t("diag.link"), t(diagnostic.linked ? "diag.assigned" : "diag.unassigned")]);
+  rows.push(
+    [t("diag.method"), t(`diag.${diagnostic.method}`)],
+    [t("diag.detail"), t(`diag.reason.${diagnostic.reason}`)],
+  );
+  if (s.provider !== "shell") {
+    const observation = rt?.observation;
+    rows.push([t("diag.lastEvent"), observation
+      ? `${observation.event} · ${t(observation.snapshot ? "diag.snapshot" : "diag.received", { time: new Date(observation.receivedAt).toLocaleString(locale()) })}`
+      : t("diag.noEvent")]);
+  }
   if (s.provider !== "shell") rows.push([t("info.conversation"), s.agentSessionId ?? t("info.notDetected")]);
   const st = statsOf(s);
   if (st) {
@@ -1372,7 +1517,7 @@ function digitOf(e: KeyboardEvent): number | undefined {
 function isAppShortcut(e: KeyboardEvent): boolean {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
   const key = e.key.toLowerCase();
-  return e.shiftKey ? key === "f" || key === "t" || key === "a" : key === "k" || key === "g" || digitOf(e) !== undefined;
+  return e.shiftKey ? key === "f" || key === "t" || key === "a" || key === "enter" : key === "k" || key === "g" || digitOf(e) !== undefined;
 }
 
 function handleGlobalKey(e: KeyboardEvent): boolean {
@@ -1388,7 +1533,8 @@ function handleGlobalKey(e: KeyboardEvent): boolean {
   }
   if (e.shiftKey) {
     e.preventDefault();
-    if (key === "a") jumpAttention();
+    if (key === "enter") { if (state.ui.activeSessionId) togglePaneZoom(zoomedId ?? state.ui.activeSessionId); }
+    else if (key === "a") jumpAttention();
     else if (key === "t") openTemplates();
     else if (key === "f") {
       const rt = runtimes.get(state.ui.activeSessionId ?? "");
@@ -1470,7 +1616,12 @@ async function main() {
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
-      for (const id of visibleIds()) unread.delete(id);
+      let changed = false;
+      for (const id of visibleIds()) {
+        unread.delete(id);
+        if (readAttention(state, id)) changed = true;
+      }
+      if (changed) save();
       renderSidebar();
     }
   });

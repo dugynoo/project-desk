@@ -198,6 +198,14 @@ async fn agent_poll(state: State<'_, AppState>, provider: String, agent_id: Stri
     tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id)).await.map_err(|e| e.to_string())
 }
 
+/// Recover a missing original ID before resume; ambiguous matches remain unlinked.
+#[tauri::command]
+async fn recover_codex_session(cwd: String, created_ms: u64, exclude: Vec<String>) -> Option<String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        codex::recover_session(&codex::sessions_root()?, &cwd, created_ms, &exclude)
+    }).await.ok().flatten()
+}
+
 /// ID Codex konverzácie, ktorá vznikla v `cwd` po `since_ms` a nepatrí inej relácii.
 #[tauri::command]
 async fn find_codex_session(cwd: String, since_ms: u64, exclude: Vec<String>) -> Option<String> {
@@ -255,6 +263,7 @@ pub fn run() {
             list_editors,
             resolve_file,
             find_codex_session,
+            recover_codex_session,
             agent_poll
         ])
         .build(tauri::generate_context!())
