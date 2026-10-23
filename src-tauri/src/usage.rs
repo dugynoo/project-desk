@@ -32,6 +32,8 @@ pub struct Stats {
 #[serde(rename_all = "camelCase")]
 pub struct Poll {
     pub stats: Stats,
+    /// Latest known state, separate from new events so history does not notify.
+    pub status: Option<String>,
     /// Nové stavové udalosti Codexu od posledného čítania (`task_started`, `task_complete`, `turn_aborted`).
     pub events: Vec<String>,
 }
@@ -50,6 +52,7 @@ struct Watch {
     claude_msgs: HashMap<String, [u64; 4]>,
     /// Prvé čítanie prejde históriu kvôli súčtom, ale staré udalosti nehlási.
     primed: bool,
+    status: Option<String>,
 }
 
 #[derive(Default)]
@@ -150,7 +153,7 @@ impl Watch {
     }
 
     fn codex_line(&mut self, line: &str, events: &mut Vec<String>) {
-        if !["token_count", "task_", "turn_aborted", "turn_context"].iter().any(|k| line.contains(k)) {
+        if !["token_count", "task_", "turn_", "turn_context"].iter().any(|k| line.contains(k)) {
             return;
         }
         let Ok(v) = serde_json::from_str::<Value>(line) else { return };
@@ -180,7 +183,10 @@ impl Watch {
                         self.stats.limit_window_minutes = limit["window_minutes"].as_u64();
                     }
                 }
-                Some(kind @ ("task_started" | "task_complete" | "turn_aborted")) => events.push(kind.to_owned()),
+                Some(kind @ ("task_started" | "task_complete" | "turn_started" | "turn_complete" | "turn_aborted")) => {
+                    self.status = Some(kind.to_owned());
+                    events.push(kind.to_owned());
+                },
                 _ => {}
             },
             _ => {}
@@ -216,7 +222,7 @@ impl Watch {
     }
 
     fn new(path: PathBuf) -> Self {
-        Watch { path, offset: 0, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false }
+        Watch { path, offset: 0, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None }
     }
 }
 
@@ -235,7 +241,7 @@ impl Watcher {
         }
         let w = watches.get_mut(agent_id)?;
         let events = w.read_new(provider).ok()?;
-        Some(Poll { stats: w.stats.clone(), events })
+        Some(Poll { stats: w.stats.clone(), status: w.status.clone(), events })
     }
 }
 
@@ -278,6 +284,21 @@ mod tests {
     }
 
     #[test]
+    fn codex_restores_working_state_and_waits_for_complete_lines() {
+        let path = temp_file("state.jsonl");
+        append(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_started\"}}\n");
+        let mut w = Watch::new(path.clone());
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status.as_deref(), Some("turn_started"));
+        append(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_complete\"}}");
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status.as_deref(), Some("turn_started"));
+        append(&path, "\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["turn_complete"]);
+        assert_eq!(w.status.as_deref(), Some("turn_complete"));
+    }
+
+    #[test]
     fn codex_reports_only_new_events_and_takes_totals() {
         let path = temp_file("x.jsonl");
         append(
@@ -291,6 +312,7 @@ mod tests {
         );
         let mut w = Watch::new(path.clone());
         assert!(w.read_new(Provider::Codex).unwrap().is_empty(), "história sa ako udalosti nehlási");
+        assert_eq!(w.status.as_deref(), Some("task_complete"));
         let s = &w.stats;
         assert_eq!((s.input_tokens, s.cache_read_tokens, s.output_tokens), (200, 800, 50));
         assert_eq!((s.context_tokens, s.context_window), (Some(900), Some(258400)));
@@ -299,6 +321,12 @@ mod tests {
 
         append(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n");
         assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["task_started"]);
+        assert_eq!(w.status.as_deref(), Some("task_started"));
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status.as_deref(), Some("task_started"));
+        append(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\"}}\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["turn_aborted"]);
+        assert_eq!(w.status.as_deref(), Some("turn_aborted"));
     }
 
     /// Ručná kontrola: `PD_CLAUDE_ID=... PD_CODEX_ID=... cargo test real_usage -- --ignored --nocapture`

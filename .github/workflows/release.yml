@@ -47,9 +47,9 @@ jobs:
           prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
           {
             echo "body<<EOF_NOTES"
-            echo "Download the installer for your system below. Installed apps update themselves."
+            echo "Download the installer for your system below. Windows, macOS and AppImage installs update themselves; upgrade Debian and Arch packages through your package manager."
             echo
-            git log --no-merges --format='- %s' "${prev:+$prev..}$GITHUB_REF_NAME" | grep -v '^- chore: release' || true
+            git log --no-merges --format='- %s' "${prev:+$prev..}$GITHUB_REF_NAME" | grep -Ev '^- chore: release [0-9]' || true
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
 
@@ -86,3 +86,13 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           args: --config src-tauri/tauri.release.json ${{ matrix.args }}
+
+      - name: Build and verify Arch Linux package
+        if: matrix.platform == 'ubuntu-22.04'
+        run: bash scripts/build-arch.sh
+
+      - name: Attach Arch Linux package to draft release
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/arch/*.pkg.tar.zst --clobber
