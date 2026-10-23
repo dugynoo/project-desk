@@ -84,7 +84,7 @@ button.icon.on { color: var(--accent); }
 .pane-divider.x { cursor: col-resize; }
 .pane-divider.y { cursor: row-resize; }
 .pane-divider:hover, .pane-divider.drag, .pane-divider:focus-visible { background: var(--accent); outline: none; }
-.pane-mode { max-width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px; font: inherit; }
+.pane-mode, .pane-count { max-width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px; font: inherit; }
 
 .pane { display: none; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); position: relative; }
 .search-bar { position: absolute; top: 6px; right: 14px; z-index: 5; display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, .4); }
@@ -126,6 +126,8 @@ button.icon.on { color: var(--accent); }
 .modal .actions button { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
 .modal .actions button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); }
 .modal .actions button.danger { background: var(--danger); color: #1a0b0b; border-color: var(--danger); }
+.modal .actions button:disabled, .pane-session-list button:disabled { opacity: .45; cursor: default; }
+.modal label[hidden] { display: none; }
 .modal .note { font-size: 11px; color: var(--muted); margin-top: 8px; }
 .modal textarea, .modal select { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; outline: none; }
 .modal textarea { resize: vertical; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
@@ -167,3 +169,15 @@ button.icon.on { color: var(--accent); }
 .dot.exited { background: var(--danger); }
 .search-bar { top: 28px; }
 .modal { max-height: 80vh; overflow-y: auto; }
+
+.pane-placeholder { display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 0; background: var(--bg); border: 1px dashed var(--line); }
+.pane-placeholder button { padding: 8px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; color: var(--muted); }
+.pane-placeholder button:hover { color: var(--text); border-color: var(--accent); }
+.pane-head .pane-picker { text-align: left; cursor: pointer; background: none; border: 0; padding: 2px 0; white-space: nowrap; flex-shrink: 1; }
+.pane-picker:hover { color: var(--accent); }
+.pane-picker:focus-visible { outline: 1px solid var(--accent); }
+.pane-session-list button { display: block; width: 100%; padding: 8px; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; margin: 4px 0; cursor: pointer; }
+.pane-session-list button:hover, .pane-session-list button:focus-visible { background: var(--panel-2); outline: 1px solid var(--accent); }
+.pane-session-list h4 { margin: 12px 0 4px; color: var(--muted); }
+.conversation-choice strong, .conversation-choice span { display: block; overflow-wrap: anywhere; }
+.conversation-choice span { margin-top: 4px; font-size: 11px; }

@@ -1,8 +1,9 @@
 import { el } from "./dom.ts";
 import { PROVIDERS, PROVIDER_LABEL, type Provider } from "./model.ts";
+import { t } from "./i18n.ts";
 
 /** Body-level menu stays clear of the scrolling sidebar's clipping boundary. */
-export function openSessionMenu(anchor: HTMLButtonElement, defaultProvider: Provider, choose: (provider: Provider) => void) {
+export function openSessionMenu(anchor: HTMLButtonElement, defaultProvider: Provider, choose: (provider: Provider) => void, importExisting?: () => void) {
   const menu = el("div", "session-menu");
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", anchor.title);
@@ -21,6 +22,14 @@ export function openSessionMenu(anchor: HTMLButtonElement, defaultProvider: Prov
     menu.append(button);
     return button;
   });
+  if (importExisting) {
+    const button = el("button", "", t("import.open"));
+    button.setAttribute("role", "menuitem");
+    button.tabIndex = -1;
+    button.onclick = () => { close(true); importExisting(); };
+    menu.append(button);
+    items.push(button);
+  }
   document.body.append(menu);
   anchor.setAttribute("aria-expanded", "true");
   const rect = anchor.getBoundingClientRect();

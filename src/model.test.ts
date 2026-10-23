@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createDiscovery,
+  importConversation,
+  normalizePaneSlots,
+  assignPaneSlot,
   paneGeometry,
   paneWeights,
   resizePaneTracks,
@@ -14,7 +17,6 @@ import {
   archiveSession,
   restoreSession,
   recordSessionExit,
-  gridSessions,
   nextAttention,
   settingsDraft,
   emptyState,
@@ -39,8 +41,32 @@ import {
 } from "./model.ts";
 
 const ID = "0b8c5a8e-4f3c-4d2a-9b8e-1c2d3e4f5a6b";
+test("conversation import validates IDs, stays stopped, deduplicates and resumes all agents by ID", () => {
+  for (const provider of ["claude", "codex", "antigravity"] as const) {
+    const state = emptyState();
+    state.projects = [{ id: "p", name: "Project", path: "/project" }];
+    assert.equal(importConversation(state, "p", provider, "bad; command", "", "s", 1), "invalid");
+    const result = importConversation(state, "p", provider, ` ${ID.toUpperCase()} `, "Existing", "s", 1);
+    assert.notEqual(typeof result, "string");
+    if (typeof result === "string") return;
+    assert.equal(result.stopped, true);
+    assert.equal(result.started, true);
+    assert.equal(result.hasConversation, true);
+    assert.equal(result.agentSessionId, ID);
+    const command = agentCommand(result, state.settings, "windows", false)!;
+    assert.ok(command.endsWith(ID));
+    assert.ok(command.includes(provider === "antigravity" ? "--conversation " : "resume "));
+    assert.equal(importConversation(state, "p", provider, ID, "Duplicate", "s2", 2), "duplicate");
+    assert.equal(state.sessions.length, 1);
+    const linked = importConversation(state, "p", provider, ID, "Ignored rename", "unused", 3, result.id);
+    assert.equal(linked, result);
+    assert.equal(result.title, "Existing");
+    assert.equal(parseState(JSON.stringify(state)).state.sessions[0].agentSessionId, ID);
+    assert.equal(importConversation(state, "p", provider, ID, "", "s3", 4, "missing"), "invalid");
+  }
+});
 test("panel geometry supports rows, columns and a full-width third grid pane", () => {
-  for (const count of [1, 2, 3, 4]) {
+  for (const count of [1, 2, 3, 4, 5, 6, 7, 8]) {
     const columns = paneGeometry("columns", count);
     const rows = paneGeometry("rows", count);
     assert.equal(columns.columns, count);
@@ -446,31 +472,6 @@ test("old state migrates and grid pins are deduplicated and checked against acti
   assert.deepEqual(parseState('{"projects":[],"sessions":[]}').state.ui.pinnedSessionIds, []);
 });
 
-test("grid pins stay in place when activity changes, leaving room for the selected session", () => {
-  const sessions = Array.from({ length: 6 }, (_, i) => session({ id: String(i), lastUsedAt: i }));
-  const available = new Set(sessions.map((s) => s.id));
-  assert.deepEqual(gridSessions(sessions, available, ["0", "1"], "2"), ["0", "1", "2", "5"]);
-  assert.deepEqual(gridSessions(sessions, available, ["0", "1"], "3"), ["0", "1", "3", "5"]);
-  assert.deepEqual(gridSessions(sessions, available, ["0", "1", "2", "3"], "5"), ["0", "1", "2", "3"]);
-  available.delete("0");
-  assert.deepEqual(gridSessions(sessions, available, ["0", "1"], "2"), ["1", "2", "5", "4"]);
-});
-
-test("clicking any visible unpinned panel preserves positions despite recency changes", () => {
-  const sessions = Array.from({ length: 6 }, (_, i) => session({ id: String(i), lastUsedAt: i }));
-  const available = new Set(sessions.map(s => s.id));
-  const original = ["0", "1", "2", "3"];
-  for (const id of original) {
-    sessions[Number(id)].lastUsedAt = 100 + Number(id);
-    assert.deepEqual(gridSessions(sessions, available, [], id, original), original);
-    assert.deepEqual(gridSessions(sessions, available, ["0"], id, original), original);
-  }
-  assert.deepEqual(gridSessions(sessions, available, ["0"], "5", original), ["0", "1", "2", "5"]);
-  available.delete("2");
-  assert.deepEqual(gridSessions(sessions, available, ["0"], "3", original), ["0", "1", "3", "5"]);
-  assert.deepEqual(gridSessions(sessions, available, ["3", "0"], "1", original), ["3", "0", "1", "5"]);
-});
-
 test("attention navigation wraps and skips working sessions", () => {
   const sessions = [session({ id: "a" }), session({ id: "b" }), session({ id: "c" })];
   const statuses = new Map<string, import("./model.ts").Status>([["a", "needs-you"], ["b", "working"], ["c", "done"]]);
@@ -560,4 +561,65 @@ test("lookup errors release the lock for a later retry", async () => {
   let applied = false;
   await d.run(async (_, current) => { applied = current(); });
   assert.equal(applied, true);
+});
+
+
+test("fixed panel slots preserve holes, validate ids and never auto-fill", () => {
+  const available = new Set(["a", "b", "c"]);
+  assert.deepEqual(normalizePaneSlots(["a", null, "b", "c", "extra"], available), ["a", null, "b", "c", null]);
+  assert.deepEqual(normalizePaneSlots(["a", "a", "missing", 123], available), ["a", null, null, null]);
+  assert.deepEqual(normalizePaneSlots([], available), [null, null]);
+  assert.deepEqual(assignPaneSlot(["a", null, "b"], 1, "c"), ["a", "c", "b"]);
+  assert.deepEqual(assignPaneSlot(["a", null, "b"], 1, "b"), ["a", null, "b"]);
+  assert.deepEqual(assignPaneSlot(["a", "b"], -1, "c"), ["a", "b"]);
+});
+
+test("panel assignments persist and old pins migrate without filling other sessions", () => {
+  const state = emptyState();
+  state.projects = [{ id: "p", name: "Test", path: "/test" }];
+  state.sessions = ["a", "b", "c"].map(id => ({ id, projectId: "p", provider: "shell", title: id, createdAt: 1, lastUsedAt: 1 }));
+  state.ui.paneSlots = ["a", null, "b"];
+  assert.deepEqual(parseState(JSON.stringify(state)).state.ui.paneSlots, ["a", null, "b"]);
+  const legacy = JSON.parse(JSON.stringify(state));
+  delete legacy.ui.paneSlots;
+  legacy.ui.pinnedSessionIds = ["b", "a"];
+  legacy.ui.activeSessionId = "b";
+  assert.deepEqual(parseState(JSON.stringify(legacy)).state.ui.paneSlots, ["b", "a"]);
+  state.sessions = state.sessions.filter(s => s.id !== "a");
+  assert.deepEqual(parseState(JSON.stringify(state)).state.ui.paneSlots, [null, null, "b"]);
+});
+
+
+test("five to eight grid panels fill two rows without overlap and retain resize preferences", () => {
+  for (const count of [5, 6, 7, 8]) {
+    const g = paneGeometry("grid", count);
+    assert.equal(g.columns, Math.ceil(count / 2));
+    assert.equal(g.rows, 2);
+    const occupied = new Set<string>();
+    for (const c of g.cells) {
+      for (let x = c.column; x < c.column + c.span; x += 2) {
+        const key = `${x}:${c.row}`;
+        assert.ok(!occupied.has(key));
+        occupied.add(key);
+      }
+    }
+    assert.equal(occupied.size, g.columns * 2);
+    assert.equal(g.cells.at(-1)!.span, count % 2 ? 3 : 1);
+    const state = emptyState();
+    state.ui.paneSizes[g.xKey] = Array.from({ length: g.columns }, () => 1 / g.columns);
+    state.ui.paneSizes[`columns-${count}`] = resizePaneTracks(Array.from({ length: count }, () => 1 / count), 0, 0.1);
+    const restored = parseState(JSON.stringify(state)).state.ui.paneSizes;
+    assert.deepEqual(Object.keys(restored), Object.keys(state.ui.paneSizes));
+    for (const [key, weights] of Object.entries(state.ui.paneSizes)) {
+      assert.equal(restored[key].length, weights.length);
+      weights.forEach((w, i) => assert.ok(Math.abs(restored[key][i] - w) < 1e-12));
+    }
+  }
+  const ids = Array.from({length: 9}, (_, i) => String(i));
+  assert.deepEqual(normalizePaneSlots(ids, new Set(ids)), ids.slice(0, 8));
+  const state = emptyState();
+  state.projects = [{id: "p", name: "P", path: "/test"}];
+  state.sessions = ids.map(id => ({id, projectId: "p", title: id, provider: "shell", createdAt: 1, lastUsedAt: 1}));
+  state.ui.paneSlots = ids.slice(0, 8);
+  assert.deepEqual(parseState(JSON.stringify(state)).state.ui.paneSlots, ids.slice(0, 8));
 });

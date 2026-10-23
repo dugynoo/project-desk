@@ -1,5 +1,6 @@
 mod antigravity;
 mod codex;
+mod conversations;
 mod editors;
 mod files;
 mod hooks;
@@ -198,6 +199,11 @@ async fn agent_poll(state: State<'_, AppState>, provider: String, agent_id: Stri
     tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id)).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn list_conversations(provider: String, cwd: String) -> Vec<conversations::Conversation> {
+    tauri::async_runtime::spawn_blocking(move || conversations::list(&provider, &cwd)).await.unwrap_or_default()
+}
+
 /// Recover a missing original ID before resume; ambiguous matches remain unlinked.
 #[tauri::command]
 async fn recover_codex_session(cwd: String, created_ms: u64, exclude: Vec<String>) -> Option<String> {
@@ -264,6 +270,7 @@ pub fn run() {
             resolve_file,
             find_codex_session,
             recover_codex_session,
+            list_conversations,
             agent_poll
         ])
         .build(tauri::generate_context!())

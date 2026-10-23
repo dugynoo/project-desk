@@ -31,7 +31,8 @@ export function createPaneLayout(stage: HTMLElement, fit: () => void, save: () =
       node.title = t("panes.resizeHint");
       if (axis === "x") {
         node.style.gridColumn = String(boundary * 2 + 2);
-        node.style.gridRow = mode === "grid" && count === 3 ? "1" : "1 / -1";
+        const remainder = count % geometry.columns;
+        node.style.gridRow = mode === "grid" && remainder > 0 && boundary >= remainder - 1 ? "1" : "1 / -1";
       } else {
         node.style.gridRow = String(boundary * 2 + 2);
         node.style.gridColumn = "1 / -1";

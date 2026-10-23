@@ -34,7 +34,8 @@ import {
   archiveSession,
   restoreSession,
   recordSessionExit,
-  gridSessions,
+  assignPaneSlot,
+  importConversation,
   nextAttention,
   type AgentStats,
   ATTENTION,
@@ -175,7 +176,6 @@ async function notify(id: string, status: Status) {
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
 let zoomedId: string | undefined;
-let gridOrder: string[] = [];
 const paneLayout = createPaneLayout($("#stage"), fitVisible, save);
 
 function visibleIds(): string[] {
@@ -183,16 +183,27 @@ function visibleIds(): string[] {
   zoomedId = undefined;
   const active = state.ui.activeSessionId;
   if (!state.ui.grid) return active && runtimes.has(active) ? [active] : [];
-  return gridSessions(state.sessions, new Set(runtimes.keys()), state.ui.pinnedSessionIds, active, gridOrder);
+  return state.ui.paneSlots.map(id => id && session(id) ? id : "");
 }
 
 function layout() {
   const ids = visibleIds();
-  if (state.ui.grid && !zoomedId) gridOrder = ids;
   const stage = $("#stage");
   stage.className = state.ui.grid && (ids.length > 1 || zoomedId) ? "multi-pane" : "";
+  stage.querySelectorAll(".pane-placeholder").forEach(node => node.remove());
   const cells = paneLayout.apply(state.ui.paneLayout, ids.length, state.ui.paneSizes);
   $("#empty").style.display = ids.length ? "none" : "";
+  if (state.ui.grid && !zoomedId) ids.forEach((id, index) => {
+    if (id && runtimes.has(id)) return;
+    const placeholder = el("div", "pane-placeholder");
+    const choose = el("button", "", t("panes.choose"));
+    choose.onclick = () => choosePaneSession(index);
+    placeholder.append(choose);
+    const cell = cells[index];
+    placeholder.style.gridColumn = `${cell.column} / span ${cell.span}`;
+    placeholder.style.gridRow = String(cell.row);
+    stage.append(placeholder);
+  });
   for (const [id, rt] of runtimes) {
     const show = ids.includes(id);
     rt.pane.classList.toggle("visible", show);
@@ -215,8 +226,10 @@ function layout() {
 
 function togglePaneZoom(id: string) {
   if (!state.ui.grid) return;
-  zoomedId = zoomedId === id ? undefined : id;
+  if (zoomedId) { restorePaneLayout(); return; }
+  zoomedId = id;
   layout();
+  renderSidebar();
 }
 
 function attachWebgl(rt: Runtime) {
@@ -251,7 +264,18 @@ function renderPaneHeads() {
     if (!s) continue;
     const p = project(s.projectId);
     rt.head.replaceChildren(el("span", "pane-title", `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`));
-    rt.head.append(iconButton(state.ui.pinnedSessionIds.includes(id) ? "★" : "☆", t("grid.pin"), () => togglePin(id)));
+    if (state.ui.grid && !zoomedId) {
+      const index = state.ui.paneSlots.indexOf(id);
+      const title = rt.head.querySelector<HTMLElement>(".pane-title")!;
+      const choose = el("button", "pane-title pane-picker", `${title.textContent} ▾`);
+      choose.title = t("panes.choose");
+      choose.onclick = () => choosePaneSession(index);
+      title.replaceWith(choose);
+      if (index >= 0) rt.head.append(iconButton("−", t("panes.remove"), () => {
+        state.ui.paneSlots[index] = null;
+        restorePaneLayout();
+      }));
+    }
     if (state.ui.grid) rt.head.append(iconButton(zoomedId === id ? "⊟" : "⤢", t(zoomedId === id ? "panes.restore" : "panes.maximize"), () => togglePaneZoom(id)));
     if (!rt.running) rt.head.append(iconButton("↻", t("session.restart"), () => void start(s)));
     rt.head.classList.toggle("stopped", s.stopped === true);
@@ -326,7 +350,9 @@ function createRuntime(s: Session): Runtime {
   term.textarea?.addEventListener("focus", () => {
     if (state.ui.activeSessionId !== s.id) select(s.id, false);
   });
-  head.addEventListener("click", () => select(s.id));
+  head.addEventListener("click", event => {
+    if (!(event.target instanceof Element && event.target.closest("button"))) select(s.id);
+  });
 
   runtimes.set(s.id, rt);
   return rt;
@@ -772,14 +798,14 @@ function onAgentEvent(ev: AgentEvent) {
 function select(id: string, focus = true) {
   const s = session(id);
   if (!s) return;
-  if (zoomedId && zoomedId !== id) zoomedId = undefined;
+  if (state.ui.grid) zoomedId = state.ui.paneSlots.includes(id) ? (zoomedId === id ? id : undefined) : id;
   if (attentionOnly && !ATTENTION.has(statusOf(id))) attentionOnly = false;
   state.ui.activeSessionId = id;
   s.lastUsedAt = Date.now();
   unread.delete(id);
   readAttention(state, id);
   save();
-  if (state.ui.grid && !state.ui.pinnedSessionIds.includes(id) && state.ui.pinnedSessionIds.length === 4) state.ui.grid = false;
+
   if (!runtimes.has(id) || (!runtimes.get(id)?.running && !s.stopped)) {
     if (s.stopped) { createRuntime(s); layout(); renderPaneHeads(); }
     else void start(s);
@@ -893,6 +919,7 @@ async function removeProject(p: Project) {
   for (const s of all) forgetRuntime(s.id);
   state.closedSessions = state.closedSessions.filter((s) => s.projectId !== p.id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((id) => !all.some((s) => s.id === id));
+  state.ui.paneSlots = state.ui.paneSlots.map(id => all.some(s => s.id === id) ? null : id);
   state.sessions = state.sessions.filter((s) => s.projectId !== p.id);
   state.templates = state.templates.filter((t) => t.projectId !== p.id);
   state.projects = state.projects.filter((x) => x.id !== p.id);
@@ -911,6 +938,11 @@ function openEditor(path: string, line?: number) {
 function toggleGrid() {
   zoomedId = undefined;
   state.ui.grid = !state.ui.grid;
+  if (state.ui.grid) {
+    if (state.ui.paneSlots.every(id => !id) && state.ui.activeSessionId) state.ui.paneSlots[0] = state.ui.activeSessionId;
+    restorePaneLayout();
+    return;
+  }
   save();
   layout();
   renderSidebar();
@@ -918,16 +950,53 @@ function toggleGrid() {
 
 let attentionOnly = false;
 
-function togglePin(id: string) {
-  const pins = state.ui.pinnedSessionIds;
-  if (pins.includes(id)) state.ui.pinnedSessionIds = pins.filter((x) => x !== id);
-  else {
-    if (pins.length === 4) { toast(t("grid.full"), true); return; }
-    pins.push(id);
+function restorePaneLayout() {
+  zoomedId = undefined;
+  if (!state.ui.activeSessionId || !state.ui.paneSlots.includes(state.ui.activeSessionId)) {
+    state.ui.activeSessionId = state.ui.paneSlots.find(id => id && session(id)) ?? undefined;
+  }
+  for (const id of state.ui.paneSlots) {
+    const s = session(id ?? undefined);
+    if (s && !runtimes.has(s.id)) createRuntime(s);
   }
   save();
   layout();
-  renderPaneHeads();
+  renderSidebar();
+  if (state.ui.activeSessionId) runtimes.get(state.ui.activeSessionId)?.term.focus();
+}
+
+function choosePaneSession(index: number) {
+  if (index < 0) return;
+  modal((box, close) => {
+    box.append(el("h3", "", t("panes.choose")));
+    const search = el("input");
+    search.placeholder = t("panes.search");
+    search.setAttribute("aria-label", t("panes.search"));
+    const list = el("div", "switch-list pane-session-list");
+    const draw = () => {
+      list.replaceChildren();
+      for (const p of orderedProjects(state.projects)) {
+        const sessions = state.sessions.filter(s => s.projectId === p.id && `${p.name} ${s.title} ${s.provider}`.toLocaleLowerCase().includes(search.value.toLocaleLowerCase()));
+        if (!sessions.length) continue;
+        list.append(el("h4", "", p.name));
+        for (const s of sessions) {
+          const button = el("button", "", `${state.ui.paneSlots.includes(s.id) ? "✓ " : ""}${PROVIDER_ICON[s.provider]} ${s.title} · ${statusLabel(statusOf(s.id))}`);
+          button.onclick = () => {
+            state.ui.paneSlots = assignPaneSlot(state.ui.paneSlots, index, s.id);
+            zoomedId = undefined;
+            close();
+            select(s.id);
+          };
+          list.append(button);
+        }
+      }
+      if (!list.childElementCount) list.append(el("p", "hint", t("panes.noSessions")));
+    };
+    search.oninput = draw;
+    box.append(search, list);
+    draw();
+    search.focus();
+  }, () => {});
 }
 
 function jumpAttention() {
@@ -967,11 +1036,26 @@ function renderAttention() {
     modes.value = state.ui.paneLayout;
     modes.onchange = () => {
       state.ui.paneLayout = modes.value as PaneLayout;
-      zoomedId = undefined;
-      save();
-      layout();
+      restorePaneLayout();
     };
-    root.append(modes);
+    const count = el("select", "pane-count");
+    count.setAttribute("aria-label", t("panes.count"));
+    for (const n of [2, 3, 4, 5, 6, 7, 8]) {
+      const option = el("option", "", t(n >= 5 ? "panes.numberMany" : "panes.number", { n }));
+      option.value = String(n);
+      count.append(option);
+    }
+    count.value = String(state.ui.paneSlots.length);
+    count.onchange = () => {
+      state.ui.paneSlots = Array.from({ length: Number(count.value) }, (_, i) => state.ui.paneSlots[i] ?? null);
+      restorePaneLayout();
+    };
+    root.append(modes, count);
+    if (zoomedId) {
+      const back = el("button", "", t("panes.back"));
+      back.onclick = restorePaneLayout;
+      root.append(back);
+    }
   }
   notificationCenter.refresh();
 }
@@ -1086,7 +1170,7 @@ function renderSidebar() {
     const more = iconButton("▾", t("project.otherSessions"), () => {
       const wasOpen = more.getAttribute("aria-expanded") === "true";
       closeSessionMenu?.();
-      closeSessionMenu = wasOpen ? undefined : openSessionMenu(more, state.settings.defaultProvider, (provider) => void createSession(p, provider));
+      closeSessionMenu = wasOpen ? undefined : openSessionMenu(more, state.settings.defaultProvider, (provider) => void createSession(p, provider), () => showImport(p));
     });
     more.setAttribute("aria-haspopup", "menu");
     more.setAttribute("aria-expanded", "false");
@@ -1304,6 +1388,88 @@ function infoRows(s: Session): [string, string][] {
   return rows;
 }
 
+function showImport(p: Project, target?: Session) {
+  let alive = true;
+  let generation = 0;
+  modal((box, close) => {
+    box.append(el("h3", "", t(target ? "import.link" : "import.open")));
+    const provider = el("select");
+    for (const value of ["claude", "codex", "antigravity"] as const) {
+      const option = el("option", "", PROVIDER_LABEL[value]); option.value = value; provider.append(option);
+    }
+    provider.value = target?.provider ?? (state.settings.defaultProvider === "shell" ? "claude" : state.settings.defaultProvider);
+    provider.disabled = !!target;
+    provider.setAttribute("aria-label", t("import.provider"));
+    const agentId = el("input");
+    agentId.type = "text";
+    agentId.placeholder = t("import.id"); agentId.setAttribute("aria-label", t("import.id"));
+    agentId.value = target?.agentSessionId ?? "";
+    const name = el("input");
+    let suggestedName = "";
+    name.type = "text";
+    name.placeholder = t("import.name"); name.setAttribute("aria-label", t("import.name"));
+    name.hidden = !!target;
+    const note = el("p", "note", t(target ? "import.linkNote" : "import.note"));
+    const hint = el("p", "hint");
+    const list = el("div", "switch-list pane-session-list");
+    const error = el("p", "note"); error.setAttribute("role", "alert");
+    const actions = el("div", "actions");
+    const cancel = el("button", "", t("common.cancel")); cancel.onclick = close;
+    const apply = el("button", "primary", t(target ? "import.link" : "import.add"));
+    const validate = () => { apply.disabled = !isUuid(agentId.value.trim()); error.textContent = ""; };
+    agentId.oninput = validate;
+    apply.onclick = () => {
+      if (project(p.id) !== p || (target && session(target.id) !== target)) { close(); return; }
+      const result = importConversation(state, p.id, provider.value as Provider, agentId.value, name.value, crypto.randomUUID(), Date.now(), target?.id);
+      if (typeof result === "string") { error.textContent = t(`import.${result}`); return; }
+      codexLookup.delete(result.id);
+      agentStats.delete(result.id);
+      const rt = runtimes.get(result.id);
+      if (rt) rt.observation = undefined;
+      statuses.set(result.id, rt?.running ? "untracked" : "exited");
+      p.collapsed = false;
+      save();
+      close();
+      if (target) { renderSidebar(); renderPaneHeads(); void pollAgents(); }
+      else select(result.id);
+    };
+    const load = async () => {
+      const request = ++generation;
+      const selected = provider.value;
+      list.replaceChildren(el("p", "hint", t("import.loading")));
+      hint.textContent = t(selected === "antigravity" ? "import.agy" : "import.files");
+      try {
+        const choices = await invoke<{ id: string; modifiedAt: number; title: string | null }[]>("list_conversations", { provider: selected, cwd: p.path });
+        if (!alive || generation !== request) return;
+        list.replaceChildren();
+        for (const choice of choices) {
+          const existing = state.sessions.find(s => s.provider === selected && s.agentSessionId?.toLowerCase() === choice.id.toLowerCase() && s.id !== target?.id);
+          const title = existing?.title || choice.title || t("import.untitled");
+          const button = el("button", "conversation-choice");
+          button.append(el("strong", "", title), el("span", "hint", `${choice.id} · ${new Date(choice.modifiedAt).toLocaleString(locale())}${existing ? ` · ${t("import.added")}` : ""}`));
+          button.disabled = !!existing;
+          button.onclick = () => {
+            agentId.value = choice.id;
+            if (!name.value.trim() || name.value === suggestedName) name.value = choice.title ?? "";
+            suggestedName = choice.title ?? "";
+            validate(); agentId.focus();
+          };
+          list.append(button);
+        }
+        if (!choices.length) list.append(el("p", "hint", t("import.empty")));
+      } catch {
+        if (alive && generation === request) list.replaceChildren(el("p", "hint", t("import.failed")));
+      }
+    };
+    provider.onchange = () => { agentId.value = ""; validate(); void load(); };
+    actions.append(cancel, apply);
+    const idLabel = el("label", "", t("import.id")); idLabel.append(agentId);
+    const nameLabel = el("label", "", t("import.name")); nameLabel.append(name); nameLabel.hidden = !!target;
+    box.append(provider, note, hint, list, idLabel, nameLabel, error, actions);
+    validate(); void load(); agentId.focus();
+  }, () => { alive = false; });
+}
+
 function showInfo(s: Session) {
   let timer: number | undefined;
   modal(
@@ -1314,6 +1480,11 @@ function showInfo(s: Session) {
       timer = window.setInterval(draw, 2000);
       const note = s.provider === "claude" ? t("info.noteClaude") : s.provider === "codex" ? t("info.noteCodex") : s.provider === "antigravity" ? t("info.noteAntigravity") : "";
       const actions = el("div", "actions");
+      if (s.provider !== "shell") {
+        const link = el("button", "", t("import.link"));
+        link.onclick = () => { const p = project(s.projectId); close(); if (p) showImport(p, s); };
+        actions.append(link);
+      }
       if (s.agentSessionId) {
         const copy = el("button", "", t("info.copyId"));
         copy.onclick = () =>
@@ -1645,12 +1816,7 @@ async function main() {
     }
   }
   if (state.ui.grid) {
-    for (const id of state.ui.pinnedSessionIds) {
-      const pinned = session(id);
-      if (pinned && !runtimes.has(id)) createRuntime(pinned);
-    }
-    layout();
-    renderPaneHeads();
+    restorePaneLayout();
   }
   const active = session(state.ui.activeSessionId);
   if (active?.stopped && !runtimes.has(active.id)) { createRuntime(active); layout(); renderPaneHeads(); }

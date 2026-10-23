@@ -4,6 +4,24 @@ export type Provider = "claude" | "codex" | "antigravity" | "shell";
 export const PROVIDERS: Provider[] = ["claude", "codex", "antigravity", "shell"];
 export const PROVIDER_LABEL: Record<Provider, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity", shell: "Shell" };
 
+/** Import stays stopped until explicitly launched. Linking never restarts a process. */
+export function importConversation(state: PersistedState, projectId: string, provider: Provider, agentId: string,
+  title: string, id: string, now: number, targetId?: string): Session | "invalid" | "duplicate" {
+  const normalized = agentId.trim().toLowerCase();
+  const target = targetId ? state.sessions.find(s => s.id === targetId) : undefined;
+  if (provider === "shell" || !isUuid(normalized) || !state.projects.some(p => p.id === projectId)
+    || (targetId && (!target || target.projectId !== projectId || target.provider !== provider))) return "invalid";
+  if (state.sessions.some(s => s.id !== targetId && s.provider === provider && s.agentSessionId?.toLowerCase() === normalized)) return "duplicate";
+  const s: Session = target ?? { id, projectId, provider, title: title.trim().slice(0, 300) || `${PROVIDER_LABEL[provider]} ${normalized.slice(0, 8)}`,
+    createdAt: now, lastUsedAt: now, stopped: true };
+  s.agentSessionId = normalized;
+  s.started = true;
+  s.hasConversation = true;
+  if (!target) state.sessions.push(s);
+  state.closedSessions = state.closedSessions.filter(old => old.provider !== provider || old.agentSessionId?.toLowerCase() !== normalized);
+  return s;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -96,7 +114,7 @@ export interface PersistedState {
   closedSessions: Session[];
   settings: Settings;
   settingsRev: number;
-  ui: { sidebarWidth: number; grid: boolean; paneLayout: PaneLayout; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
+  ui: { sidebarWidth: number; grid: boolean; paneLayout: PaneLayout; paneSlots: (string | null)[]; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -128,7 +146,7 @@ export function emptyState(): PersistedState {
     closedSessions: [],
     settings: { ...DEFAULT_SETTINGS },
     settingsRev: SETTINGS_REV,
-    ui: { sidebarWidth: 280, grid: false, paneLayout: "grid", paneSizes: {}, pinnedSessionIds: [] },
+    ui: { sidebarWidth: 280, grid: false, paneLayout: "grid", paneSlots: [null, null], paneSizes: {}, pinnedSessionIds: [] },
   };
 }
 
@@ -234,8 +252,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     if (["grid", "columns", "rows"].includes(data.ui.paneLayout as string)) state.ui.paneLayout = data.ui.paneLayout as PaneLayout;
     if (isObj(data.ui.paneSizes)) {
       for (const [key, value] of Object.entries(data.ui.paneSizes)) {
-        if (/^(columns|rows)-[234]$|^grid-[xy]$/.test(key)) {
-          const count = key.startsWith("grid") ? 2 : Number(key.at(-1));
+        if (/^(columns|rows)-[2-8]$|^grid-[xy]$|^grid-x-[34]$/.test(key)) {
+          const count = /^grid-[xy]$/.test(key) ? 2 : Number(key.at(-1));
           state.ui.paneSizes[key] = paneWeights(value, count);
         }
       }
@@ -245,6 +263,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         typeof id === "string" && state.sessions.some((s) => s.id === id)))].slice(0, 4);
     }
     if (str(data.ui.activeSessionId)) state.ui.activeSessionId = data.ui.activeSessionId;
+    const legacy = [...new Set([...state.ui.pinnedSessionIds, ...(state.ui.activeSessionId ? [state.ui.activeSessionId] : [])])].slice(0, 4);
+    state.ui.paneSlots = normalizePaneSlots(Array.isArray(data.ui.paneSlots) ? data.ui.paneSlots : legacy, new Set(state.sessions.map(s => s.id)));
   }
   return { state, dropped };
 }
@@ -557,6 +577,7 @@ export function archiveSession(state: PersistedState, id: string): void {
   state.closedSessions = [{ ...s, stopped: true }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
   state.sessions = state.sessions.filter((s) => s.id !== id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
+  state.ui.paneSlots = state.ui.paneSlots.map(value => value === id ? null : value);
   if (state.ui.activeSessionId === id) state.ui.activeSessionId = byRecent(state.sessions)[0]?.id;
 }
 
@@ -574,18 +595,20 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
   if (s) { s.stopped = true; s.exitCode = code; }
 }
 
-/** Focus never reorders visible panels. A newly selected session replaces one unpinned slot. */
-export function gridSessions(sessions: Session[], available: ReadonlySet<string>, pins: string[], active?: string, previous: string[] = []): string[] {
-  const pinned = [...new Set(pins)].filter((id) => available.has(id)).slice(0, 4);
-  const recent = byRecent(sessions).map((s) => s.id).filter((id) => available.has(id) && !pinned.includes(id));
-  if (active && recent.includes(active)) recent.splice(0, 0, ...recent.splice(recent.indexOf(active), 1));
-  const capacity = 4 - pinned.length;
-  const stable = [...new Set(previous)].filter(id => recent.includes(id)).slice(0, capacity);
-  if (capacity && active && recent.includes(active) && !stable.includes(active)) {
-    if (stable.length === capacity) stable[capacity - 1] = active;
-    else stable.push(active);
-  }
-  return [...pinned, ...stable, ...recent.filter(id => !stable.includes(id))].slice(0, 4);
+/** Fixed slots preserve holes and order; missing/duplicate sessions never auto-fill. */
+export function normalizePaneSlots(value: unknown[], available: ReadonlySet<string>): (string | null)[] {
+  const seen = new Set<string>();
+  return Array.from({ length: Math.min(8, Math.max(2, value.length)) }, (_, i) => {
+    const id = value[i];
+    if (typeof id !== "string" || !available.has(id) || seen.has(id)) return null;
+    seen.add(id);
+    return id;
+  });
+}
+
+export function assignPaneSlot(slots: (string | null)[], index: number, id: string): (string | null)[] {
+  if (index < 0 || index >= slots.length || slots.includes(id)) return slots;
+  return slots.map((value, i) => i === index ? id : value);
 }
 
 export type PaneLayout = "grid" | "columns" | "rows";
@@ -612,16 +635,16 @@ export function resizePaneTracks(weights: number[], boundary: number, position: 
 }
 
 export function paneGeometry(mode: PaneLayout, count: number) {
-  const columns = mode === "columns" ? count : mode === "rows" ? 1 : Math.min(2, count);
-  const rows = mode === "rows" ? count : mode === "columns" ? 1 : Math.ceil(count / 2);
+  const columns = mode === "columns" ? count : mode === "rows" ? 1 : Math.min(count, Math.max(2, Math.ceil(count / 2)));
+  const rows = mode === "rows" ? count : mode === "columns" ? 1 : Math.ceil(count / columns);
   return {
     columns, rows,
-    xKey: mode === "grid" ? "grid-x" : `${mode}-${count}`,
+    xKey: mode === "grid" ? (columns > 2 ? `grid-x-${columns}` : "grid-x") : `${mode}-${count}`,
     yKey: mode === "grid" ? "grid-y" : `${mode}-${count}`,
     cells: Array.from({ length: count }, (_, i) => ({
       column: (i % columns) * 2 + 1,
       row: Math.floor(i / columns) * 2 + 1,
-      span: mode === "grid" && count === 3 && i === 2 ? 3 : 1,
+      span: mode === "grid" && i === count - 1 ? (columns - i % columns) * 2 - 1 : 1,
     })),
   };
 }
