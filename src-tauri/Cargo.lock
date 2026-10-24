@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "project-desk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gio",
  "glib",
