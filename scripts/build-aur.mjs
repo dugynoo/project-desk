@@ -11,11 +11,13 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Expected a stable release
 const debDir = 'src-tauri/target/release/bundle/deb';
 const debs = readdirSync(debDir).filter(n => n.endsWith('_amd64.deb'));
 if (debs.length !== 1) throw new Error('Expected exactly one amd64 Debian package');
-if (!/^[A-Za-z0-9_.-]+$/.test(debs[0])) throw new Error('Unexpected Debian asset filename');
+if (!/^[A-Za-z0-9][A-Za-z0-9_. -]*_amd64\.deb$/.test(debs[0])) throw new Error('Unexpected Debian asset filename');
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 const debHash = hash(join(debDir, debs[0]));
 const licenseHash = hash('LICENSE');
-const debUrl = `https://github.com/dugynoo/project-desk/releases/download/v${version}/${encodeURIComponent(debs[0])}`;
+// GitHub release uploads normalize spaces in Tauri's product name to dots.
+const assetName = debs[0].replaceAll(' ', '.');
+const debUrl = `https://github.com/dugynoo/project-desk/releases/download/v${version}/${assetName}`;
 const licenseUrl = `https://raw.githubusercontent.com/dugynoo/project-desk/v${version}/LICENSE`;
 const template = readFileSync('packaging/arch/PKGBUILD.in', 'utf8');
 const pkgbuild = template.replaceAll('@VERSION@', version).replaceAll('@DEB_SHA256@', debHash)
