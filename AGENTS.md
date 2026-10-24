@@ -27,7 +27,7 @@ See `README.md` for product behavior, setup details, and release instructions.
 - `src-tauri/src/lib.rs`: Tauri command registration, IPC and app lifecycle.
   `src-tauri/src/persistence.rs`: validated state writes, backup and recovery.
 - `src-tauri/src/pty.rs` and `job.rs`: PTYs and child-process cleanup.
-- `src-tauri/src/antigravity.rs` and `antigravity-relay.cjs`: project-local hooks and metadata-only relay.
+- `src-tauri/src/antigravity.rs` and `antigravity-relay.cjs`: user-scoped AGY plugin and metadata-only relay.
 - `src-tauri/src/hooks.rs`: Claude/Antigravity HTTP hooks; `codex.rs`: conversation discovery;
   `usage.rs`: incremental session-file parsing for usage and Codex status.
 - `src-tauri/src/editors.rs` and `files.rs`: editor detection/launch and file actions.
@@ -80,7 +80,9 @@ when available. Report checks run and any platform or manual checks not performe
   boundary). Register new commands in `lib.rs` and review Tauri capabilities
   when adding native functionality.
 - Derive agent status from Claude hooks and Codex session events, not terminal
-  text scraping. Keep integrations local; do not modify global agent settings.
+  text scraping. Keep integrations local; do not modify global agent settings except for the owned
+  Project Desk AGY plugin in ~/.gemini/config/plugins/project-desk. Preserve other
+  plugins/settings and only migrate exact copies of our legacy workspace hooks.
 - Session-file watchers and hook payloads expose only required metadata, events,
   and usage statistics. Do not persist or forward conversation text through them.
 - Never interpolate project/session names, paths, or pasted text into shell

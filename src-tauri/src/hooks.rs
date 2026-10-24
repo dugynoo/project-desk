@@ -13,6 +13,8 @@ use tauri::{AppHandle, Emitter};
 pub const TOKEN_ENV: &str = "PROJECT_DESK_HOOK_TOKEN";
 pub const SESSION_ENV: &str = "PROJECT_DESK_SESSION_ID";
 pub const SETTINGS_ENV: &str = "PROJECT_DESK_HOOK_SETTINGS";
+pub const PORT_ENV: &str = "PROJECT_DESK_HOOK_PORT";
+pub const RELAY_ARG: &str = "--project-desk-session-start";
 
 const EVENTS: [&str; 6] = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "SessionEnd"];
 const MAX_BODY: u64 = 1024 * 1024;
@@ -53,7 +55,7 @@ pub fn parse_event(desk_session_id: &str, body: &str) -> Option<AgentEvent> {
     })
 }
 
-pub fn settings_json(port: u16) -> Value {
+pub fn settings_json(port: u16, executable: &Path) -> Value {
     let handler = json!({
         "type": "http",
         "url": format!("http://127.0.0.1:{port}/hook"),
@@ -66,7 +68,12 @@ pub fn settings_json(port: u16) -> Value {
     });
     let mut hooks = serde_json::Map::new();
     for e in EVENTS {
-        hooks.insert(e.to_owned(), json!([{ "hooks": [handler.clone()] }]));
+        // SessionStart does not support HTTP hooks. Exec form bypasses shell
+        // parsing, including spaces and metacharacters in the executable path.
+        let h = if e == "SessionStart" {
+            json!({"type": "command", "command": executable, "args": [RELAY_ARG], "timeout": 2})
+        } else { handler.clone() };
+        hooks.insert(e.to_owned(), json!([{ "hooks": [h] }]));
     }
     json!({ "hooks": hooks })
 }
@@ -82,7 +89,8 @@ pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
 
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let settings_path = dir.join("claude-hooks.json");
-    let body = serde_json::to_string_pretty(&settings_json(port)).map_err(|e| e.to_string())?;
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(&settings_json(port, &executable)).map_err(|e| e.to_string())?;
     std::fs::write(&settings_path, body).map_err(|e| e.to_string())?;
 
     let expected = token.clone();
@@ -128,12 +136,16 @@ mod tests {
 
     #[test]
     fn settings_cover_all_events_and_use_env_headers() {
-        let s = settings_json(4242);
+        let s = settings_json(4242, Path::new("/test path/desk"));
         for e in EVENTS {
             assert!(s["hooks"][e].is_array(), "chýba {e}");
         }
         let h = &s["hooks"]["Stop"][0]["hooks"][0];
         assert_eq!(h["url"], "http://127.0.0.1:4242/hook");
         assert_eq!(h["headers"]["X-Project-Desk-Token"], "$PROJECT_DESK_HOOK_TOKEN");
+        let start = &s["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(start["type"], "command");
+        assert_eq!(start["command"], "/test path/desk");
+        assert_eq!(start["args"], json!([RELAY_ARG]));
     }
 }

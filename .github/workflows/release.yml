@@ -22,7 +22,7 @@ jobs:
           - platform: macos-latest
             args: --target x86_64-apple-darwin --bundles app,dmg
           - platform: ubuntu-22.04
-            args: --bundles appimage,deb
+            args: --bundles appimage,deb,rpm
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     steps:
@@ -47,7 +47,7 @@ jobs:
           prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
           {
             echo "body<<EOF_NOTES"
-            echo "Download the installer for your system below. Windows, macOS and AppImage installs update themselves; upgrade Debian and Arch packages through your package manager."
+            echo "Windows, macOS and AppImage installs update themselves. Debian/Ubuntu: install the .deb with apt. Arch: install the .pkg.tar.zst with pacman -U. Fedora/openSUSE: install the .rpm with dnf/zypper. Project Desk checks for new versions on all these formats. Restart the app after updating a system package."
             echo
             git log --no-merges --format='- %s' "${prev:+$prev..}$GITHUB_REF_NAME" | grep -Ev '^- chore: release [0-9]' || true
             echo "EOF_NOTES"
@@ -91,8 +91,16 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: bash scripts/build-arch.sh
 
+      - name: Verify RPM on Fedora and openSUSE
+        if: matrix.platform == 'ubuntu-22.04'
+        run: bash scripts/verify-rpm.sh
+
+      - name: Prepare downloadable AUR source package
+        if: matrix.platform == 'ubuntu-22.04'
+        run: node scripts/build-aur.mjs
+
       - name: Attach Arch Linux package to draft release
         if: matrix.platform == 'ubuntu-22.04'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/arch/*.pkg.tar.zst --clobber
+        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber

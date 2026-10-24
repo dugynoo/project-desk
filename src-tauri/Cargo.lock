@@ -2877,8 +2877,14 @@ dependencies = [
 name = "project-desk"
 version = "0.5.0"
 dependencies = [
+ "gio",
+ "glib",
  "libc",
+ "objc2",
  "portable-pty",
+ "reqwest",
+ "rustls",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

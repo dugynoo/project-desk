@@ -56,6 +56,8 @@ export interface Session {
   /** Proces už niekedy bežal (pre Codex: ponúknuť `codex resume` namiesto nového štartu). */
   started?: boolean;
   stopped?: boolean;
+  /** Windows ended the process during shutdown; eligible for configured auto-resume. */
+  resumeAfterShutdown?: boolean;
   exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
@@ -106,6 +108,7 @@ export function migrateEditorCommand(command: string): string {
 export const SETTINGS_REV = 2;
 
 export interface PersistedState {
+  savedLayouts: SavedLayout[];
   notifications: AttentionEvent[];
   version: 1;
   projects: Project[];
@@ -138,6 +141,7 @@ const REV1_DEFAULTS: Partial<Settings> = { codexCommand: "codex", codexResumeCom
 
 export function emptyState(): PersistedState {
   return {
+    savedLayouts: [],
     notifications: [],
     version: 1,
     projects: [],
@@ -202,6 +206,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         hasConversation: s.hasConversation === true,
         started: s.started === true,
         stopped: s.stopped === true,
+        resumeAfterShutdown: s.stopped === true && s.resumeAfterShutdown === true,
         exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),
@@ -266,7 +271,61 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     const legacy = [...new Set([...state.ui.pinnedSessionIds, ...(state.ui.activeSessionId ? [state.ui.activeSessionId] : [])])].slice(0, 4);
     state.ui.paneSlots = normalizePaneSlots(Array.isArray(data.ui.paneSlots) ? data.ui.paneSlots : legacy, new Set(state.sessions.map(s => s.id)));
   }
+  const layoutIds = new Set<string>();
+  for (const item of Array.isArray(data.savedLayouts) ? data.savedLayouts : []) {
+    if (!isObj(item) || !str(item.id) || layoutIds.has(item.id) || !str(item.name)
+      || !item.name.trim() || !["grid", "columns", "rows"].includes(item.paneLayout as string)
+      || !Array.isArray(item.paneSlots)) { dropped++; continue; }
+    layoutIds.add(item.id);
+    state.savedLayouts.push({ id: item.id, name: item.name.trim().slice(0, 80),
+      paneLayout: item.paneLayout as PaneLayout,
+      paneSlots: normalizePaneSlots(item.paneSlots, new Set(state.sessions.map(s => s.id))),
+      paneSizes: parsePaneSizes(item.paneSizes) });
+  }
   return { state, dropped };
+}
+
+export interface SavedLayout {
+  id: string;
+  name: string;
+  paneLayout: PaneLayout;
+  paneSlots: (string | null)[];
+  paneSizes: Record<string, number[]>;
+}
+
+function parsePaneSizes(value: unknown): Record<string, number[]> {
+  const sizes: Record<string, number[]> = {};
+  if (isObj(value)) for (const [key, weights] of Object.entries(value)) {
+    if (/^(columns|rows)-[2-8]$|^grid-[xy]$|^grid-x-[34]$/.test(key)) {
+      sizes[key] = paneWeights(weights, /^grid-[xy]$/.test(key) ? 2 : Number(key.at(-1)));
+    }
+  }
+  return sizes;
+}
+
+/** Explicit snapshots: editing the visible panes never changes a saved layout. */
+export function savePanePreset(state: PersistedState, id: string, name: string): boolean {
+  const trimmed = name.trim().slice(0, 80);
+  if (!trimmed) return false;
+  const preset: SavedLayout = { id, name: trimmed, paneLayout: state.ui.paneLayout,
+    paneSlots: normalizePaneSlots(state.ui.paneSlots, new Set(state.sessions.map(s => s.id))),
+    paneSizes: parsePaneSizes(state.ui.paneSizes) };
+  const index = state.savedLayouts.findIndex(item => item.id === id);
+  if (index < 0) state.savedLayouts.push(preset); else state.savedLayouts[index] = preset;
+  return true;
+}
+
+export function applyPanePreset(state: PersistedState, id: string): boolean {
+  const preset = state.savedLayouts.find(item => item.id === id);
+  if (!preset) return false;
+  state.ui.paneLayout = preset.paneLayout;
+  state.ui.paneSlots = normalizePaneSlots(preset.paneSlots, new Set(state.sessions.map(s => s.id)));
+  state.ui.paneSizes = parsePaneSizes(preset.paneSizes);
+  state.ui.grid = true;
+  if (!state.ui.activeSessionId || !state.ui.paneSlots.includes(state.ui.activeSessionId)) {
+    state.ui.activeSessionId = state.ui.paneSlots.find(id => id !== null) ?? undefined;
+  }
+  return true;
 }
 
 export const clampSidebar = (w: number) => Math.min(640, Math.max(180, Math.round(w)));
@@ -365,8 +424,13 @@ export function sessionDiagnostics(s: Pick<Session, "provider" | "agentSessionId
   const reason = !running ? "stopped" : method === "none" ? "shell"
     : method === "hooks" && !hooksEnabled ? "hooksUnavailable"
     : s.provider === "codex" && !linked ? "missingId"
+    : observation?.event === "SessionEnd" ? "agentExited"
     : !observation ? (method === "file" ? "awaitingFile" : "awaitingHook") : "receiving";
-  return { linked, method, reason } as const;
+  const recovery = reason === "stopped" ? "resume"
+    : reason === "missingId" || reason === "awaitingFile" ? "link"
+    : reason === "awaitingHook" || reason === "agentExited" ? "terminal"
+    : reason === "hooksUnavailable" ? "restartApp" : undefined;
+  return { linked, method, reason, recovery } as const;
 }
 
 const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]);
@@ -574,7 +638,7 @@ export function relativePath(root: string, file: string): string | undefined {
 export function archiveSession(state: PersistedState, id: string): void {
   const s = state.sessions.find((s) => s.id === id);
   if (!s) return;
-  state.closedSessions = [{ ...s, stopped: true }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
+  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
   state.sessions = state.sessions.filter((s) => s.id !== id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
   state.ui.paneSlots = state.ui.paneSlots.map(value => value === id ? null : value);
@@ -589,10 +653,14 @@ export function restoreSession(state: PersistedState, id: string): Session | und
   return s;
 }
 
-export function recordSessionExit(state: PersistedState, id: string, code: number | null, closing: boolean): void {
+export function recordSessionExit(state: PersistedState, id: string, code: number | null, closing: boolean, systemShutdown = false): void {
   if (closing) { archiveSession(state, id); return; }
   const s = state.sessions.find((s) => s.id === id);
-  if (s) { s.stopped = true; s.exitCode = code; }
+  if (s) { s.stopped = true; s.exitCode = code; s.resumeAfterShutdown = systemShutdown; }
+}
+
+export function shouldAutoResume(s: Session, enabled: boolean): boolean {
+  return enabled && (!s.stopped || s.resumeAfterShutdown === true);
 }
 
 /** Fixed slots preserve holes and order; missing/duplicate sessions never auto-fill. */

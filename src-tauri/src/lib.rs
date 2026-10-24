@@ -4,10 +4,13 @@ mod conversations;
 mod editors;
 mod files;
 mod hooks;
+pub mod hook_relay;
 mod job;
 mod pty;
 mod persistence;
 mod usage;
+mod shutdown;
+mod updates;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -35,6 +38,7 @@ struct AppInfo {
     state_file: String,
     /// Aktualizácie hľadá len vydaná verzia, dev build (`tauri.dev.json`) nie.
     updates: bool,
+    automatic_updates: bool,
 }
 
 #[derive(Deserialize)]
@@ -55,10 +59,9 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
         platform: std::env::consts::OS,
         hooks_enabled: state.hooks.is_some(),
         state_file: state.state_file.to_string_lossy().into_owned(),
-        // Package-managed Linux installs must be upgraded through their package manager.
         updates: !cfg!(debug_assertions)
-            && !app.config().identifier.ends_with(".dev")
-            && (!cfg!(target_os = "linux") || std::env::var_os("APPIMAGE").is_some()),
+            && !app.config().identifier.ends_with(".dev"),
+        automatic_updates: updates::automatic_updates(),
     }
 }
 
@@ -75,6 +78,16 @@ fn save_state(state: State<'_, AppState>, json: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn shutdown_pending(app: tauri::AppHandle) -> Vec<String> {
+    shutdown::pending(&app)
+}
+
+#[tauri::command]
+fn shutdown_ready(app: tauri::AppHandle, id: String, saved: bool) {
+    shutdown::complete(&app, &id, saved);
+}
+
+#[tauri::command]
 fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -87,10 +100,12 @@ fn pty_spawn(
     let mut env = vec![(hooks::SESSION_ENV.to_owned(), args.id.clone())];
     if let Some(h) = &state.hooks {
         if args.provider.as_deref() == Some("antigravity") {
-            antigravity::install(Path::new(&args.cwd))?;
-            env.push(("PROJECT_DESK_HOOK_PORT".into(), h.port.to_string()));
+            let home = app.path().home_dir().map_err(|e| e.to_string())?;
+            antigravity::install(Path::new(&args.cwd), &home)
+                .map_err(|e| format!("antigravity.setupFailed: {e}"))?;
         }
         env.push((hooks::TOKEN_ENV.to_owned(), h.token.clone()));
+        env.push((hooks::PORT_ENV.to_owned(), h.port.to_string()));
         env.push((hooks::SETTINGS_ENV.to_owned(), h.settings_path.to_string_lossy().into_owned()));
     }
     let req = SpawnRequest {
@@ -252,12 +267,16 @@ pub fn run() {
                 state_write: Mutex::default(),
                 editors: Mutex::default(),
             });
+            shutdown::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_info,
+            updates::check_release,
             load_state,
             save_state,
+            shutdown_pending,
+            shutdown_ready,
             pty_spawn,
             pty_write,
             pty_resize,
@@ -277,6 +296,12 @@ pub fn run() {
         .expect("Project Desk failed to start");
 
     app.run(|handle, event| {
+        if let RunEvent::ExitRequested { code: None, api, .. } = &event {
+            if handle.get_webview_window("main").is_some() {
+                api.prevent_exit();
+                shutdown::request(handle, shutdown::Reason::Quit);
+            }
+        }
         // Pri zatvorení okna ukončíme všetky shelly, nech po nás neostanú siroty.
         if let RunEvent::Exit = event {
             handle.state::<AppState>().pty.kill_all();

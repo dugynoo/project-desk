@@ -50,6 +50,18 @@ button.icon.on { color: var(--accent); }
 .project-row:hover .row-actions, .session:hover .row-actions { opacity: 1; }
 .project-row:focus-within .row-actions, .session:focus-within .row-actions { opacity: 1; }
 .row-actions:has([aria-expanded="true"]) { opacity: 1; }
+/* Hidden sidebar actions must not reserve space for their buttons. */
+.project-row, .session { position: relative; }
+.project-row > .row-actions, .session > .row-actions { position: absolute; right: 6px; z-index: 1; pointer-events: none; background: var(--panel); border-radius: 4px; }
+.project-row:hover > .row-actions, .session:hover > .row-actions, .session.active > .row-actions { background: var(--panel-2); }
+.project-row:hover > .row-actions,
+.project-row:focus-within > .row-actions,
+.session:hover > .row-actions,
+.session:focus-within > .row-actions,
+.project-row > .row-actions:has([aria-expanded="true"]),
+.session > .row-actions:has([aria-expanded="true"]) { pointer-events: auto; }
+/* Keep the rename input usable instead of covering its text with actions. */
+.session:has(.title-edit) > .row-actions { position: static; flex-shrink: 0; }
 .session-launcher { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; }
 .session-launcher button.icon { padding: 0 5px; }
 .session-launcher button + button { border-left: 1px solid var(--line); border-radius: 0 4px 4px 0; }
@@ -181,3 +193,10 @@ button.icon.on { color: var(--accent); }
 .pane-session-list h4 { margin: 12px 0 4px; color: var(--muted); }
 .conversation-choice strong, .conversation-choice span { display: block; overflow-wrap: anywhere; }
 .conversation-choice span { margin-top: 4px; font-size: 11px; }
+.layout-create { display: flex; flex-wrap: wrap; gap: 8px; }
+.layout-create input { flex: 1; min-width: 140px; }
+.layout-create button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.layout-create button:disabled { opacity: .5; cursor: default; }
+.saved-layout-list { margin-top: 16px; }
+.saved-layout-row { border-top: 1px solid var(--line); padding: 12px 0; }
+.saved-layout-row .actions { flex-wrap: wrap; }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSaveQueue } from "./persistence.ts";
+import { createSaveQueue, createShutdownHandler } from "./persistence.ts";
 
 test("close flush cancels debounce and saves the latest snapshot", async () => {
   let state = "before";
@@ -10,6 +10,23 @@ test("close flush cancels debounce and saves the latest snapshot", async () => {
   state = "after";
   await queue.flush();
   assert.deepEqual(writes, ["after"]);
+});
+
+test("native shutdown acknowledgement waits for disk, deduplicates requests and reports save failure", async () => {
+  let release!: () => void;
+  const disk = new Promise<void>(resolve => { release = resolve; });
+  const events: string[] = [];
+  const handler = createShutdownHandler(() => disk, async (id, saved) => { events.push(`${id}:${saved}`); },
+    () => events.push("preparing"), error => assert.fail(String(error)));
+  const first = handler("quit");
+  await handler("quit");
+  assert.deepEqual(events, ["preparing"]);
+  release(); await first;
+  assert.deepEqual(events, ["preparing", "quit:true"]);
+  const failed = createShutdownHandler(async () => { throw Error("disk full"); },
+    async (id, saved) => { events.push(`${id}:${saved}`); }, () => {}, () => events.push("error"));
+  await failed("logout");
+  assert.deepEqual(events.slice(-2), ["error", "logout:false"]);
 });
 
 test("a flush waits behind an in-flight write without overwriting newer state", async () => {

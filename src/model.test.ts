@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  savePanePreset,
+  applyPanePreset,
   createDiscovery,
   importConversation,
   normalizePaneSlots,
@@ -17,6 +19,7 @@ import {
   archiveSession,
   restoreSession,
   recordSessionExit,
+  shouldAutoResume,
   nextAttention,
   settingsDraft,
   emptyState,
@@ -41,6 +44,73 @@ import {
 } from "./model.ts";
 
 const ID = "0b8c5a8e-4f3c-4d2a-9b8e-1c2d3e4f5a6b";
+test("confirmed OS shutdown preserves resume eligibility without disguising stopped processes", () => {
+  const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
+    sessions: [{ id: "s", projectId: "p", provider: "codex", title: "Test", agentSessionId: ID }] })).state;
+  const s = state.sessions[0];
+  recordSessionExit(state, s.id, 0x40010004, false);
+  assert.equal(shouldAutoResume(s, true), false, "exit code alone does not prove shutdown");
+  recordSessionExit(state, s.id, 0x40010004, false, true);
+  assert.equal(s.stopped, true);
+  assert.equal(shouldAutoResume(s, true), true);
+  assert.equal(shouldAutoResume(s, false), false, "respect disabled auto-resume");
+  const restored = parseState(JSON.stringify(state)).state.sessions[0];
+  assert.equal(shouldAutoResume(restored, true), true);
+  assert.equal(restored.agentSessionId, ID);
+  recordSessionExit(state, s.id, 1, false);
+  assert.equal(shouldAutoResume(s, true), false, "later ordinary exit clears recovery");
+  recordSessionExit(state, s.id, 0, true, true);
+  assert.equal(state.sessions.length, 0);
+  assert.equal(shouldAutoResume(state.closedSessions[0], true), false, "explicit close wins over shutdown");
+});
+test("saved layouts are independent snapshots and switching never changes session lifecycle", () => {
+  const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
+    sessions: ["a", "b"].map(id => ({ id, projectId: "p", title: id, provider: "shell", stopped: id === "b" })) })).state;
+  state.ui.paneSlots = ["b", "a", null];
+  state.ui.paneLayout = "columns";
+  state.ui.paneSizes = { "columns-3": [0.2, 0.3, 0.5] };
+  const sessions = JSON.stringify(state.sessions);
+  assert.equal(savePanePreset(state, "web", "  Web  "), true);
+  state.ui.paneSlots[0] = null;
+  state.ui.paneSizes["columns-3"][0] = 0.8;
+  assert.equal(state.savedLayouts[0].paneSlots[0], "b");
+  assert.equal(state.savedLayouts[0].paneSizes["columns-3"][0], 0.2);
+  assert.equal(applyPanePreset(state, "web"), true);
+  assert.equal(state.ui.grid, true);
+  assert.equal(state.ui.activeSessionId, "b");
+  assert.deepEqual(state.ui.paneSlots, ["b", "a", null]);
+  assert.deepEqual(state.ui.paneSizes["columns-3"], [0.2, 0.3, 0.5]);
+  assert.equal(JSON.stringify(state.sessions), sessions);
+  state.ui.paneSlots[0] = null;
+  assert.equal(state.savedLayouts[0].paneSlots[0], "b");
+  savePanePreset(state, "web", "Updated");
+  assert.equal(state.savedLayouts.length, 1);
+  assert.equal(state.savedLayouts[0].name, "Updated");
+  assert.equal(state.savedLayouts[0].paneSlots[0], null);
+  assert.equal(savePanePreset(state, "bad", "  "), false);
+  assert.equal(applyPanePreset(state, "missing"), false);
+  state.sessions = [];
+  applyPanePreset(state, "web");
+  assert.deepEqual(state.ui.paneSlots, [null, null, null]);
+  assert.equal(state.ui.activeSessionId, undefined);
+});
+
+test("saved layouts survive restart, migrate older state, and validate damaged entries", () => {
+  assert.deepEqual(parseState('{"ui":{"paneSlots":[null,null,null]}}').state.savedLayouts, []);
+  const raw = { savedLayouts: [
+    { id: "a", name: " Web ", paneLayout: "rows", paneSlots: ["gone", null, null], paneSizes: { "rows-3": [0.2, 0.3, 0.5], bad: [1] } },
+    { id: "a", name: "Duplicate", paneLayout: "grid", paneSlots: [] },
+    { id: "b", name: " ", paneLayout: "grid", paneSlots: [] },
+    { id: "c", name: "Broken", paneLayout: "wrong", paneSlots: [] },
+  ] };
+  const { state, dropped } = parseState(JSON.stringify(raw));
+  assert.equal(dropped, 3);
+  assert.equal(state.savedLayouts.length, 1);
+  assert.equal(state.savedLayouts[0].name, "Web");
+  assert.deepEqual(state.savedLayouts[0].paneSlots, [null, null, null]);
+  assert.deepEqual(state.savedLayouts[0].paneSizes, { "rows-3": [0.2, 0.3, 0.5] });
+  assert.deepEqual(parseState(JSON.stringify(state)).state.savedLayouts, state.savedLayouts);
+});
 test("conversation import validates IDs, stays stopped, deduplicates and resumes all agents by ID", () => {
   for (const provider of ["claude", "codex", "antigravity"] as const) {
     const state = emptyState();
@@ -161,6 +231,15 @@ test("diagnostics distinguish missing IDs, missing evidence, disabled hooks and 
   }
   assert.equal(sessionDiagnostics({ provider: "shell" }, true, false).reason, "shell");
   assert.equal(sessionDiagnostics({ provider: "shell" }, false, false).reason, "stopped");
+  assert.equal(sessionDiagnostics(codex, true, true).recovery, "link");
+  assert.equal(sessionDiagnostics(codex, false, true).recovery, "resume");
+  assert.equal(sessionDiagnostics(codex, true, true, observation).recovery, undefined);
+  const claude = { provider: "claude" as const, agentSessionId: ID };
+  assert.equal(sessionDiagnostics(claude, true, true).recovery, "terminal");
+  assert.equal(sessionDiagnostics(claude, true, false).recovery, "restartApp");
+  const exited = observeSession(undefined, "SessionEnd", false, 200);
+  assert.equal(sessionDiagnostics(claude, true, true, exited).reason, "agentExited");
+  assert.equal(sessionDiagnostics(claude, true, true, exited).recovery, "terminal");
 });
 
 test("repeated snapshots do not invent fresh events or replace live receipt times", () => {

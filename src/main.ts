@@ -1,10 +1,11 @@
 import { createSettings } from "./settings.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
+import { showSavedLayouts } from "./saved-layouts.ts";
 import { openSessionMenu } from "./session-menu.ts";
 import { createUpdates } from "./updates.ts";
 import { $, el } from "./dom.ts";
-import { createSaveQueue } from "./persistence.ts";
+import { createSaveQueue, createShutdownHandler } from "./persistence.ts";
 import { createDialogs } from "./dialogs.ts";
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
@@ -34,6 +35,7 @@ import {
   archiveSession,
   restoreSession,
   recordSessionExit,
+  shouldAutoResume,
   assignPaneSlot,
   importConversation,
   nextAttention,
@@ -75,6 +77,7 @@ interface AppInfo {
   hooksEnabled: boolean;
   stateFile: string;
   updates: boolean;
+  automaticUpdates: boolean;
 }
 
 interface Runtime {
@@ -95,7 +98,7 @@ interface Runtime {
 
 const PROVIDER_ICON: Record<Provider, string> = { claude: "✳", codex: "‹›", antigravity: "△", shell: "▣" };
 
-let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "", updates: false };
+let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "", updates: false, automaticUpdates: false };
 let state: PersistedState = parseState(null).state;
 const runtimes = new Map<string, Runtime>();
 const statuses = new Map<string, Status>();
@@ -612,6 +615,7 @@ async function start(s: Session) {
     s.hasConversation = false;
   }
   const command = agentCommand(s, state.settings, info.platform, info.hooksEnabled);
+  s.resumeAfterShutdown = false;
   s.exitCode = undefined;
   s.lastStartAt = Date.now();
   codexLookup.delete(s.id);
@@ -750,12 +754,12 @@ function forgetRuntime(id: string) {
   codexLookup.delete(id);
 }
 
-function onExit(id: string, code: number | null) {
+function onExit(id: string, code: number | null, systemShutdown = false) {
   const rt = runtimes.get(id);
   const s = session(id);
   if (!s) { forgetRuntime(id); return; }
   if (rt) rt.running = false;
-  recordSessionExit(state, id, code, rt?.closing ?? false);
+  recordSessionExit(state, id, code, rt?.closing ?? false, systemShutdown);
   if (rt?.closing) {
     forgetRuntime(id);
   } else {
@@ -764,6 +768,8 @@ function onExit(id: string, code: number | null) {
     if (!isWatched(id)) unread.add(id);
   }
   save();
+  // Persist shutdown recovery without waiting for the debounce or window-close event.
+  if (systemShutdown) void saves.flush().catch(e => console.error("Shutdown state save failed", e));
   layout();
   renderSidebar();
   renderPaneHeads();
@@ -1024,6 +1030,10 @@ function renderAttention() {
   alerts.id = "btn-notifications";
   alerts.onclick = notificationCenter.show;
   root.replaceChildren(filter, next, history, alerts);
+  const presets = el("button", "", t("layouts.title"));
+  presets.id = "btn-layouts";
+  presets.onclick = () => showSavedLayouts(state, modal, save, restorePaneLayout);
+  root.append(presets);
   if (state.ui.grid) {
     const modes = el("select", "pane-mode");
     modes.setAttribute("aria-label", t("panes.layout"));
@@ -1475,11 +1485,27 @@ function showInfo(s: Session) {
   modal(
     (box, close) => {
       const grid = el("dl", "info");
-      const draw = () => grid.replaceChildren(...infoRows(s).flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v)]));
+      const recovery = el("div", "note");
+      const repair = el("button");
+      const draw = () => {
+        grid.replaceChildren(...infoRows(s).flatMap(([k, v]) => [el("dt", "", k), el("dd", "", v)]));
+        const rt = runtimes.get(s.id);
+        const action = sessionDiagnostics(s, rt?.running ?? false, info.hooksEnabled, rt?.observation).recovery;
+        recovery.hidden = !action;
+        recovery.textContent = action ? t(`diag.help.${action}`) : "";
+        repair.hidden = !action || action === "link" || action === "restartApp";
+        repair.textContent = action === "resume" ? t("session.restart") : t("diag.openTerminal");
+        repair.onclick = () => {
+          close();
+          select(s.id);
+          if (action === "resume" && !runtimes.get(s.id)?.running) void start(s);
+        };
+      };
       draw();
       timer = window.setInterval(draw, 2000);
       const note = s.provider === "claude" ? t("info.noteClaude") : s.provider === "codex" ? t("info.noteCodex") : s.provider === "antigravity" ? t("info.noteAntigravity") : "";
       const actions = el("div", "actions");
+      actions.append(repair);
       if (s.provider !== "shell") {
         const link = el("button", "", t("import.link"));
         link.onclick = () => { const p = project(s.projectId); close(); if (p) showImport(p, s); };
@@ -1495,6 +1521,7 @@ function showInfo(s: Session) {
       ok.onclick = close;
       actions.append(ok);
       box.append(el("h3", "", `${PROVIDER_ICON[s.provider]}  ${s.title}`), grid);
+      box.append(recovery);
       if (note) box.append(el("div", "note", note));
       box.append(actions);
       ok.focus();
@@ -1667,7 +1694,7 @@ function applyLanguage() {
 
 // ---------- aktualizácie ----------
 
-const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, saves.flush);
+const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, saves.flush, () => info.automaticUpdates);
 const showSettings = createSettings(
   () => state.settings,
   (draft, langChanged) => { state.settings = draft; save(); if (langChanged) applyLanguage(); else renderSidebar(); },
@@ -1773,8 +1800,17 @@ async function main() {
 
   new ResizeObserver(() => requestAnimationFrame(fitVisible)).observe($("#stage"));
 
-  await listen<{ id: string; code: number | null }>("pty-exit", (e) => onExit(e.payload.id, e.payload.code));
+  await listen<{ id: string; code: number | null; systemShutdown?: boolean }>("pty-exit", (e) => onExit(e.payload.id, e.payload.code, e.payload.systemShutdown));
   await listen<AgentEvent>("agent-event", (e) => onAgentEvent(e.payload));
+
+  const prepareShutdown = createShutdownHandler(saves.flush,
+    (id, saved) => invoke("shutdown_ready", { id, saved }),
+    () => { closingWindow = true; },
+    e => toast(t("app.saveFailed", { detail: String(e) })));
+  await listen<string>("prepare-shutdown", e => void prepareShutdown(e.payload));
+  await listen("shutdown-cancelled", () => { closingWindow = false; });
+  const pendingShutdownsAtStartup = await invoke<string[]>("shutdown_pending");
+  await Promise.all(pendingShutdownsAtStartup.map(prepareShutdown));
 
   const win = getCurrentWindow();
   await win.onCloseRequested(async (event) => {
@@ -1812,7 +1848,7 @@ async function main() {
     const order = [...state.sessions].sort((a, b) => a.createdAt - b.createdAt);
     const active = session(state.ui.activeSessionId);
     for (const s of active ? [active, ...order.filter((x) => x !== active)] : order) {
-      if (session(s.id) && !s.stopped && !runtimes.has(s.id)) await start(s);
+      if (session(s.id) && shouldAutoResume(s, state.settings.autoResume) && !runtimes.has(s.id)) await start(s);
     }
   }
   if (state.ui.grid) {

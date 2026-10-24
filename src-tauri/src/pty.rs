@@ -57,6 +57,7 @@ pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, PtySession>>>,
     /// Pri ukončení aplikácie nehlásime exit, aby UI nezmazalo relácie, ktoré majú po reštarte pokračovať.
     shutting_down: Arc<AtomicBool>,
+    preparing_shutdown: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Serialize)]
@@ -64,6 +65,18 @@ pub struct PtyManager {
 struct ExitEvent {
     id: String,
     code: Option<u32>,
+    system_shutdown: bool,
+}
+
+fn system_is_shutting_down() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_SHUTTINGDOWN};
+        // SAFETY: This read-only system metric requires no pointers or handles.
+        unsafe { GetSystemMetrics(SM_SHUTTINGDOWN) != 0 }
+    }
+    #[cfg(not(windows))]
+    { false }
 }
 
 pub struct SpawnRequest {
@@ -173,14 +186,19 @@ impl PtyManager {
         let id = req.id.clone();
         let registry = self.sessions.clone();
         let shutting_down = self.shutting_down.clone();
+        let preparing_shutdown = self.preparing_shutdown.clone();
         thread::spawn(move || {
             let code = child.wait().ok().map(|s| s.exit_code());
+            // Capture immediately: Windows can terminate console processes before
+            // the app receives its own shutdown notification. Exit codes alone
+            // cannot distinguish shutdown from an unrelated forced termination.
+            let system_shutdown = system_is_shutting_down() || preparing_shutdown.load(Ordering::SeqCst);
             // Uvoľnenie mastera ukončí aj čítacie vlákno (ConPTY inak nedostane EOF).
             if let Ok(mut map) = registry.lock() {
                 map.remove(&id);
             }
             if !shutting_down.load(Ordering::SeqCst) {
-                let _ = app.emit("pty-exit", ExitEvent { id, code });
+                let _ = app.emit("pty-exit", ExitEvent { id, code, system_shutdown });
             }
         });
 
@@ -219,11 +237,26 @@ impl PtyManager {
             }
         }
     }
+
+    pub fn prepare_shutdown(&self, active: bool) {
+        self.preparing_shutdown.store(active, Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[test]
+    fn exit_payload_preserves_shutdown_reason_for_frontend() {
+        for system_shutdown in [false, true] {
+            let payload = serde_json::to_value(super::ExitEvent {
+                id: "test".into(), code: Some(0x40010004), system_shutdown,
+            }).unwrap();
+            assert_eq!(payload["systemShutdown"], system_shutdown);
+            assert_eq!(payload["code"], 0x40010004_u32);
+        }
+    }
 
     #[cfg(windows)]
     #[test]
