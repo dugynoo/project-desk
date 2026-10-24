@@ -6,6 +6,15 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to rebuild (for example v0.6.1)
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -28,14 +37,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # kvôli predošlému tagu v release notes
 
       - name: Tag matches app version
         shell: bash
         run: |
           version=$(node -p "require('./package.json').version")
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in package.json"
+          if [ "v$version" != "$RELEASE_TAG" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match version $version in package.json"
             exit 1
           fi
 
@@ -44,12 +54,12 @@ jobs:
         id: notes
         shell: bash
         run: |
-          prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          prev=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
           {
             echo "body<<EOF_NOTES"
             echo "Windows, macOS and AppImage installs update themselves. Debian/Ubuntu: install the .deb with apt. Arch: install the .pkg.tar.zst with pacman -U. Fedora/openSUSE: install the .rpm with dnf/zypper. Project Desk checks for new versions on all these formats. Restart the app after updating a system package."
             echo
-            git log --no-merges --format='- %s' "${prev:+$prev..}$GITHUB_REF_NAME" | grep -Ev '^- chore: release [0-9]' || true
+            git log --no-merges --format='- %s' "${prev:+$prev..}$RELEASE_TAG" | grep -Ev '^- chore: release [0-9]' || true
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
 
@@ -81,8 +91,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Project Desk ${{ github.ref_name }}
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Project Desk ${{ env.RELEASE_TAG }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           args: --config src-tauri/tauri.release.json ${{ matrix.args }}
@@ -103,4 +113,4 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber
+        run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber
