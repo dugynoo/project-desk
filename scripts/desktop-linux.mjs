@@ -81,10 +81,6 @@ async function request(method, path, data) {
 }
 const command = (method, path, data) => request(method, `/session/${sessionId}${path}`, data);
 const evaluate = (script, ...args) => command('POST', '/execute/sync', { script, args });
-async function element(selector) {
-  const value = await command('POST', '/element', { using: 'css selector', value: selector });
-  return value['element-6066-11e4-a52e-4f735466cecf'];
-}
 async function click(selector) {
   // Sidebar actions appear on hover; use native pointer actions rather than
   // WebKit's element-click algorithm on an initially transparent button.
@@ -97,9 +93,19 @@ async function click(selector) {
     ] }] });
 }
 async function type(selector, text, clear = false) {
-  const id = await element(selector);
-  if (clear) await command('POST', `/element/${id}/clear`, {});
-  await command('POST', `/element/${id}/value`, { text });
+  await evaluate('document.querySelector(arguments[0]).focus()', selector);
+  const actions = [];
+  const key = value => actions.push({ type: 'keyDown', value }, { type: 'keyUp', value });
+  // WebKit element-clear blurs inline rename inputs, committing/removing them.
+  // Real keyboard editing preserves focus even when sidebar status rerenders.
+  if (clear) {
+    actions.push({ type: 'keyDown', value: '\uE009' });
+    key('a');
+    actions.push({ type: 'keyUp', value: '\uE009' });
+    key('\uE003');
+  }
+  for (const character of text) key(character);
+  await command('POST', '/actions', { actions: [{ type: 'key', id: 'keyboard', actions }] });
 }
 const wait = (script, message) => until(() => evaluate(script), Boolean, message);
 const saved = async () => JSON.parse(await readFile(statePath, 'utf8'));
