@@ -85,7 +85,17 @@ async function element(selector) {
   const value = await command('POST', '/element', { using: 'css selector', value: selector });
   return value['element-6066-11e4-a52e-4f735466cecf'];
 }
-async function click(selector) { await command('POST', `/element/${await element(selector)}/click`, {}); }
+async function click(selector) {
+  // Sidebar actions appear on hover; use native pointer actions rather than
+  // WebKit's element-click algorithm on an initially transparent button.
+  const point = await evaluate('const r = document.querySelector(arguments[0]).getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }', selector);
+  await command('POST', '/actions', { actions: [{ type: 'pointer', id: 'mouse',
+    parameters: { pointerType: 'mouse' }, actions: [
+      { type: 'pointerMove', duration: 0, origin: 'viewport', ...point },
+      { type: 'pause', duration: 100 },
+      { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 },
+    ] }] });
+}
 async function type(selector, text, clear = false) {
   const id = await element(selector);
   if (clear) await command('POST', `/element/${id}/clear`, {});
@@ -146,8 +156,7 @@ try {
   await click('#settings-tab-editor');
   await type('#settings-panel-editor input[type=number]', '18', true);
   await click('#settings-panel-editor input[type=checkbox]');
-  const saveId = await evaluate('return [...document.querySelectorAll("#overlay button")].find(b => b.textContent === "Save")');
-  await command('POST', `/element/${saveId['element-6066-11e4-a52e-4f735466cecf']}/click`, {});
+  await click('#overlay button.primary');
   await wait('return !document.querySelector("#settings-tab-editor")', 'settings saved');
   await shell(1, 'exit');
   await wait('return !!document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head.stopped")', 'second shell intentionally stopped');
