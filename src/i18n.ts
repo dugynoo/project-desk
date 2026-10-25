@@ -11,6 +11,11 @@ export const LANGUAGES: { id: Lang; label: string }[] = [
 const LOCALE: Record<Lang, string> = { en: "en-GB", sk: "sk-SK", cs: "cs-CZ" };
 
 const en = {
+  "settings.general": "General",
+  "settings.agents": "Agents",
+  "settings.editorTab": "Editor",
+  "settings.about": "Information",
+  "settings.saveHint": "Changes across all tabs apply when you select Save.",
   "actions.palette": "Command palette",
   "actions.shortcuts": "Keyboard shortcuts",
   "actions.search": "Search terminal",
@@ -343,6 +348,11 @@ const en = {
 export type Key = keyof typeof en;
 
 const sk: Record<Key, string> = {
+  "settings.general": "Všeobecné",
+  "settings.agents": "Agenti",
+  "settings.editorTab": "Editor",
+  "settings.about": "Informácie",
+  "settings.saveHint": "Zmeny zo všetkých kariet sa použijú po kliknutí na Uložiť.",
   "actions.palette": "Paleta akcií",
   "actions.shortcuts": "Klávesové skratky",
   "actions.search": "Hľadať v termináli",
@@ -671,6 +681,11 @@ const sk: Record<Key, string> = {
 };
 
 const cs: Record<Key, string> = {
+  "settings.general": "Obecné",
+  "settings.agents": "Agenti",
+  "settings.editorTab": "Editor",
+  "settings.about": "Informace",
+  "settings.saveHint": "Změny ze všech karet se použijí po kliknutí na Uložit.",
   "actions.palette": "Paleta akcí",
   "actions.shortcuts": "Klávesové zkratky",
   "actions.search": "Hledat v terminálu",
@@ -1027,7 +1042,10 @@ export function errorText(e: unknown): string {
 export function translateDocument(root: ParentNode = document) {
   document.documentElement.lang = current;
   root.querySelectorAll<HTMLElement>("[data-i18n]").forEach((e) => (e.textContent = t(e.dataset.i18n as Key)));
-  root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((e) => (e.title = t(e.dataset.i18nTitle as Key)));
+  root.querySelectorAll<HTMLElement>("[data-i18n-title]").forEach((e) => {
+    e.title = t(e.dataset.i18nTitle as Key);
+    if (e instanceof HTMLButtonElement) e.setAttribute("aria-label", e.title);
+  });
   root
     .querySelectorAll<HTMLInputElement>("[data-i18n-placeholder]")
     .forEach((e) => (e.placeholder = t(e.dataset.i18nPlaceholder as Key)));

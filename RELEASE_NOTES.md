@@ -1,3 +1,3 @@
-- Add a command palette and customizable keyboard shortcuts in Settings.
-- Adjust terminal font size with shortcuts or Display settings.
-- Optionally show Git branches beside projects, with no background polling.
+- Organize Settings into tabs with Save and Cancel always visible.
+- Refine toolbar icons, menus and buttons, including layouts for smaller windows.
+- Improve keyboard navigation, focus visibility and dialog accessibility.

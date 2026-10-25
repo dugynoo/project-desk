@@ -23,7 +23,9 @@ export function editShortcuts(box: HTMLElement, current: Shortcuts, mac: boolean
   previous.append(...Array.from(box.childNodes));
   let draft = { ...current };
   const back = (value: Shortcuts) => { box.replaceChildren(previous); done(value); box.querySelector<HTMLButtonElement>('#edit-shortcuts')?.focus(); };
-  box.append(el('h3', '', t('actions.shortcuts')), el('p', 'note', t('keys.help')));
+  const heading = el('h3', '', t('actions.shortcuts'));
+  heading.id = 'settings-title';
+  box.append(heading, el('p', 'note', t('keys.help')));
   const filter = el('input');
   filter.placeholder = t('actions.find');
   filter.setAttribute('aria-label', t('actions.find'));

@@ -10,16 +10,27 @@ class Element {
   hidden = true;
   className = "";
   textContent = "";
+  inert = false;
+  tabIndex = 0;
+  classList = { add: (_name: string) => {} };
+  attributes = new Map<string, string>();
+  setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+  querySelector() { return null; }
+  querySelectorAll(): Element[] { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); }
+  contains(node: Element): boolean { return this === node || this.children.some(child => child.contains(node)); }
+  matches() { return false; }
+  getClientRects() { return this.hidden ? [] : [{}]; }
   onclick: ((event: { target: Element }) => void) | null = null;
   append(...children: Element[]) { this.children.push(...children); }
   replaceChildren(...children: Element[]) { this.children = children; }
-  focus() {}
+  focus() { (document as unknown as { activeElement: Element }).activeElement = this; }
 }
 
 function fixture(t: { after: (fn: () => void) => void }) {
   const overlay = new Element();
+  const app = new Element();
   const doc = Object.assign(new EventTarget(), {
-    querySelector: () => overlay,
+    querySelector: (selector: string) => selector === "#app" ? app : overlay,
     createElement: () => new Element(),
     createTextNode: () => new Element(),
   });
@@ -36,8 +47,23 @@ function fixture(t: { after: (fn: () => void) => void }) {
     doc.dispatchEvent(event);
     return event;
   };
-  return { ...dialogs, overlay, escape, focused: () => focused };
+  return { ...dialogs, overlay, app, doc, escape, focused: () => focused };
 }
+
+test("modal traps keyboard focus and restores background interactivity on close", t => {
+  const f = fixture(t);
+  const first = new Element(), last = new Element(), hidden = new Element();
+  first.hidden = last.hidden = false;
+  f.modal(box => box.append(first as unknown as Node, hidden as unknown as Node, last as unknown as Node), () => {});
+  assert.equal(f.app.inert, true);
+  const tab = (shiftKey: boolean) => f.doc.dispatchEvent(Object.assign(new Event("keydown", { cancelable: true }), { key: "Tab", shiftKey }));
+  last.focus(); tab(false);
+  assert.equal(document.activeElement, first);
+  first.focus(); tab(true);
+  assert.equal(document.activeElement, last);
+  f.escape();
+  assert.equal(f.app.inert, false);
+});
 
 test("replacement clears the old timer and listener; stale close cannot close its successor", t => {
   t.mock.timers.enable({ apis: ["setInterval"] });

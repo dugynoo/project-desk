@@ -106,6 +106,15 @@ reserved; other app bindings take priority over terminal input. OS-reserved
 shortcuts may not reach the app. Editing bindings does not change shortcuts inside
 Claude/Codex or register system-wide hotkeys. App shortcuts are suspended in dialogs.
 
+### Settings navigation
+
+Settings is grouped into General, Display, Agents, Editor and Information tabs.
+Changes across tabs are kept as a draft until **Save**; **Cancel** discards them.
+Save and Cancel remain visible while a settings page scrolls. Use Left/Right,
+Home and End to navigate the tabs with the keyboard. **Check for updates** is
+under Information. Dialogs keep keyboard focus inside until dismissed with Escape
+or a button. The compact toolbar wraps when the sidebar is narrow.
+
 ### Display settings
 
 Settings → Display includes terminal font size and an optional Git branch label

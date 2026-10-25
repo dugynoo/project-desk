@@ -23,7 +23,7 @@ export function openSessionMenu(anchor: HTMLButtonElement, defaultProvider: Prov
     return button;
   });
   if (importExisting) {
-    const button = el("button", "", t("import.open"));
+    const button = el("button", "menu-separator", t("import.open"));
     button.setAttribute("role", "menuitem");
     button.tabIndex = -1;
     button.onclick = () => { close(true); importExisting(); };

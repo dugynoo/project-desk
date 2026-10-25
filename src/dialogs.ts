@@ -12,6 +12,11 @@ export function createDialogs(restoreFocus: () => void) {
     if (request !== generation) { onClose(); return; }
     const overlay = $("#overlay");
     const box = el("div", "modal");
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.tabIndex = -1;
+    const app = $("#app");
+    app.inert = true;
     const controller = new AbortController();
     overlay.replaceChildren(box);
     overlay.hidden = false;
@@ -23,6 +28,7 @@ export function createDialogs(restoreFocus: () => void) {
       overlay.onclick = null;
       overlay.hidden = true;
       overlay.replaceChildren();
+      app.inert = false;
       controller.abort();
       try {
         onClose();
@@ -37,12 +43,29 @@ export function createDialogs(restoreFocus: () => void) {
         e.preventDefault();
         close();
       }
+      if (e.key === "Tab") {
+        const items = Array.from(box.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]"))
+          .filter(item => item.tabIndex >= 0 && !item.matches(":disabled") && item.getClientRects().length > 0);
+        const first = items[0], last = items.at(-1);
+        if (!first) { e.preventDefault(); box.focus(); }
+        else if (e.shiftKey && (document.activeElement === first || !items.includes(document.activeElement as HTMLElement))) {
+          e.preventDefault(); last?.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !items.includes(document.activeElement as HTMLElement))) {
+          e.preventDefault(); first.focus();
+        }
+      }
     }, { capture: true, signal: controller.signal });
     overlay.onclick = (e) => {
       if (e.target === overlay) close();
     };
     try {
       build(box, close, controller.signal);
+      const heading = box.querySelector("h3");
+      if (heading) {
+        heading.id ||= "dialog-heading";
+        box.setAttribute("aria-labelledby", heading.id);
+      }
+      if (!box.contains(document.activeElement)) box.focus();
     } catch (error) {
       close();
       throw error;
