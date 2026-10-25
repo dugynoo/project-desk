@@ -6,7 +6,7 @@ import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
 import { showSavedLayouts } from "./saved-layouts.ts";
-import { openSessionMenu } from "./session-menu.ts";
+import { openSessionMenu, openActionMenu, type MenuAction } from "./session-menu.ts";
 import { createUpdates } from "./updates.ts";
 import { $, el, onNextFrame } from "./dom.ts";
 import { createSaveQueue, createShutdownHandler } from "./persistence.ts";
@@ -1060,58 +1060,81 @@ function jumpAttention() {
 function renderAttention() {
   const root = $("#attention");
   const count = (status: Status) => state.sessions.filter((s) => statusOf(s.id) === status).length;
-  const filter = el("button", attentionOnly ? "on" : "", t("attention.summary", {
+  const summary = el("div", "attention-summary", t("attention.summary", {
     waiting: count("needs-you"), done: count("done"), working: count("working"),
   }));
-  filter.title = t("attention.filter");
+  const filter = el("button", attentionOnly ? "on" : "", t("sidebar.attention"));
+  filter.id = "btn-attention";
   filter.setAttribute("aria-pressed", String(attentionOnly));
   filter.onclick = () => { attentionOnly = !attentionOnly; renderSidebar(); };
   const next = iconButton("→", t("attention.next"), jumpAttention);
-  next.disabled = !state.sessions.some((s) => ATTENTION.has(statusOf(s.id)));
-  const history = el("button", "", t("session.history", { n: state.closedSessions.length }));
+  next.disabled = !state.sessions.some(s => ATTENTION.has(statusOf(s.id)));
+  root.replaceChildren(summary, filter, next);
+  const footer = $("#sidebar-footer");
+  const history = el("button", "", t("sidebar.history"));
+  history.id = "btn-history";
   history.onclick = showClosedSessions;
-  const alerts = el("button", "", t("notifications.button", { n: state.notifications.filter(n => !n.read).length }));
+  const alerts = el("button", "", t("sidebar.notifications"));
   alerts.id = "btn-notifications";
+  const unreadCount = state.notifications.filter(n => !n.read).length;
+  if (unreadCount) alerts.append(el("span", "count-badge", String(unreadCount)));
   alerts.onclick = notificationCenter.show;
-  root.replaceChildren(filter, next, history, alerts);
-  const presets = el("button", "", t("layouts.title"));
-  presets.id = "btn-layouts";
-  presets.onclick = () => showSavedLayouts(state, modal, save, restorePaneLayout);
-  root.append(presets);
-  if (state.ui.grid) {
-    const modes = el("select", "pane-mode");
-    modes.setAttribute("aria-label", t("panes.layout"));
-    modes.title = t("panes.layout");
-    for (const mode of ["grid", "columns", "rows"] as const) {
-      const option = el("option", "", t(`panes.${mode}`));
-      option.value = mode;
-      modes.append(option);
-    }
-    modes.value = state.ui.paneLayout;
-    modes.onchange = () => {
-      state.ui.paneLayout = modes.value as PaneLayout;
-      restorePaneLayout();
-    };
-    const count = el("select", "pane-count");
-    count.setAttribute("aria-label", t("panes.count"));
-    for (const n of [2, 3, 4, 5, 6, 7, 8]) {
-      const option = el("option", "", t(n >= 5 ? "panes.numberMany" : "panes.number", { n }));
-      option.value = String(n);
-      count.append(option);
-    }
-    count.value = String(state.ui.paneSlots.length);
-    count.onchange = () => {
-      state.ui.paneSlots = Array.from({ length: Number(count.value) }, (_, i) => state.ui.paneSlots[i] ?? null);
-      restorePaneLayout();
-    };
-    root.append(modes, count);
-    if (zoomedId) {
-      const back = el("button", "", t("panes.back"));
-      back.onclick = restorePaneLayout;
-      root.append(back);
-    }
-  }
+  footer.replaceChildren(alerts, history);
   notificationCenter.refresh();
+}
+
+function showLayoutControls() {
+  modal((box, close) => {
+    box.append(el("h3", "", t("sidebar.layout")));
+    const toggle = el("button", "", t("sidebar.panels"));
+    toggle.setAttribute("aria-pressed", String(state.ui.grid));
+    toggle.onclick = () => { toggleGrid(); close(); showLayoutControls(); };
+    const presets = el("button", "", t("layouts.title"));
+    presets.id = "btn-layouts";
+    presets.onclick = () => showSavedLayouts(state, modal, save, restorePaneLayout);
+    box.append(toggle, presets);
+    const root = el("div", "layout-controls");
+    box.append(root);
+    if (state.ui.grid) {
+      const modes = el("select", "pane-mode");
+      modes.setAttribute("aria-label", t("panes.layout"));
+      modes.title = t("panes.layout");
+      for (const mode of ["grid", "columns", "rows"] as const) {
+        const option = el("option", "", t(`panes.${mode}`));
+        option.value = mode;
+        modes.append(option);
+      }
+      modes.value = state.ui.paneLayout;
+      modes.onchange = () => {
+        state.ui.paneLayout = modes.value as PaneLayout;
+        restorePaneLayout();
+      };
+      const count = el("select", "pane-count");
+      count.setAttribute("aria-label", t("panes.count"));
+      for (const n of [2, 3, 4, 5, 6, 7, 8]) {
+        const option = el("option", "", t(n >= 5 ? "panes.numberMany" : "panes.number", { n }));
+        option.value = String(n);
+        count.append(option);
+      }
+      count.value = String(state.ui.paneSlots.length);
+      count.onchange = () => {
+        state.ui.paneSlots = Array.from({ length: Number(count.value) }, (_, i) => state.ui.paneSlots[i] ?? null);
+        restorePaneLayout();
+      };
+      modes.id = "layout-mode"; count.id = "layout-count";
+      const modeLabel = el("label", "", t("panes.layout")); modeLabel.htmlFor = modes.id;
+      const countLabel = el("label", "", t("panes.count")); countLabel.htmlFor = count.id;
+      root.append(modeLabel, modes, countLabel, count);
+      if (zoomedId) {
+        const back = el("button", "", t("panes.back"));
+        back.onclick = restorePaneLayout;
+        root.append(back);
+      }
+    }
+    const actions = el("div", "actions");
+    const done = el("button", "primary", t("common.close")); done.onclick = close;
+    actions.append(done); box.append(actions); toggle.focus();
+  }, () => {});
 }
 
 function showClosedSessions() {
@@ -1199,6 +1222,24 @@ function startProjectDrag(e: PointerEvent, p: Project, box: HTMLElement) {
 }
 
 let closeSessionMenu: (() => void) | undefined;
+let sidebarMenuOpen = false;
+const refreshAfterMenu = onNextFrame(() => renderSidebar());
+function sidebarMenuClosed() {
+  sidebarMenuOpen = false; closeSessionMenu = undefined; refreshAfterMenu();
+}
+function actionsButton(actions: () => MenuAction[], focusId: string) {
+  const button = iconButton("⋯", t("sidebar.more"), () => {
+    const wasOpen = button.getAttribute("aria-expanded") === "true";
+    closeSessionMenu?.();
+    if (wasOpen) return;
+    sidebarMenuOpen = true;
+    closeSessionMenu = openActionMenu(button, actions(), sidebarMenuClosed);
+  });
+  button.dataset.focusId = focusId;
+  button.setAttribute("aria-haspopup", "menu"); button.setAttribute("aria-expanded", "false");
+  button.onkeydown = e => { if (e.key === "ArrowDown") { e.preventDefault(); button.click(); } };
+  return button;
+}
 
 const branches = createBranches(path => invoke<string | null>("project_branch", { path }), () => renderSidebar());
 function refreshBranches(revisit = false, paths = state.projects.map(p => p.path)) {
@@ -1207,9 +1248,11 @@ function refreshBranches(revisit = false, paths = state.projects.map(p => p.path
 }
 function renderSidebar() {
   refreshBranches();
-  if (projectDrag) return;
+  if (projectDrag || sidebarMenuOpen) return;
   closeSessionMenu?.();
   closeSessionMenu = undefined;
+  const focused = document.activeElement as HTMLElement;
+  const focusId = focused.closest("#sidebar") ? focused.dataset.focusId || focused.id : undefined;
   renderAttention();
   const root = $("#projects");
   const prevInput = root.querySelector<HTMLInputElement>("input.title-edit");
@@ -1230,7 +1273,10 @@ function renderSidebar() {
     const more = iconButton("▾", t("project.otherSessions"), () => {
       const wasOpen = more.getAttribute("aria-expanded") === "true";
       closeSessionMenu?.();
-      closeSessionMenu = wasOpen ? undefined : openSessionMenu(more, state.settings.defaultProvider, (provider) => void createSession(p, provider), () => showImport(p));
+      if (!wasOpen) {
+        sidebarMenuOpen = true;
+        closeSessionMenu = openSessionMenu(more, state.settings.defaultProvider, (provider) => void createSession(p, provider), () => showImport(p), sidebarMenuClosed);
+      }
     });
     more.setAttribute("aria-haspopup", "menu");
     more.setAttribute("aria-expanded", "false");
@@ -1239,24 +1285,34 @@ function renderSidebar() {
     };
     const launcher = el("span", "session-launcher");
     launcher.append(launch, more);
-    actions.append(
-      launcher,
-      iconButton("↗", t("project.openEditor"), () => openEditor(p.path)),
-      iconButton(p.pinned ? "★" : "☆", t(p.pinned ? "project.unpin" : "project.pin"), () => {
-        p.pinned = !p.pinned;
-        save();
-        renderSidebar();
-      }),
-      iconButton("✕", t("project.remove"), () => void removeProject(p)),
-    );
+    launch.dataset.focusId = `launch-${p.id}`; more.dataset.focusId = `providers-${p.id}`;
+    actions.append(launcher, actionsButton(() => [
+      { label: t("project.openEditor"), run: () => openEditor(p.path) },
+      { label: t(p.pinned ? "project.unpin" : "project.pin"), run: () => { p.pinned = !p.pinned; save(); renderSidebar(); } },
+      { label: t("project.remove"), danger: true, separator: true, run: () => void removeProject(p) },
+    ], `project-menu-${p.id}`));
     const name = el("span", "name", p.name);
+    name.title = p.name;
     const branch = branches.get(p.path);
     if (branch) {
       name.append(el("span", "git-branch", " · " + branch));
       name.title = p.name + " · " + branch;
     }
     if (p.pinned) name.prepend(el("span", "pin", "★ "));
-    row.append(el("span", "chev", p.collapsed ? "▸" : "▾"), name, actions);
+    const disclosure = el("div", "project-disclosure");
+    disclosure.setAttribute("role", "button"); disclosure.tabIndex = 0;
+    disclosure.dataset.focusId = `project-${p.id}`;
+    disclosure.setAttribute("aria-expanded", String(!p.collapsed || attentionOnly));
+    disclosure.setAttribute("aria-label", p.name);
+    disclosure.append(el("span", "chev", p.collapsed ? "▸" : "▾"), name);
+    const waiting = sessionsOf(state, p.id).filter(s => statusOf(s.id) === "needs-you").length;
+    if (p.collapsed && waiting) {
+      const badge = el("span", "count-badge waiting", String(waiting));
+      badge.title = t("sidebar.waiting", { n: waiting }); disclosure.append(badge);
+      disclosure.setAttribute("aria-label", `${p.name}: ${badge.title}`);
+    }
+    row.append(disclosure, actions);
+    disclosure.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); } };
     row.addEventListener("pointerdown", (e) => startProjectDrag(e, p, box));
     row.addEventListener("click", () => {
       if (projectDrag?.moved) return;
@@ -1275,7 +1331,15 @@ function renderSidebar() {
         item.classList.toggle("active", s.id === state.ui.activeSessionId);
         item.classList.toggle("unread", unread.has(s.id) || state.notifications.some(n => n.sessionId === s.id && !n.read));
         const body = el("div", "body");
+        body.tabIndex = 0; body.setAttribute("role", "button"); body.dataset.focusId = `session-${s.id}`;
+        body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}`);
+        body.setAttribute("aria-pressed", String(s.id === state.ui.activeSessionId));
+        body.onkeydown = e => {
+          if (e.target instanceof HTMLInputElement) return;
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(s.id); }
+        };
         if (editing?.id === s.id) {
+          body.removeAttribute("role"); body.removeAttribute("aria-pressed"); body.tabIndex = -1;
           editInput = renameInput();
           const line = el("div", "title");
           line.append(document.createTextNode(`${PROVIDER_ICON[s.provider]}  `), editInput);
@@ -1285,27 +1349,34 @@ function renderSidebar() {
         }
         body.append(el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`));
         const actions = el("span", "row-actions");
-        if (!runtimes.get(s.id)?.running) actions.append(iconButton("↻", t("session.restart"), () => void start(s)));
-        actions.append(
-          iconButton("ⓘ", t("session.info"), () => showInfo(s)),
-          iconButton("✎", t("session.rename"), () => startRename(s)),
-          iconButton(
-            "✕",
-            t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"),
-            () => void closeSession(s),
-          ),
-        );
+        if (!runtimes.get(s.id)?.running) {
+          const restart = iconButton("↻", t("session.restart"), () => void start(s));
+          restart.dataset.focusId = `restart-${s.id}`; actions.append(restart);
+        }
+        const sessionActions = () => [
+          { label: t("session.rename"), run: () => startRename(s) },
+          { label: t("session.info"), run: () => showInfo(s) },
+          { label: t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"), danger: true, separator: true, run: () => void closeSession(s) },
+        ];
+        const moreActions = actionsButton(sessionActions, `session-menu-${s.id}`);
+        actions.append(moreActions);
         item.append(el("span", `dot ${st}`), body, actions);
         item.addEventListener("click", () => select(s.id));
         item.addEventListener("dblclick", () => startRename(s));
         item.addEventListener("contextmenu", (e) => {
           e.preventDefault();
-          showInfo(s);
+          moreActions.click();
         });
         box.append(item);
       }
     }
     root.append(box);
+  }
+  if (!root.children.length && attentionOnly) root.append(el("p", "sidebar-empty", t("sidebar.empty")));
+  if (focusId && !focused.isConnected && document.activeElement === document.body) {
+    const target = Array.from(document.querySelectorAll<HTMLElement>("#sidebar [data-focus-id], #sidebar [id]"))
+      .find(node => node.dataset.focusId === focusId || node.id === focusId);
+    target?.focus({ preventScroll: true });
   }
   if (editInput && editing) {
     editInput.focus();
@@ -1825,7 +1896,7 @@ function handleGlobalKey(e: KeyboardEvent): boolean {
   return false;
 }
 function refreshShortcutHints() {
-  for (const [selector, id] of Object.entries({ "#btn-palette": "palette", "#btn-switch": "switch", "#btn-grid": "grid", "#btn-templates": "templates" })) {
+  for (const [selector, id] of Object.entries({ "#btn-palette": "palette", "#btn-switch": "switch", "#btn-templates": "templates" })) {
     const button = document.querySelector<HTMLElement>(selector);
     const binding = bindingLabel(bindingFor(id as ActionId, state.settings.shortcuts), info.platform === "macos");
     if (button) { button.title = actionLabel(id as ActionId) + (binding ? ` (${binding})` : ""); button.setAttribute("aria-label", button.title); }
@@ -1871,7 +1942,7 @@ async function main() {
   $("#btn-palette").onclick = openPalette;
   refreshShortcutHints();
   $("#btn-switch").onclick = quickSwitch;
-  $("#btn-grid").onclick = toggleGrid;
+  $("#btn-grid").onclick = showLayoutControls;
   $("#btn-settings").onclick = openSettings;
   $("#btn-templates").onclick = openTemplates;
   $("#btn-update").onclick = () => void installUpdate();

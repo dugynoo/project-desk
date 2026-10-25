@@ -1,3 +1,3 @@
-- Organize Settings into tabs with Save and Cancel always visible.
-- Refine toolbar icons, menus and buttons, including layouts for smaller windows.
-- Improve keyboard navigation, focus visibility and dialog accessibility.
+- Simplify the sidebar with Notifications and Recently closed in a fixed footer.
+- Group layout controls and saved layouts beside session search.
+- Add compact action menus, waiting-session badges and improved keyboard navigation.

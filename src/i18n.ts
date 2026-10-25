@@ -11,6 +11,16 @@ export const LANGUAGES: { id: Lang; label: string }[] = [
 const LOCALE: Record<Lang, string> = { en: "en-GB", sk: "sk-SK", cs: "cs-CZ" };
 
 const en = {
+  "sidebar.panels": "Multiple panels",
+  "sidebar.search": "Search sessions…",
+  "sidebar.layout": "Layout",
+  "sidebar.notifications": "Notifications",
+  "sidebar.history": "Recently closed",
+  "sidebar.more": "More actions",
+  "sidebar.waiting": "{n} sessions need confirmation",
+  "sidebar.attention": "Needs attention",
+  "sidebar.empty": "No sessions need attention.",
+
   "settings.general": "General",
   "settings.agents": "Agents",
   "settings.editorTab": "Editor",
@@ -348,6 +358,16 @@ const en = {
 export type Key = keyof typeof en;
 
 const sk: Record<Key, string> = {
+  "sidebar.panels": "Viac panelov",
+  "sidebar.search": "Hľadať sessions…",
+  "sidebar.layout": "Rozloženie",
+  "sidebar.notifications": "Upozornenia",
+  "sidebar.history": "Nedávno zatvorené",
+  "sidebar.more": "Ďalšie akcie",
+  "sidebar.waiting": "{n} sessions čaká na potvrdenie",
+  "sidebar.attention": "Vyžaduje pozornosť",
+  "sidebar.empty": "Žiadne sessions nevyžadujú pozornosť.",
+
   "settings.general": "Všeobecné",
   "settings.agents": "Agenti",
   "settings.editorTab": "Editor",
@@ -681,6 +701,16 @@ const sk: Record<Key, string> = {
 };
 
 const cs: Record<Key, string> = {
+  "sidebar.panels": "Více panelů",
+  "sidebar.search": "Hledat sessions…",
+  "sidebar.layout": "Rozložení",
+  "sidebar.notifications": "Upozornění",
+  "sidebar.history": "Nedávno zavřené",
+  "sidebar.more": "Další akce",
+  "sidebar.waiting": "{n} sessions čeká na potvrzení",
+  "sidebar.attention": "Vyžaduje pozornost",
+  "sidebar.empty": "Žádné sessions nevyžadují pozornost.",
+
   "settings.general": "Obecné",
   "settings.agents": "Agenti",
   "settings.editorTab": "Editor",
