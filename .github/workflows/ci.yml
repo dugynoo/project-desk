@@ -45,6 +45,19 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
 
+      - name: Ensure WebView2 runtime for native desktop smoke
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $runtime = "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe"
+          if (-not (Test-Path $runtime)) {
+            $installer = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $setup = Start-Process -FilePath $installer -ArgumentList '/silent', '/install' -Wait -PassThru -WindowStyle Hidden
+            if ($setup.ExitCode -ne 0) { throw "WebView2 setup failed: $($setup.ExitCode)" }
+          }
+          if (-not (Test-Path $runtime)) { throw 'WebView2 runtime was not installed' }
+
       - name: Native desktop smoke (Windows WebView2)
         if: matrix.platform == 'windows-latest'
         timeout-minutes: 10
