@@ -44,9 +44,10 @@ the existing local smoke scripts already exercised real WebView2, so we use
 [Playwright's documented WebView2 connection](https://playwright.dev/docs/webview2)
 with its standard locators, input, timeouts and screenshots. Only `playwright-core`
 is a development dependency. No test plugin, application test IPC, background process
-or polling is added to the shipped application. The debugging environment variable
-is set only on the isolated child process, as documented by
-[Microsoft](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/debug-visual-studio-code).
+or polling is added to the shipped application. The debug port is set only in the generated temporary Tauri test configuration.
+[Elevated hosts ignore environment-provided browser flags](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/webview-features-flags),
+so configuring the test build directly also supports Windows CI. Production
+configuration never enables this port. Each fixture uses its own WebView profile.
 
 The crash scenario uses [Node's forceful Windows process termination](https://nodejs.org/api/child_process.html#subprocesskillsignal),
 without recursively killing children in the runner. This lets the test observe
