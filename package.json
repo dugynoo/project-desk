@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "app:dev": "tauri dev --config src-tauri/tauri.dev.json",
     "version": "node scripts/sync-version.mjs && git add src-tauri/Cargo.toml src-tauri/Cargo.lock",
-    "test:desktop": "node --experimental-strip-types scripts/desktop-smoke.mjs"
+    "test:desktop": "node --experimental-strip-types scripts/desktop-smoke.mjs",
+    "test:desktop:linux": "node --experimental-strip-types scripts/desktop-linux.mjs"
   },
   "dependencies": {
     "@codemirror/language": "^6.13.1",

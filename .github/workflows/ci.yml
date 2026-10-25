@@ -34,7 +34,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb dbus-x11 openbox wmctrl
 
       - run: npm ci
       - run: npm test
@@ -62,6 +62,28 @@ jobs:
         if: matrix.platform == 'windows-latest'
         timeout-minutes: 10
         run: npm run test:desktop
+
+      - name: Install Linux WebDriver
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - name: Native desktop smoke (Linux WebKit)
+        if: matrix.platform == 'ubuntu-22.04'
+        timeout-minutes: 10
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' sh -eu -c '
+            openbox > /tmp/project-desk-openbox.log 2>&1 &
+            manager=$!
+            trap "kill $manager 2>/dev/null || true" EXIT
+            npm run test:desktop:linux
+          '
+
+      - name: Linux desktop smoke diagnostics
+        if: failure() && matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-linux
+          path: test-results/desktop-linux/
 
       - name: Desktop smoke diagnostics
         if: failure() && matrix.platform == 'windows-latest'

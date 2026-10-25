@@ -30,9 +30,9 @@ Coverage:
 Failures save a screenshot, error and synthetic state under `test-results/desktop`;
 Windows CI uploads these artifacts. `fixture.json` identifies temporary files/state
 retained for diagnosis (including on success). They contain no real conversations.
-Tests currently run on Windows only; existing domain/Rust checks still run on all
+Windows and Linux desktop suites run in CI; domain/Rust checks run on all
 three systems. These tests do not yet verify agent-provider behavior, background
-Claude workers, native file pickers, or Linux/macOS desktop UI. Forced termination
+Claude workers, native file pickers, or macOS desktop UI. Forced termination
 tests the last completed save, not power loss, a crash during atomic replacement,
 or preservation of unsaved editor text/debounced state changes.
 
@@ -64,3 +64,35 @@ The destination directory must exist. This is opt-in; normal CI does not update
 tracked documentation images. The shell prompt is shortened for the screenshot.
 The suite also covers sidebar rename persistence, keyboard menus, collapsing
 projects and the attention filter.
+
+## Linux native desktop suite
+
+The Linux suite uses the real Tauri application through `tauri-driver` 2.1.0 and
+system `WebKitWebDriver`, following [Tauri's WebDriver CI guidance](https://v2.tauri.app/develop/tests/webdriver/ci/).
+It uses the standard WebDriver HTTP protocol from Node, without another npm test
+framework or production automation plugin. Install `webkit2gtk-driver`, `xvfb`,
+`dbus-x11`, `openbox` and `wmctrl` alongside the normal Linux build dependencies,
+then `cargo install tauri-driver --version 2.1.0 --locked`. Run:
+
+```sh
+dbus-run-session -- xvfb-run -a -s '-screen 0 1280x900x24' sh -eu -c '
+  openbox >/tmp/project-desk-openbox.log 2>&1 &
+  manager=$!
+  trap "kill $manager 2>/dev/null || true" EXIT
+  npm run test:desktop:linux
+'
+```
+
+A unique app identifier and temporary XDG config/data/cache roots isolate all
+state. The suite builds and copies its own executable. Two Bash PTYs exercise
+actual shell input, exit/restart, sidebar rename/collapse/filter, editor settings,
+native window close with save, and relaunch with a working restored shell and an
+intentionally stopped session. Openbox plus `wmctrl` sends a native close request;
+the test does not invoke private application IPC or replace persisted state to
+simulate a successful save. Failures retain screenshot, DOM, state and driver log
+under `test-results/desktop-linux` for CI artifacts.
+
+This first Linux suite does not cover editor file interactions, real agents,
+forced termination, Wayland, or all Linux distributions. Windows keeps the broader
+editor and crash scenarios. Docker is not required. No Linux build or virtual disk
+needs to be installed on a Windows developer's machine to run the CI job.
