@@ -143,6 +143,7 @@ fn system_is_shutting_down() -> bool {
 }
 
 pub struct SpawnRequest {
+    pub direct: Option<(std::path::PathBuf, Vec<String>)>,
     pub id: String,
     pub output_id: String,
     pub cwd: String,
@@ -212,7 +213,9 @@ impl PtyManager {
             .openpty(size(req.cols, req.rows))
             .map_err(|e| format!("pty.openFailed: {e}"))?;
 
-        let mut cmd = build_command(req.shell.as_deref(), req.command.as_deref());
+        let mut cmd = if let Some((program, args)) = req.direct {
+            let mut cmd = CommandBuilder::new(program); cmd.args(args); cmd
+        } else { build_command(req.shell.as_deref(), req.command.as_deref()) };
         cmd.cwd(&req.cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");

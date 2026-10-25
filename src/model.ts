@@ -10,6 +10,7 @@ export function importConversation(state: PersistedState, projectId: string, pro
   const normalized = agentId.trim().toLowerCase();
   const target = targetId ? state.sessions.find(s => s.id === targetId) : undefined;
   if (provider === "shell" || !isUuid(normalized) || !state.projects.some(p => p.id === projectId)
+    || target?.background
     || (targetId && (!target || target.projectId !== projectId || target.provider !== provider))) return "invalid";
   if (state.sessions.some(s => s.id !== targetId && s.provider === provider && s.agentSessionId?.toLowerCase() === normalized)) return "duplicate";
   const s: Session = target ?? { id, projectId, provider, title: title.trim().slice(0, 300) || `${PROVIDER_LABEL[provider]} ${normalized.slice(0, 8)}`,
@@ -42,6 +43,8 @@ export interface PromptTemplate {
 }
 
 export interface Session {
+  /** Native worker ownership survives attachment/app exit. Only set for new sessions. */
+  background?: boolean;
   id: string;
   projectId: string;
   provider: Provider;
@@ -64,6 +67,7 @@ export interface Session {
 }
 
 export interface Settings {
+  claudeBackground: boolean;
   showGitBranch: boolean;
   fontSize: number;
   shortcuts: Partial<Record<ActionId, string>>;
@@ -124,6 +128,7 @@ export interface PersistedState {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  claudeBackground: false,
   showGitBranch: false,
   fontSize: 13,
   shortcuts: {},
@@ -208,6 +213,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         projectId: s.projectId,
         provider: s.provider as Provider,
         title: s.title,
+        background: s.provider === "claude" && s.background === true,
         agentSessionId: isUuid(s.agentSessionId) ? s.agentSessionId : undefined,
         hasConversation: s.hasConversation === true,
         started: s.started === true,
@@ -391,6 +397,15 @@ export type Status =
   | "needs-you"
   | "done"
   | "agent-exited";
+
+/** Native snapshot is used only on reconnect, never as a periodic status poll. */
+export function backgroundStatus(state: string): Status {
+  if (state === "working") return "working";
+  if (["needs_input", "needs-input", "needsInput"].includes(state)) return "needs-you";
+  if (["idle", "completed"].includes(state)) return "done";
+  if (["failed", "stopped"].includes(state)) return "agent-exited";
+  return "untracked";
+}
 
 /** Spawning the shell must not overwrite an agent event received during IPC. */
 export function statusAfterSpawn(prev: Status, s: Pick<Session, "provider" | "started" | "agentSessionId">, hooksEnabled: boolean): Status {
@@ -840,4 +855,13 @@ export function bindingFromEvent(e: ShortcutEvent): string | undefined {
 export function shortcutAction(e: ShortcutEvent, bindings: Shortcuts): ActionId | undefined {
   const binding = bindingFromEvent(e);
   return binding ? ACTION_IDS.find(id => bindingFor(id, bindings) === binding) : undefined;
+}
+
+/** Preserve UTF-8 BOM and uniform line endings; reject ambiguous conversions. */
+export function textFileFormat(raw: string): { bom: string; separator: string; text: string } | undefined {
+  const bom = raw.startsWith("\uFEFF") ? "\uFEFF" : "";
+  const body = raw.slice(bom.length);
+  const normalized = body.replace(/\r\n/g, "\n");
+  if (body.includes("\0") || normalized.includes("\r") || (body.includes("\r\n") && body.replace(/\r\n/g, "").includes("\n"))) return undefined;
+  return { bom, separator: body.includes("\r\n") ? "\r\n" : "\n", text: normalized };
 }

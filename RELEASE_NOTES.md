@@ -1,3 +1,3 @@
-- Simplify the sidebar with Notifications and Recently closed in a fixed footer.
-- Group layout controls and saved layouts beside session search.
-- Add compact action menus, waiting-session badges and improved keyboard navigation.
+﻿- Add a lightweight built-in text editor beside the terminal, with safe saves and automatic return to the grid.
+- Add opt-in Claude background sessions on Windows to preserve running work across app restarts.
+- Keep unsaved editor changes protected during closing and updates.

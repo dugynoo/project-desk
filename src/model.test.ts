@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  backgroundStatus,
   droppedFilePaths,
   savePanePreset,
   applyPanePreset,
@@ -816,4 +817,39 @@ test('font shortcuts support symbols, numpad and remapping without stealing loca
   assert.equal(shortcutAction({ ...e, altKey: true }, {}), undefined);
   assert.equal(validBinding('Mod+Shift+Plus'), false);
   assert.deepEqual(parseShortcuts({ palette: 'Mod+0' }), { palette: 'Mod+0', fontReset: '' });
+});
+
+
+test("background mode is opt-in and preserves only explicitly marked Claude sessions", () => {
+  const state = emptyState();
+  assert.equal(state.settings.claudeBackground, false);
+  state.settings.claudeBackground = true;
+  state.projects.push({ id: "p", name: "Test", path: "/test" });
+  state.sessions.push(...["claude", "codex"].map((provider, i) => ({ id: String(i), projectId: "p", provider: provider as "claude" | "codex", title: provider, background: true, createdAt: 1, lastUsedAt: 1 })));
+  const restored = parseState(JSON.stringify(state)).state;
+  assert.equal(restored.settings.claudeBackground, true);
+  assert.equal(restored.sessions[0].background, true);
+  assert.equal(restored.sessions[1].background, false);
+  assert.equal(importConversation(restored, "p", "claude", "11111111-1111-4111-8111-111111111111", "other", "new", 1, "0"), "invalid");
+  delete state.sessions[0].background;
+  assert.equal(parseState(JSON.stringify(state)).state.sessions[0].background, false);
+});
+
+test("background reconnect status does not claim unknown workers are done", () => {
+  assert.equal(backgroundStatus("working"), "working");
+  assert.equal(backgroundStatus("needs_input"), "needs-you");
+  assert.equal(backgroundStatus("idle"), "done");
+  assert.equal(backgroundStatus("completed"), "done");
+  assert.equal(backgroundStatus("failed"), "agent-exited");
+  assert.equal(backgroundStatus("future-state"), "untracked");
+});
+
+
+import { textFileFormat } from "./model.ts";
+test("text editor preserves BOM and line endings without silently normalizing mixed files", () => {
+  assert.deepEqual(textFileFormat("\uFEFFa\r\nb\r\n"), { bom: "\uFEFF", separator: "\r\n", text: "a\nb\n" });
+  assert.deepEqual(textFileFormat("hello\n"), { bom: "", separator: "\n", text: "hello\n" });
+  assert.equal(textFileFormat("a\r\nb\n"), undefined);
+  assert.equal(textFileFormat("a\0"), undefined);
+  assert.equal(textFileFormat("a\rb"), undefined);
 });

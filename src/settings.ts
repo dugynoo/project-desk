@@ -204,6 +204,14 @@ export function createSettings(
         notif.type = "checkbox";
         notif.checked = st.notifications;
         notifLabel.append(notif, document.createTextNode(t("settings.notifications")));
+        const background = el("input");
+        background.type = "checkbox";
+        background.id = "claude-background";
+        background.checked = st.claudeBackground;
+        background.disabled = !info.hooksEnabled || info.platform !== "windows";
+        const backgroundLabel = el("label", "check");
+        backgroundLabel.append(background, document.createTextNode(t("settings.claudeBackground")));
+        agents.append(backgroundLabel, el("div", "note", t("settings.claudeBackgroundNote")));
         const resumeLabel = el("label", "check");
         const resume = el("input");
         resume.type = "checkbox";
@@ -261,6 +269,7 @@ export function createSettings(
             systemOpenExts: systemExts.value.trim(),
             notifications: notif.checked,
             autoResume: resume.checked,
+            claudeBackground: background.checked,
             language: language.value,
           }, editor());
           if (typeof draft === "string") { activate(3); editors.querySelector("input")?.focus(); return toast(draft); }

@@ -13,6 +13,7 @@
           <span class="head-actions">
             <button id="btn-palette" class="icon" data-i18n-title="actions.palette"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m4 5 6 5-6 5m9 0h7"/></svg></button>
             <button id="btn-templates" class="icon" data-i18n-title="html.templates"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h9l4 4v14H6zM14 3v5h5M9 12h7m-7 4h5"/></svg></button>
+            <button id="btn-text-editor" class="icon" data-i18n-title="textEditor.open">✎</button>
             <button id="btn-settings" class="icon" data-i18n-title="html.settings"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></button>
           </span>
         </header>
@@ -27,12 +28,14 @@
         <footer id="sidebar-footer"></footer>
       </aside>
       <div id="resizer" data-i18n-title="html.resizer"></div>
+      <div id="workspace">
       <main id="stage">
         <div id="empty" class="empty">
           <p data-i18n="html.empty"></p>
           <p class="hint" data-i18n="html.hint"></p>
         </div>
       </main>
+      </div>
     </div>
     <div id="overlay" hidden></div>
     <script type="module" src="/src/main.ts"></script>

@@ -293,3 +293,17 @@ button.icon { min-width: 24px; min-height: 24px; }
 .modal > button + button { margin-left: 8px; }
 
 .modal button[aria-pressed="true"] { color: var(--accent); border-color: #385675; background: #203449; }
+
+/* Editor is a sibling of the terminal stage, so pane layout stays independent. */
+#workspace { display: flex; flex: 1; min-width: 0; overflow: hidden; }
+.text-editor { display: flex; flex-direction: column; flex: 0 0 50%; min-width: 220px; overflow: hidden; background: #282c34; }
+.text-editor[hidden], .editor-divider[hidden] { display: none; }
+.text-editor-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 7px; border-bottom: 1px solid var(--line); }
+.text-editor-title { flex: 1 1 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.text-editor-message { padding: 0 8px; font-size: 12px; overflow-wrap: anywhere; }
+.text-editor-message:not(:empty) { padding: 8px; }
+.text-editor-host { flex: 1; min-height: 0; overflow: hidden; }
+.text-editor .cm-editor { height: 100%; font-size: 13px; }
+.text-editor .cm-scroller { overflow: auto; }
+.editor-divider { flex: 0 0 5px; cursor: col-resize; background: var(--line); touch-action: none; }
+.editor-divider:hover, .editor-divider:focus-visible { background: var(--accent); }

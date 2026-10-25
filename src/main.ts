@@ -1,3 +1,4 @@
+import { backgroundStatus } from "./model.ts";
 import { createBranches } from "./branches.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { normalizeFontSize, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
@@ -500,6 +501,7 @@ function setupLinks(rt: Runtime, s: Session) {
     }
     const rel = relativePath(project(s.projectId)?.path ?? "", link.file);
     const items: MenuItem[] = [
+      [t("textEditor.title"), () => void openTextEditor(link.file, link.line)],
       [t("menu.openEditor"), () => openEditor(link.file, link.line)],
       [t("menu.openDefault"), () => void openDefault(link.file)],
       [t(REVEAL_LABEL[info.platform] ?? "menu.revealLinux"), () => void revealFile(link.file)],
@@ -515,11 +517,51 @@ function openLink(url: string) {
 }
 
 /** Ctrl+klik na súbor: prípony z nastavení idú do predvolenej aplikácie, ostatné do editora. */
+let textEditor: ReturnType<typeof import("./text-editor.ts")["createTextEditor"]> | undefined;
+let loadingEditor: Promise<void> | undefined;
+let editorZoomedId: string | undefined;
+function editorVisibilityChanged(visible: boolean) {
+  if (visible) {
+    // Pane slots, sizes and layout stay untouched; undo only the editor's own zoom.
+    const active = state.ui.activeSessionId;
+    if (state.ui.grid && !zoomedId && active && runtimes.has(active)) {
+      editorZoomedId = zoomedId = active;
+      layout();
+    }
+  } else {
+    const restore = editorZoomedId && state.ui.grid && zoomedId === editorZoomedId;
+    editorZoomedId = undefined;
+    if (restore) restorePaneLayout();
+  }
+}
+async function openTextEditor(file?: string, line?: number) {
+  try {
+    if (!file) {
+      const selected = await openDialog({ directory: false, multiple: false });
+      if (!selected || typeof selected !== "string") return;
+      file = selected;
+    }
+    loadingEditor ??= import("./text-editor.ts").then(module => {
+      textEditor = module.createTextEditor(
+        () => confirmBox(t("textEditor.discard"), t("textEditor.discardBody"), t("textEditor.discardOk")),
+        path => openEditor(path),
+        editorVisibilityChanged,
+      );
+    }).catch(e => { loadingEditor = undefined; throw e; });
+    await loadingEditor;
+    await textEditor!.open(file, line);
+  } catch (e) { toast(errorText(e)); }
+}
+async function flushForRestart() {
+  if (textEditor?.pending()) throw new Error(t("textEditor.saveFirst"));
+  await saves.flush();
+}
+
 function openFile(file: string, line?: number) {
-  if (!opensInSystem(file, state.settings.systemOpenExts)) return openEditor(file, line);
+  if (!opensInSystem(file, state.settings.systemOpenExts)) return void openTextEditor(file, line);
   // Spustiteľný súbor backend odmietne; vtedy ho otvoríme aspoň v editore.
   void openDefault(file, false).then((ok) => {
-    if (!ok) openEditor(file, line);
+    if (!ok) void openTextEditor(file, line);
   });
 }
 
@@ -621,7 +663,7 @@ async function start(s: Session) {
     }
   }
   // Bez prvého promptu nie je čo obnoviť; nové ID zabráni kolízii s nedokončenou reláciou.
-  if (s.provider === "claude" && (!s.hasConversation || !isUuid(s.agentSessionId))) {
+  if (s.provider === "claude" && !s.background && (!s.hasConversation || !isUuid(s.agentSessionId))) {
     s.agentSessionId = crypto.randomUUID();
     s.hasConversation = false;
   }
@@ -656,13 +698,18 @@ async function start(s: Session) {
   };
   rt.running = true;
   rt.closing = false;
+  pendingStarts.add(s.id);
   try {
-    await invoke("pty_spawn", {
+    // Persist ownership intent before starting a worker that can outlive this app.
+    if (s.background) await saves.flush();
+    const prepared = await invoke<{ sessionId: string; status: string } | null>("pty_spawn", {
       args: {
         id: s.id,
         outputId,
         cwd: p.path,
         provider: s.provider,
+        background: s.background === true,
+        claudeCommand: state.settings.claudeCommand,
         command: command ?? null,
         shell: state.settings.shell || null,
         cols: rt.term.cols,
@@ -670,6 +717,10 @@ async function start(s: Session) {
       },
       onOutput: output,
     });
+    if (prepared) {
+      s.agentSessionId = prepared.sessionId;
+      if (statusOf(s.id) === "starting") statuses.set(s.id, backgroundStatus(prepared.status));
+    }
   } catch (e) {
     rt.running = false;
     s.stopped = true;
@@ -682,7 +733,7 @@ async function start(s: Session) {
     renderSidebar();
     renderPaneHeads();
     return;
-  }
+  } finally { pendingStarts.delete(s.id); }
   if (!rt.running || !session(s.id)) return;
   const initialStatus = statusAfterSpawn(statusOf(s.id), s, info.hooksEnabled);
   s.started = true;
@@ -792,6 +843,13 @@ function onExit(id: string, code: number | null, systemShutdown = false) {
   if (!s) { forgetRuntime(id); return; }
   if (rt) rt.running = false;
   recordSessionExit(state, id, code, rt?.closing ?? false, systemShutdown);
+  if (s.background && !rt?.closing) {
+    s.stopped = false; // Attachment exited; the worker may still be running.
+    statuses.set(id, "sleeping");
+    rt?.term.writeln(`\r\n${t("background.detached")}`);
+    save(); layout(); renderSidebar(); renderPaneHeads();
+    return;
+  }
   if (rt?.closing) {
     forgetRuntime(id);
   } else {
@@ -864,6 +922,7 @@ function createSession(p: Project, provider: Provider) {
     id: crypto.randomUUID(),
     projectId: p.id,
     provider,
+    background: provider === "claude" && state.settings.claudeBackground && info.platform === "windows",
     title: `${PROVIDER_LABEL[provider]} ${n}`,
     createdAt: now,
     lastUsedAt: now,
@@ -876,7 +935,12 @@ function createSession(p: Project, provider: Provider) {
 }
 
 async function closeSession(s: Session) {
+  if (pendingStarts.has(s.id)) { toast(t("background.starting")); return; }
   const rt = runtimes.get(s.id);
+  if (s.background && !rt?.running) {
+    if (!(await confirmBox(t("close.title"), t("close.body", { title: s.title }), t("common.close")))) return;
+    try { await invoke("pty_kill", { id: s.id }); } catch (e) { toast(errorText(e)); return; }
+  }
   if (rt?.running) {
     const ok = await confirmBox(t("close.title"), t("close.body", { title: s.title }), t("common.close"));
     if (!ok) return;
@@ -959,7 +1023,8 @@ async function addProject() {
 
 async function removeProject(p: Project) {
   const all = sessionsOf(state, p.id);
-  const live = all.filter((s) => runtimes.get(s.id)?.running);
+  if (all.some(s => pendingStarts.has(s.id))) { toast(t("background.starting")); return; }
+  const live = all.filter((s) => s.background || runtimes.get(s.id)?.running);
   const body = live.length ? t("project.removeLive", { n: live.length }) : t("project.removeBody");
   if (!(await confirmBox(t("project.removeTitle", { name: p.name }), body, t("project.removeOk")))) return;
   for (const s of live) {
@@ -1821,7 +1886,7 @@ function applyLanguage() {
 
 // ---------- aktualizácie ----------
 
-const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, saves.flush, () => info.automaticUpdates);
+const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, flushForRestart, () => info.automaticUpdates);
 const showSettings = createSettings(
   () => state.settings,
   (draft, langChanged) => { state.settings = draft; applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); refreshShortcutHints(); },
@@ -1944,6 +2009,7 @@ async function main() {
   $("#btn-switch").onclick = quickSwitch;
   $("#btn-grid").onclick = showLayoutControls;
   $("#btn-settings").onclick = openSettings;
+  $("#btn-text-editor").onclick = () => void openTextEditor();
   $("#btn-templates").onclick = openTemplates;
   $("#btn-update").onclick = () => void installUpdate();
   document.addEventListener("keydown", (e) => {
@@ -1963,7 +2029,7 @@ async function main() {
   });
   await listen<FileDrag>("terminal-file-drag", e => fileDrop(e.payload));
 
-  const prepareShutdown = createShutdownHandler(saves.flush,
+  const prepareShutdown = createShutdownHandler(flushForRestart,
     (id, saved) => invoke("shutdown_ready", { id, saved }),
     () => { closingWindow = true; },
     e => toast(t("app.saveFailed", { detail: String(e) })));
@@ -1977,6 +2043,7 @@ async function main() {
     event.preventDefault();
     if (closingWindow) return;
     closingWindow = true;
+    if (textEditor && !await textEditor.mayClose()) { closingWindow = false; return; }
     try { await saves.flush(); await win.destroy(); }
     catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
   });

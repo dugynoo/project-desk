@@ -93,6 +93,18 @@ pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
     let body = serde_json::to_string_pretty(&settings_json(port, &executable)).map_err(|e| e.to_string())?;
     std::fs::write(&settings_path, body).map_err(|e| e.to_string())?;
 
+    // Surviving workers read fresh credentials per event; never persist a static token.
+    let endpoint = dir.join("background-endpoint.json");
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+    let temporary = endpoint.with_extension("json.pending");
+    let mut file = options.open(&temporary).map_err(|e| e.to_string())?;
+    std::io::Write::write_all(&mut file, json!({"port": port, "token": token}).to_string().as_bytes()).map_err(|e| e.to_string())?;
+    drop(file);
+    std::fs::rename(temporary, endpoint).map_err(|e| e.to_string())?;
+
     let expected = token.clone();
     thread::spawn(move || {
         for mut req in server.incoming_requests() {

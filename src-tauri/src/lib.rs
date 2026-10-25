@@ -1,3 +1,5 @@
+mod text_editor;
+mod background;
 mod antigravity;
 mod codex;
 mod cli;
@@ -48,6 +50,9 @@ struct AppInfo {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnArgs {
+    #[serde(default)]
+    background: bool,
+    claude_command: Option<String>,
     output_id: String,
     provider: Option<String>,
     id: String,
@@ -93,12 +98,12 @@ fn shutdown_ready(app: tauri::AppHandle, id: String, saved: bool) {
 }
 
 #[tauri::command]
-fn pty_spawn(
+async fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     args: SpawnArgs,
     on_output: Channel<pty::OutputChunk>,
-) -> Result<(), String> {
+) -> Result<Option<background::Prepared>, String> {
     if !std::path::Path::new(&args.cwd).is_dir() {
         return Err(format!("project.missingFolder: {}", args.cwd));
     }
@@ -113,7 +118,16 @@ fn pty_spawn(
         env.push((hooks::PORT_ENV.to_owned(), h.port.to_string()));
         env.push((hooks::SETTINGS_ENV.to_owned(), h.settings_path.to_string_lossy().into_owned()));
     }
+    let prepared = if args.background {
+        if args.provider.as_deref() != Some("claude") || state.hooks.is_none() { return Err("background.unsupportedCommand".into()); }
+        let dir = state.state_file.parent().ok_or("Missing state directory")?.to_owned();
+        let home = app.path().home_dir().map_err(|e| e.to_string())?;
+        let id = args.id.clone(); let cwd = PathBuf::from(&args.cwd);
+        let command = args.claude_command.clone().unwrap_or_default();
+        Some(tauri::async_runtime::spawn_blocking(move || background::prepare(&dir, &home, &id, &cwd, &command)).await.map_err(|e| e.to_string())??)
+    } else { None };
     let req = SpawnRequest {
+        direct: prepared.as_ref().map(|p| (p.program.clone(), vec!["attach".into(), p.job_id.clone()])) ,
         id: args.id,
         output_id: args.output_id,
         cwd: args.cwd,
@@ -123,7 +137,8 @@ fn pty_spawn(
         cols: args.cols,
         rows: args.rows,
     };
-    state.pty.spawn(app, req, on_output)
+    state.pty.spawn(app, req, on_output)?;
+    Ok(prepared)
 }
 
 #[tauri::command]
@@ -147,7 +162,10 @@ fn pty_resize(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> R
 }
 
 #[tauri::command]
-fn pty_kill(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn pty_kill(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let dir = state.state_file.parent().ok_or("Missing state directory")?.to_owned();
+    let owned_id = id.clone();
+    tauri::async_runtime::spawn_blocking(move || background::stop(&dir, &owned_id)).await.map_err(|e| e.to_string())??;
     state.pty.kill(&id)
 }
 
@@ -188,6 +206,15 @@ fn prepare_update(on: bool) -> Result<(), String> {
 }
 
 /// Súbor v predvolenej aplikácii systému (HTML v prehliadači…). Spustiteľné súbory odmietne.
+#[tauri::command]
+async fn text_open(path: String) -> Result<text_editor::Document, String> {
+    tauri::async_runtime::spawn_blocking(move || text_editor::open(&path)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn text_save(path: String, expected: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || text_editor::save(&path, &expected, &text)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn open_file_default(path: String) -> Result<(), String> {
     files::open_default(&path)
@@ -329,6 +356,8 @@ pub fn run() {
             pty_resize,
             pty_kill,
             open_in_editor,
+            text_open,
+            text_save,
             open_file_default,
             prepare_update,
             reveal_file,

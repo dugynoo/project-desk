@@ -59,6 +59,34 @@ The session info dialog also shows whether the terminal process is running, whet
 
 Click **ⓘ** or right-click a session to see the model, context size, tokens (new, from cache, output) and, for Codex, the used rate limit. The conversation ID can be copied. The numbers apply to the current conversation and restart after `/clear`.
 
+### Keep Claude running across app restarts (experimental, Windows)
+
+In **Settings → Agents**, enable **Keep new Claude sessions running when the app
+closes**. It is off by default and applies only to newly created Claude sessions;
+existing and imported conversations keep their current behavior. Requires native
+Claude Code **2.1.310+**, a project already trusted in Claude, and the command
+`claude` or `claude --dangerously-skip-permissions`. Custom command options are
+rejected explicitly in this mode. Other providers are unchanged.
+
+Claude's background supervisor owns the worker and its subagents. Closing or
+updating Project Desk disconnects its terminal; the work can keep running and
+using your Claude allowance. On the next launch, auto-resume reconnects to the
+same worker. With auto-resume off, select the session to reconnect. Closing a
+session from its menu (or removing its project) explicitly stops its owned worker.
+If you detach inside Claude, use the session's restart button to reconnect.
+
+Status hooks read the app's current loopback endpoint and rotating token on each
+event. Reconnecting reads one native metadata snapshot; no process polling was
+added. Background hook payloads contain status metadata only. Missing native
+sessions produce an error instead of silently creating a new conversation.
+Native background worktree isolation is disabled for these sessions so they keep
+working in the selected project, matching normal Project Desk sessions.
+
+This does not guarantee uninterrupted work across a computer reboot or restore
+Claude Agent Teams. macOS/Linux background mode remains disabled pending native
+lifecycle testing and a stable relay launch path across AppImage remounts. Ordinary
+foreground sessions continue to work on all supported platforms.
+
 ### Resume after restart
 
 On Windows, when a terminal exits while the OS reports that the user session is shutting down (`GetSystemMetrics(SM_SHUTTINGDOWN)`), Desk keeps it eligible for automatic resume on the next launch. This still respects the auto-resume setting. Ordinary exits and explicitly closed sessions remain stopped; an exit code alone is never treated as proof of shutdown. Previously saved stopped sessions need to be started again manually once.
@@ -263,3 +291,11 @@ The frontend acknowledges roughly every 64 KiB after xterm has parsed it.
 Large log bursts slow the producer instead of growing an unbounded parser queue;
 normal small writes do not require an acknowledgement. Closing a session or
 shutting down releases waiting readers, and each launch has its own output ID.
+
+### Built-in text editor
+
+Use the pencil button in the sidebar or Ctrl/Cmd-click a text-file path in a terminal to open a lightweight editor beside the terminal. In a grid, the active terminal is temporarily expanded; closing the editor restores the grid with its existing slots and sizes. A terminal already expanded before opening the editor stays expanded, and manual layout changes made while editing are respected. Drag the divider (or focus it and use arrow keys) to resize. The file context menu still offers the external editor and system application.
+
+The editor loads on demand, supports syntax highlighting, search, undo/redo and Ctrl/Cmd+S, and keeps one file open at a time. It accepts UTF-8 text up to 2 MiB, preserving BOM and consistent LF/CRLF endings. Binary, invalid UTF-8 and mixed-line-ending files are rejected. Hard-linked files must be saved with an external editor to avoid breaking their links. Symlinks are resolved when opening.
+
+Saving checks for changes on disk and refuses to overwrite a different version; copy your edits before Reload if needed. There is also a check on window focus, with no polling. Unsaved edits prompt before closing or switching files and block updates/restarts until saved or discarded. Writes use a synchronized temporary file in the same directory and atomic replacement, preserving standard permissions. This is optimistic conflict detection, not a lock against unrelated writers; a writer racing the final replacement can still conflict. Atomic replacement may not preserve custom ACLs/extended attributes. The implementation is shared across Windows, macOS and Linux; desktop testing for this change was performed on Windows.
