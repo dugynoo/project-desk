@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -11,7 +11,68 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter};
 
+// Bound transport + parser backlog, with one acknowledgement per ~64 KiB.
+// Limits count UTF-8 bytes on the backend; the frontend echoes offsets unchanged.
+const OUTPUT_HIGH: u64 = 256 * 1024;
+const OUTPUT_ACK_BATCH: u64 = 64 * 1024;
+
+#[derive(Default)]
+struct OutputState {
+    sent: u64,
+    acknowledged: u64,
+    checkpoint: u64,
+    cancelled: bool,
+}
+
+#[derive(Default)]
+struct OutputFlow {
+    state: Mutex<OutputState>,
+    ready: Condvar,
+}
+
+impl OutputFlow {
+    fn reserve(&self, bytes: usize) -> Option<Option<u64>> {
+        let mut state = self.state.lock().ok()?;
+        while !state.cancelled && state.sent - state.acknowledged >= OUTPUT_HIGH {
+            state = self.ready.wait(state).ok()?;
+        }
+        if state.cancelled { return None; }
+        state.sent += bytes as u64;
+        if state.sent - state.checkpoint >= OUTPUT_ACK_BATCH {
+            state.checkpoint = state.sent;
+            Some(Some(state.sent))
+        } else {
+            Some(None)
+        }
+    }
+
+    fn acknowledge(&self, through: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            // Cumulative offsets make delayed/duplicate acknowledgements harmless.
+            if through > state.acknowledged && through <= state.checkpoint {
+                state.acknowledged = through;
+                self.ready.notify_one();
+            }
+        }
+    }
+
+    fn cancel(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.cancelled = true;
+            self.ready.notify_all();
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct OutputChunk {
+    data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ack: Option<u64>,
+}
+
 struct PtySession {
+    output: Arc<OutputFlow>,
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
@@ -55,6 +116,8 @@ fn kill_windows_process(pid: u32) -> std::io::Result<()> {
 #[derive(Default, Clone)]
 pub struct PtyManager {
     sessions: Arc<Mutex<HashMap<String, PtySession>>>,
+    // Reader lifetime, independent of child exit: final output can still be acknowledged.
+    outputs: Arc<Mutex<HashMap<String, Arc<OutputFlow>>>>,
     /// Pri ukončení aplikácie nehlásime exit, aby UI nezmazalo relácie, ktoré majú po reštarte pokračovať.
     shutting_down: Arc<AtomicBool>,
     preparing_shutdown: Arc<AtomicBool>,
@@ -81,6 +144,7 @@ fn system_is_shutting_down() -> bool {
 
 pub struct SpawnRequest {
     pub id: String,
+    pub output_id: String,
     pub cwd: String,
     /// Príkaz, ktorý shell spustí a potom ostane bežať. `None` = čistý shell.
     pub command: Option<String>,
@@ -137,9 +201,10 @@ pub fn take_utf8(pending: &mut Vec<u8>) -> String {
 }
 
 impl PtyManager {
-    pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<String>) -> Result<(), String> {
+    pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<OutputChunk>) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.contains_key(&req.id) {
+        if sessions.contains_key(&req.id)
+            || self.outputs.lock().map_err(|e| e.to_string())?.contains_key(&req.output_id) {
             return Err("pty.alreadyRunning".into());
         }
 
@@ -166,6 +231,11 @@ impl PtyManager {
         let killer = child.clone_killer();
         let pid = child.process_id();
 
+        let flow = Arc::new(OutputFlow::default());
+        self.outputs.lock().map_err(|e| e.to_string())?.insert(req.output_id.clone(), flow.clone());
+        let reader_flow = flow.clone();
+        let outputs = self.outputs.clone();
+        let output_id = req.output_id;
         thread::spawn(move || {
             let mut buf = [0u8; 16 * 1024];
             let mut pending = Vec::new();
@@ -175,12 +245,13 @@ impl PtyManager {
                     Ok(n) => {
                         pending.extend_from_slice(&buf[..n]);
                         let text = take_utf8(&mut pending);
-                        if !text.is_empty() && output.send(text).is_err() {
-                            break;
-                        }
+                        if text.is_empty() { continue; }
+                        let Some(ack) = reader_flow.reserve(text.len()) else { break };
+                        if output.send(OutputChunk { data: text, ack }).is_err() { break; }
                     }
                 }
             }
+            if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
         });
 
         let id = req.id.clone();
@@ -202,8 +273,20 @@ impl PtyManager {
             }
         });
 
-        sessions.insert(req.id, PtySession { master: pair.master, writer, killer, pid });
+        sessions.insert(req.id, PtySession { master: pair.master, writer, killer, pid, output: flow });
         Ok(())
+    }
+
+    pub fn acknowledge_output(&self, output_id: &str, through: u64) {
+        if let Ok(outputs) = self.outputs.lock() {
+            if let Some(flow) = outputs.get(output_id) { flow.acknowledge(through); }
+        }
+    }
+
+    pub fn cancel_output(&self, output_id: &str) {
+        if let Ok(outputs) = self.outputs.lock() {
+            if let Some(flow) = outputs.get(output_id) { flow.cancel(); }
+        }
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
@@ -225,12 +308,16 @@ impl PtyManager {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         if let Some(s) = sessions.get_mut(id) {
             s.kill().map_err(|e| e.to_string())?;
+            s.output.cancel();
         }
         Ok(())
     }
 
     pub fn kill_all(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
+        if let Ok(outputs) = self.outputs.lock() {
+            for flow in outputs.values() { flow.cancel(); }
+        }
         if let Ok(mut sessions) = self.sessions.lock() {
             for s in sessions.values_mut() {
                 let _ = s.kill();
@@ -246,6 +333,56 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[test]
+    fn output_window_blocks_until_valid_ack_and_cancel_wakes_reader() {
+        use super::{OutputFlow, OUTPUT_ACK_BATCH, OUTPUT_HIGH};
+        use std::sync::{Arc, mpsc};
+        use std::time::Duration;
+        let flow = Arc::new(OutputFlow::default());
+        for n in 1..=OUTPUT_HIGH / OUTPUT_ACK_BATCH {
+            assert_eq!(flow.reserve(OUTPUT_ACK_BATCH as usize), Some(Some(n * OUTPUT_ACK_BATCH)));
+        }
+        let (tx, rx) = mpsc::channel();
+        let reader = flow.clone();
+        let worker = std::thread::spawn(move || { tx.send(reader.reserve(1)).unwrap(); });
+        assert!(rx.recv_timeout(Duration::from_millis(30)).is_err());
+        flow.acknowledge(OUTPUT_HIGH + 1); // future / corrupt ack cannot grant credit
+        assert!(rx.recv_timeout(Duration::from_millis(30)).is_err());
+        flow.acknowledge(OUTPUT_ACK_BATCH);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Some(None));
+        worker.join().unwrap();
+        flow.acknowledge(OUTPUT_ACK_BATCH); // duplicate must not grant more credit
+        assert_eq!(flow.state.lock().unwrap().acknowledged, OUTPUT_ACK_BATCH);
+        assert_eq!(flow.reserve((OUTPUT_ACK_BATCH - 1) as usize), Some(Some(OUTPUT_HIGH + OUTPUT_ACK_BATCH)));
+        let (tx, rx) = mpsc::channel();
+        let reader = flow.clone();
+        let worker = std::thread::spawn(move || { tx.send(reader.reserve(1)).unwrap(); });
+        assert!(rx.recv_timeout(Duration::from_millis(30)).is_err());
+        flow.cancel();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), None);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn output_generations_are_independent_and_small_writes_do_not_need_ack() {
+        use super::{OutputFlow, PtyManager, OUTPUT_ACK_BATCH};
+        use std::sync::Arc;
+        let manager = PtyManager::default();
+        let old = Arc::new(OutputFlow::default());
+        let new = Arc::new(OutputFlow::default());
+        manager.outputs.lock().unwrap().insert("old".into(), old.clone());
+        manager.outputs.lock().unwrap().insert("new".into(), new.clone());
+        assert_eq!(old.reserve(OUTPUT_ACK_BATCH as usize), Some(Some(OUTPUT_ACK_BATCH)));
+        assert_eq!(new.reserve("\u{10f}\u{1f642}".len()), Some(None));
+        manager.acknowledge_output("old", OUTPUT_ACK_BATCH);
+        manager.cancel_output("old");
+        assert_eq!(old.reserve(1), None);
+        assert_eq!(new.reserve(1), Some(None));
+        assert_eq!(new.state.lock().unwrap().acknowledged, 0);
+        manager.kill_all();
+        assert_eq!(new.reserve(1), None);
+    }
 
     #[test]
     fn exit_payload_preserves_shutdown_reason_for_frontend() {

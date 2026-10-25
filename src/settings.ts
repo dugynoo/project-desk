@@ -21,7 +21,7 @@ export function createSettings(
    * Výber editora: nainštalované editory (z registra / bundle ID / PATH) a „Iný program…“
    * s cestou k programu a argumentmi. Vráti funkciu, ktorá prečíta výber, alebo chybu.
    */
-  function editorPicker(box: HTMLElement, st: Settings, info: SettingsInfo): () => EditorPick | string {
+  function editorPicker(box: HTMLElement, st: Settings, info: SettingsInfo, signal: AbortSignal): () => EditorPick | string {
     const select = el("select");
     select.append(new Option(t("editor.searching"), st.editorId));
     const note = el("div", "note");
@@ -56,12 +56,13 @@ export function createSettings(
         title: t("editor.pickTitle"),
         filters: info.platform === "windows" ? [{ name: t("editor.programs"), extensions: ["exe", "com"] }] : undefined,
       });
-      if (typeof picked === "string") program.value = picked;
+      if (!signal.aborted && typeof picked === "string") program.value = picked;
     };
     sync();
 
     invoke<EditorInfo[]>("list_editors")
       .then((found) => {
+        if (signal.aborted) return;
         select.replaceChildren();
         for (const f of found) select.append(new Option(f.label, f.id));
         const known = st.editorId === "" || st.editorId === CUSTOM_EDITOR || found.some((f) => f.id === st.editorId);
@@ -71,7 +72,7 @@ export function createSettings(
         sync();
         note.textContent = t(found.length ? "editor.lineNote" : "editor.noneFound");
       })
-      .catch((e) => (note.textContent = errorText(e)));
+      .catch((e) => { if (!signal.aborted) note.textContent = errorText(e); });
 
     return () => {
       if (select.value !== CUSTOM_EDITOR) {
@@ -87,7 +88,7 @@ export function createSettings(
   function openSettings(info: SettingsInfo) {
     const st = getSettings();
     modal(
-      (box, close) => {
+      (box, close, signal) => {
         const field = (label: string, value: string, placeholder = "") => {
           const input = el("input");
           input.type = "text";
@@ -112,7 +113,7 @@ export function createSettings(
         const antigravity = field(t("settings.antigravity"), st.antigravityCommand, "agy");
         box.append(el("div", "note", t("info.noteAntigravity")));
         const shell = field(t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
-        const editor = editorPicker(box, st, info);
+        const editor = editorPicker(box, st, info, signal);
         const systemExts = field(t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
         box.append(el("div", "note", t("settings.systemOpenNote")));
         const notifLabel = el("label", "check");
@@ -141,12 +142,19 @@ export function createSettings(
           checkBtn.onclick = async () => {
             checkBtn.disabled = true;
             checkBtn.textContent = t("update.checking");
-            if (await checkUpdate(true)) {
-              close();
-              return installUpdate();
+            try {
+              const available = await checkUpdate(true);
+              if (signal.aborted) return;
+              if (available) {
+                close();
+                return installUpdate();
+              }
+            } finally {
+              if (!signal.aborted) {
+                checkBtn.disabled = false;
+                checkBtn.textContent = t("update.check");
+              }
             }
-            checkBtn.disabled = false;
-            checkBtn.textContent = t("update.check");
           };
           actions.append(checkBtn);
         }

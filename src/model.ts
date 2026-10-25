@@ -537,6 +537,15 @@ export function pasteSequence(text: string): string {
   return `\x1b[200~${clean}\x1b[201~`;
 }
 
+/** Literal file references for a single paste, never an Enter or a command.
+ * Quote for the default shells (PowerShell on Windows, POSIX elsewhere).
+ * Reject control characters instead of silently changing a filename.
+ */
+export function droppedFilePaths(paths: readonly string[], platform: string): string | undefined {
+  if (!paths.length || paths.some(path => !path || /[\x00-\x1f\x7f-\x9f]/.test(path))) return;
+  return paths.map(path => `'${path.replace(/'/g, platform === "windows" ? "''" : "'\\''")}'`).join(" ") + " ";
+}
+
 export interface FileRef {
   /** Index začiatku v riadku (od 0). */
   index: number;
@@ -728,12 +737,12 @@ export function settingsDraft(current: Settings, changes: Partial<Settings>, edi
 }
 
 /** Serialize discovery and invalidate results when a launch is replaced or removed. */
-export function createDiscovery() {
-  const entries = new Map<string, { path: string; ambiguous: boolean }>();
+export function createDiscovery(now: () => number = () => performance.now()) {
+  const entries = new Map<string, { path: string; ambiguous: boolean; delay: number; retryAt: number }>();
   let busy = false;
   return {
     add(id: string, path: string) {
-      const entry = { path, ambiguous: false };
+      const entry = { path, ambiguous: false, delay: 3000, retryAt: 0 };
       for (const [otherId, other] of entries) {
         if (otherId !== id && other.path === path) other.ambiguous = entry.ambiguous = true;
       }
@@ -746,7 +755,15 @@ export function createDiscovery() {
       try {
         for (const [id, entry] of [...entries]) {
           const current = () => entries.get(id) === entry && !entry.ambiguous;
-          if (current()) await lookup(id, current);
+          if (!current() || now() < entry.retryAt) continue;
+          try {
+            await lookup(id, current);
+          } finally {
+            if (current()) {
+              entry.retryAt = now() + entry.delay;
+              entry.delay = Math.min(entry.delay * 2, 30_000);
+            }
+          }
         }
       } finally { busy = false; }
     },

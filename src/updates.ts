@@ -17,6 +17,7 @@ export function createUpdates(
   let externalUpdate: { version: string; body: string; url: string } | undefined;
   let checking: Promise<boolean> | undefined;
   let manualRequested = false;
+  let installing = false;
 
   function showAvailable(version: string) {
     const btn = $<HTMLButtonElement>("#btn-update");
@@ -29,6 +30,8 @@ export function createUpdates(
    * ručná (`manual`, z Nastavení) povie, keď nič nenašla. Vráti true, ak je k dispozícii nová verzia.
    */
   async function checkUpdate(manual = false): Promise<boolean> {
+    // Keep the confirmed resource stable through download, install and rollback.
+    if (installing) return false;
     // Coalesce the startup timer and manual checks (including release API requests).
     if (checking) {
       manualRequested ||= manual;
@@ -55,7 +58,6 @@ export function createUpdates(
         return false;
       }
     }
-    if (pendingUpdate) return true;
     let update: Update | null;
     try {
       update = await check();
@@ -63,21 +65,39 @@ export function createUpdates(
       if (manualRequested) toast(t("update.checkFailed", { detail: String(e) }));
       return false;
     }
+    const previous = pendingUpdate;
+    pendingUpdate = update ?? undefined;
+    if (previous) await previous.close().catch(console.error);
     if (!update) {
+      $("#btn-update").hidden = true;
       if (manualRequested) toast(t("update.upToDate", { version: await getVersion() }), true);
       return false;
     }
-    pendingUpdate = update;
     showAvailable(update.version);
     return true;
   }
 
-  /** Zoznam zmien z release notes: len riadky „- …“, ktoré release workflow vytvorí z commitov. */
+  /** Display the complete notes as plain text; never interpret release HTML. */
   function changesOf(body: string | undefined): string {
-    return (body ?? "").split(/\r?\n/).filter((l) => l.startsWith("- ")).join("\n");
+    return (body ?? "").trim();
   }
 
   async function installUpdate() {
+    if (installing) return;
+    installing = true;
+    const btn = $<HTMLButtonElement>("#btn-update");
+    btn.disabled = true;
+    try {
+      // A click during a refresh must use its result, not a resource it replaces.
+      if (checking) await checking;
+      await performInstall();
+    } finally {
+      installing = false;
+      btn.disabled = false;
+    }
+  }
+
+  async function performInstall() {
     if (!automatic()) {
       const release = externalUpdate;
       if (!release) return;
@@ -111,7 +131,7 @@ export function createUpdates(
       // Na Windows inštalátor appku zavrie sám; inde ju treba spustiť nanovo.
       await relaunch();
     } catch (e) {
-      void invoke("prepare_update", { on: false }).catch(() => {});
+      await invoke("prepare_update", { on: false }).catch(console.error);
       btn.disabled = false;
       btn.textContent = t("update.button", { version: update.version });
       toast(t("update.failed", { detail: String(e) }));

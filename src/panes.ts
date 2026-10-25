@@ -3,13 +3,8 @@ import { t } from "./i18n.ts";
 import { paneGeometry, paneWeights, resizePaneTracks, type PaneLayout } from "./model.ts";
 
 /** Owns split handles; terminals stay mounted when the geometry changes. */
-export function createPaneLayout(stage: HTMLElement, fit: () => void, save: () => void) {
+export function createPaneLayout(stage: HTMLElement, requestFit: () => void, save: () => void) {
   let cancelDrag: (() => void) | undefined;
-  let frame = 0;
-  const fitSoon = () => {
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(fit);
-  };
   function apply(mode: PaneLayout, count: number, sizes: Record<string, number[]>) {
     cancelDrag?.();
     stage.querySelectorAll(".pane-divider").forEach(node => node.remove());
@@ -20,7 +15,7 @@ export function createPaneLayout(stage: HTMLElement, fit: () => void, save: () =
     const draw = () => {
       stage.style.gridTemplateColumns = tracks(x);
       stage.style.gridTemplateRows = tracks(y);
-      fitSoon();
+      requestFit();
     };
     const divider = (axis: "x" | "y", boundary: number) => {
       const node = el("div", `pane-divider ${axis}`);

@@ -11,6 +11,9 @@ export const LANGUAGES: { id: Lang; label: string }[] = [
 const LOCALE: Record<Lang, string> = { en: "en-GB", sk: "sk-SK", cs: "cs-CZ" };
 
 const en = {
+  "drop.holdShift": "Hold Shift and drop to insert file paths",
+  "drop.ready": "Drop to insert file paths — Enter will not be sent",
+  "drop.invalid": "These file paths cannot be pasted safely. Rename files containing control characters or unsupported characters.",
   "layouts.title": "Saved layouts",
   "layouts.help": "Save panel assignments, order and sizes. Switching keeps sessions running; closed sessions leave empty panels. Rename a layout by editing its name. Changes to panels are saved to a layout only when you overwrite it.",
   "layouts.name": "Layout name",
@@ -300,6 +303,9 @@ const en = {
 export type Key = keyof typeof en;
 
 const sk: Record<Key, string> = {
+  "drop.holdShift": "Podrž Shift a pusť súbory pre vloženie ciest",
+  "drop.ready": "Pusť súbory pre vloženie ciest — Enter sa neodošle",
+  "drop.invalid": "Tieto cesty nemožno bezpečne vložiť. Premenuj súbory s riadiacimi alebo nepodporovanými znakmi.",
   "layouts.title": "Uložené rozloženia",
   "layouts.help": "Uložte výber, poradie a veľkosti panelov. Pri prepnutí sessions ďalej bežia; zatvorené sessions zanechajú prázdne panely. Názov zmeníte úpravou poľa. Zmeny panelov sa do rozloženia uložia až pri jeho prepísaní.",
   "layouts.name": "Názov rozloženia",
@@ -585,6 +591,9 @@ const sk: Record<Key, string> = {
 };
 
 const cs: Record<Key, string> = {
+  "drop.holdShift": "Podrž Shift a pusť soubory pro vložení cest",
+  "drop.ready": "Pusť soubory pro vložení cest — Enter se neodešle",
+  "drop.invalid": "Tyto cesty nelze bezpečně vložit. Přejmenuj soubory s řídicími nebo nepodporovanými znaky.",
   "layouts.title": "Uložená rozložení",
   "layouts.help": "Uložte výběr, pořadí a velikosti panelů. Při přepnutí sessions dále běží; zavřené sessions zanechají prázdné panely. Název změníte úpravou pole. Změny panelů se do rozložení uloží až při jeho přepsání.",
   "layouts.name": "Název rozložení",

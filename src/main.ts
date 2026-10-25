@@ -1,10 +1,11 @@
 import { createSettings } from "./settings.ts";
+import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
 import { showSavedLayouts } from "./saved-layouts.ts";
 import { openSessionMenu } from "./session-menu.ts";
 import { createUpdates } from "./updates.ts";
-import { $, el } from "./dom.ts";
+import { $, el, onNextFrame } from "./dom.ts";
 import { createSaveQueue, createShutdownHandler } from "./persistence.ts";
 import { createDialogs } from "./dialogs.ts";
 import "@xterm/xterm/css/xterm.css";
@@ -81,6 +82,7 @@ interface AppInfo {
 }
 
 interface Runtime {
+  outputId?: string;
   term: Terminal;
   fit: FitAddon;
   webgl?: WebglAddon;
@@ -139,6 +141,11 @@ function toast(msg: string, info = false) {
   window.setTimeout(() => t.remove(), 6000);
 }
 
+const renderStatusSoon = onNextFrame(() => {
+  renderSidebar();
+  renderPaneHeads();
+});
+
 function setStatus(id: string, next: Status, silent = false) {
   const prev = statusOf(id);
   if (prev === next) return;
@@ -153,8 +160,7 @@ function setStatus(id: string, next: Status, silent = false) {
     unread.add(id);
     notify(id, next);
   }
-  renderSidebar();
-  renderPaneHeads();
+  renderStatusSoon();
 }
 
 /** Používateľ práve reláciu vidí (je v zobrazení a okno má fokus). */
@@ -179,7 +185,8 @@ async function notify(id: string, status: Status) {
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
 let zoomedId: string | undefined;
-const paneLayout = createPaneLayout($("#stage"), fitVisible, save);
+const fitSoon = onNextFrame(fitVisible);
+const paneLayout = createPaneLayout($("#stage"), fitSoon, save);
 
 function visibleIds(): string[] {
   if (zoomedId && state.ui.grid && runtimes.has(zoomedId)) return [zoomedId];
@@ -222,7 +229,7 @@ function layout() {
       rt.webgl = undefined;
     }
   }
-  requestAnimationFrame(fitVisible);
+  fitSoon();
   $("#btn-grid").classList.toggle("on", state.ui.grid);
   renderPaneHeads();
 }
@@ -583,6 +590,7 @@ async function resolveFile(cwd: string, candidate: string): Promise<string | nul
 function disposeRuntime(id: string) {
   const rt = runtimes.get(id);
   if (!rt) return;
+  if (rt.outputId) void invoke("pty_output_cancel", { outputId: rt.outputId }).catch(console.error);
   rt.webgl?.dispose();
   rt.term.dispose();
   rt.pane.remove();
@@ -633,14 +641,23 @@ async function start(s: Session) {
     // použijú sa predvolené rozmery
   }
 
-  const output = new Channel<string>();
-  output.onmessage = (chunk) => rt.term.write(chunk);
+  if (rt.outputId) void invoke("pty_output_cancel", { outputId: rt.outputId }).catch(console.error);
+  const outputId = crypto.randomUUID();
+  rt.outputId = outputId;
+  const output = new Channel<{ data: string; ack?: number }>();
+  output.onmessage = (chunk) => {
+    if (rt.outputId !== outputId || runtimes.get(s.id) !== rt) return;
+    rt.term.write(chunk.data, chunk.ack === undefined ? undefined : () => {
+      void invoke("pty_output_ack", { outputId, through: chunk.ack }).catch(console.error);
+    });
+  };
   rt.running = true;
   rt.closing = false;
   try {
     await invoke("pty_spawn", {
       args: {
         id: s.id,
+        outputId,
         cwd: p.path,
         provider: s.provider,
         command: command ?? null,
@@ -709,17 +726,20 @@ async function lookupCodexSessions() {
 
 // Tokeny a kontext pre Claude aj Codex, pri Codexe aj stav (Codex nemá hooky bez zásahu do jeho konfigurácie).
 let polling = false;
+let retainedAgents = "";
 async function pollAgents() {
   if (polling) return;
   polling = true;
   let changed = false;
+  const polledIds = new Set<string>();
   try {
     for (const s of [...state.sessions]) {
       const agentId = s.agentSessionId;
       if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
       const runtime = runtimes.get(s.id)!;
       const startedAt = s.lastStartAt;
-      const r = await invoke<{ stats: AgentStats; status: string | null; events: string[] } | null>("agent_poll", { provider: s.provider, agentId }).catch(() => null);
+      polledIds.add(agentId);
+      const r = await invoke<{ stats: AgentStats; status: string | null; events: string[] } | null>("agent_poll", { provider: s.provider, agentId, generation: startedAt ?? 0 }).catch(() => null);
       if (!r || session(s.id) !== s || s.agentSessionId !== agentId || runtimes.get(s.id) !== runtime
         || !runtime.running || runtime.closing || s.lastStartAt !== startedAt) continue;
       const before = statsOf(s)?.contextTokens;
@@ -738,11 +758,19 @@ async function pollAgents() {
       }
     }
   } finally {
+    // Reconcile after in-flight reads so closed sessions cannot leave watches.
+    const activeIds = [...new Set(state.sessions.filter(s =>
+      (s.provider === "claude" || s.provider === "codex") && isUuid(s.agentSessionId)
+      && runtimes.get(s.id)?.running && !runtimes.get(s.id)?.closing,
+    ).map(s => s.agentSessionId!))].sort();
+    const key = JSON.stringify(activeIds);
+    if (key !== retainedAgents || [...polledIds].some(id => !activeIds.includes(id))) {
+      await invoke("agent_retain", { activeIds }).then(() => { retainedAgents = key; }).catch(() => {});
+    }
     polling = false;
   }
   if (changed) {
-    renderSidebar();
-    renderPaneHeads();
+    renderStatusSoon();
   }
 }
 
@@ -755,6 +783,7 @@ function forgetRuntime(id: string) {
 }
 
 function onExit(id: string, code: number | null, systemShutdown = false) {
+  codexLookup.delete(id);
   const rt = runtimes.get(id);
   const s = session(id);
   if (!s) { forgetRuntime(id); return; }
@@ -904,13 +933,23 @@ function renameInput(): HTMLInputElement {
   return input;
 }
 
+let addingProject = false;
 async function addProject() {
-  const picked = await openDialog({ directory: true, multiple: false, title: t("project.pick") });
-  if (typeof picked !== "string") return;
-  if (state.projects.some((p) => p.path.toLowerCase() === picked.toLowerCase())) return toast(t("project.exists"));
-  state.projects.push({ id: crypto.randomUUID(), name: folderName(picked), path: picked });
-  save();
-  renderSidebar();
+  if (addingProject) return;
+  addingProject = true;
+  try {
+    const picked = await openDialog({ directory: true, multiple: false, title: t("project.pick") });
+    if (typeof picked !== "string") return;
+    const exists = await invoke<boolean>("project_exists", { path: picked, existing: state.projects.map(p => p.path) });
+    if (exists) return toast(t("project.exists"));
+    state.projects.push({ id: crypto.randomUUID(), name: folderName(picked), path: picked });
+    save();
+    renderSidebar();
+  } catch (e) {
+    toast(errorText(e));
+  } finally {
+    addingProject = false;
+  }
 }
 
 async function removeProject(p: Project) {
@@ -1798,10 +1837,18 @@ async function main() {
     if (isAppShortcut(e) && $("#overlay").hidden) handleGlobalKey(e);
   });
 
-  new ResizeObserver(() => requestAnimationFrame(fitVisible)).observe($("#stage"));
+  new ResizeObserver(fitSoon).observe($("#stage"));
 
   await listen<{ id: string; code: number | null; systemShutdown?: boolean }>("pty-exit", (e) => onExit(e.payload.id, e.payload.code, e.payload.systemShutdown));
   await listen<AgentEvent>("agent-event", (e) => onAgentEvent(e.payload));
+  const fileDrop = createFileDropHandler({
+    targets: () => runtimes.values(),
+    blocked: () => closingWindow || !$("#overlay").hidden,
+    platform: () => info.platform,
+    hint: ready => t(ready ? "drop.ready" : "drop.holdShift"),
+    invalid: () => toast(t("drop.invalid")),
+  });
+  await listen<FileDrag>("terminal-file-drag", e => fileDrop(e.payload));
 
   const prepareShutdown = createShutdownHandler(saves.flush,
     (id, saved) => invoke("shutdown_ready", { id, saved }),

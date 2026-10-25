@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  droppedFilePaths,
   savePanePreset,
   applyPanePreset,
   createDiscovery,
@@ -42,6 +43,15 @@ import {
   statusAfterStartupTimeout,
   type Session,
 } from "./model.ts";
+
+test("file drops quote complete paths without sending a command or Enter", () => {
+  assert.equal(droppedFilePaths(["C:\\My files\\žluťoučký.png", "C:\\O'Brien.txt"], "windows"), "'C:\\My files\\žluťoučký.png' 'C:\\O''Brien.txt' ");
+  assert.equal(droppedFilePaths(["/tmp/a b.txt", "/tmp/O'Brien $(echo hi).txt"], "linux"), "'/tmp/a b.txt' '/tmp/O'\\''Brien $(echo hi).txt' ");
+  assert.equal(droppedFilePaths(["/tmp/a"], "macos"), "'/tmp/a' ");
+  for (const paths of [[], [""], ["/safe", "/bad\nname"], ["/bad\rname"], ["/bad\x1b[201~name"], ["/bad\x00name"], ["/bad\x7fname"]]) {
+    assert.equal(droppedFilePaths(paths, "linux"), undefined);
+  }
+});
 
 const ID = "0b8c5a8e-4f3c-4d2a-9b8e-1c2d3e4f5a6b";
 test("confirmed OS shutdown preserves resume eligibility without disguising stopped processes", () => {
@@ -634,10 +644,14 @@ test("slow discovery cannot overlap or apply after removal, replacement, or a co
 });
 
 test("lookup errors release the lock for a later retry", async () => {
-  const d = createDiscovery();
+  let now = 0;
+  const d = createDiscovery(() => now);
   d.add("a", "/project");
   await assert.rejects(d.run(async () => { throw new Error("failed"); }));
   let applied = false;
+  await d.run(async (_, current) => { applied = current(); });
+  assert.equal(applied, false);
+  now = 3000;
   await d.run(async (_, current) => { applied = current(); });
   assert.equal(applied, true);
 });
@@ -701,4 +715,43 @@ test("five to eight grid panels fill two rows without overlap and retain resize 
   state.sessions = ids.map(id => ({id, projectId: "p", title: id, provider: "shell", createdAt: 1, lastUsedAt: 1}));
   state.ui.paneSlots = ids.slice(0, 8);
   assert.deepEqual(parseState(JSON.stringify(state)).state.ui.paneSlots, ids.slice(0, 8));
+});
+
+
+test("discovery backs off misses, caps delay, resets on restart and removes completed lookups", async () => {
+  let now = 0;
+  const d = createDiscovery(() => now);
+  d.add("a", "/a");
+  let calls = 0;
+  const miss = async () => { calls++; };
+  for (const delay of [3000, 6000, 12000, 24000, 30000, 30000]) {
+    await d.run(miss);
+    const count = calls;
+    now += delay - 1;
+    await d.run(miss);
+    assert.equal(calls, count);
+    now++;
+  }
+  assert.equal(calls, 6);
+  d.add("a", "/a");
+  await d.run(miss);
+  assert.equal(calls, 7, "restart bypasses old deadline");
+  d.add("b", "/b");
+  await d.run(async id => { assert.equal(id, "b"); d.delete(id); });
+  now += 30000;
+  await d.run(async id => { assert.equal(id, "a"); d.delete(id); });
+  await d.run(async () => assert.fail("completed entries must be removed"));
+});
+
+test("a slow stale lookup cannot postpone a replacement session", async () => {
+  const d = createDiscovery(() => 0);
+  d.add("a", "/a");
+  let release!: () => void;
+  const first = d.run(async () => new Promise<void>(resolve => { release = resolve; }));
+  d.add("a", "/a");
+  release();
+  await first;
+  let calls = 0;
+  await d.run(async () => { calls++; });
+  assert.equal(calls, 1);
 });

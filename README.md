@@ -6,9 +6,26 @@ It replaces the earlier Cursor extension. Your editor opens only when you ask fo
 
 The UI is available in English, Slovak and Czech (⚙ Settings → Language). English is the default.
 
+Launching Project Desk again brings the existing window forward, including when minimized.
+Only one instance may use a data directory at a time; development and production can run
+alongside each other because they use separate identifiers and state. An OS file lock also
+protects state when desktop instance discovery is unavailable (for example, Linux without
+a session bus). The lock is released on exit or crash; do not delete `instance.lock` manually.
+After upgrading from a version without this protection, close the older app before launching
+the new version.
+
 ## Features
 
+- **Insert file paths:** drag files or folders from your file manager onto a running
+  terminal, hold **Shift**, and release. Their full paths are pasted with quoting;
+  nothing is submitted until you press Enter. Multiple files are supported. In a
+  panel layout, the terminal under the pointer receives the paths. Dropping without
+  Shift, onto a stopped session, or outside a terminal inserts nothing. File contents
+  are not read or uploaded by Project Desk. Quoting follows the default platform shell
+  (PowerShell on Windows, POSIX shells on macOS/Linux); custom shells may need adjustment.
+
 ### Projects and sessions
+- Adding a project compares directory identities using the filesystem, including symlink aliases and its actual case-sensitivity rules. Distinct `Project` and `project` directories can be added separately on case-sensitive filesystems. Unavailable old paths do not block adding another project; existing saved paths are preserved.
 - **Import existing conversations:** open the project's **+ ▾** menu and choose **Import existing conversation…**. Claude and Codex list saved conversation titles, IDs and file modification dates for that project. Claude uses saved custom/AI titles and Codex uses its local title index; sessions without a saved title remain labelled as untitled. Selecting a named conversation pre-fills the import name. AGY offers the last project conversation from `~/.gemini/antigravity-cli/cache/last_conversations.json`; its date describes the cache file. All three support pasting a UUID and entering a session name. Imported sessions remain stopped until you explicitly start them; close the original agent first. Already assigned conversations cannot be imported twice. No conversation text is copied or displayed.
 - **Repair a missing conversation ID:** open a session's **ⓘ → Link conversation…** and choose or paste the ID actually open in that terminal. This changes tracking and future resume without restarting or switching the running agent. IDs entered manually are format-checked; the agent verifies existence when resumed. For older AGY conversations, use the ID from its resume command; the local cache is not a complete history. See [AGY resume documentation](https://www.agy.dev/docs/cli/commands/resume).
 - Projects live in the sidebar. Each project row has **+** to start your default session and **▾** to choose another provider, plus **↗** open in editor, **☆** pin and **✕** remove. Set the default in Settings: Claude (initial default), Codex, Antigravity or Shell. The dropdown shows the other providers and supports arrow keys and Escape.
@@ -18,6 +35,8 @@ The UI is available in English, Slovak and Czech (⚙ Settings → Language). En
 - When a process exits, its terminal output stays visible with the exit code and a **Start again** button. Stopped sessions stay stopped after an app restart; terminal output itself is not saved to disk.
 
 ### Agent status
+Session metadata is scanned incrementally with fixed-size buffers. Large histories may take several polling cycles to catch up; historical completion events do not produce notifications. Conversation text is not retained by the tracker. Tracking metadata for stopped or closed sessions is released during the next completed polling cycle; restarting rebuilds usage totals from the session file. Missing session files and unresolved new Codex conversations are retried with increasing delays (3, 6, 12, 24, then 30 seconds), using the existing polling cycles. A new launch resets this delay. Once found, normal status polling continues; a file created after a long idle period may take about 30 seconds plus one polling cycle to appear.
+
 Green **Done** means the agent is ready for another prompt (including initial readiness or an interrupted turn); yellow **Working** means a turn is in progress; red **Waiting for input** means a reported approval request or question. Shells retain their neutral **Running** status.
 Startup preserves status events received while launching the terminal. If no readiness event arrives within 15 seconds, the neutral **Status unavailable** label replaces **Starting**; later events still restore live tracking. Before resuming a Codex item with a missing conversation ID, Desk checks session metadata around the item's original creation time (5 seconds before to 60 seconds after), including older sessions. It saves and resumes the ID only when exactly one unclaimed, non-subagent conversation matches the project and time window. New-session discovery also requires a unique valid, non-subagent conversation. Overlapping unlinked launches in the same directory stay unlinked rather than guessing ownership; delayed discovery results are discarded after a close or restart. Ambiguous matches stay unlinked; Desk does not select whichever conversation was active most recently. Manually selecting an unrelated older conversation in the Codex picker still cannot be linked automatically.
 - **Claude Code:** status comes from Claude Code hooks: *Working*, *Waiting for input*, *Done*, *Agent exited*. The app starts Claude with `--settings` pointing at HTTP hooks on a local endpoint. Your `~/.claude` settings are never modified.
@@ -86,6 +105,8 @@ Supported editors: Cursor, VS Code, VS Code Insiders, Windsurf, VSCodium, Trae, 
 ### Updates
 Release builds check [GitHub Releases](https://github.com/dugynoo/project-desk/releases) shortly after start and then every 6 hours. **Check for updates** in ⚙ Settings is available on every supported Linux installation as well as Windows and macOS. Development builds do not check for releases.
 
+Checks refresh the available version even after an earlier update was offered. Concurrent checks share one request. Only one update confirmation/download/install can run at a time; checks during that operation leave its selected version unchanged. Replaced updater resources are released, and a failed check preserves the previous offer for retry.
+
 Windows, macOS and Linux AppImage installations offer the signed built-in updater. Other Linux installations show **New version available**, release notes and **Open downloads**. They never invoke the AppImage installer, request administrator privileges, or close terminals. Install the new package using the same package manager/format as the original installation and restart Desk afterwards. This also allows downstream distribution packages to keep their own update mechanism. Release checks use HTTPS, accept only newer stable semantic versions, and skip drafts/prereleases. The read-only Linux check uses GitHub's public API without an access token; a network error or rate limit is reported on manual checks and stays quiet in the background.
 
 ## Security
@@ -127,6 +148,8 @@ State writes are serialized and flushed before closing the window or installing 
 
 Frontend orchestration lives in `src/main.ts`; settings, dialogs, updates, and the save queue have separate modules. Pure session lifecycle and grid rules live in `src/model.ts`; native state recovery lives in `src-tauri/src/persistence.rs`.
 
+Status-driven sidebar/header refreshes are coalesced into one animation frame while every status event is still processed immediately. Layout changes, split handles and the stage resize observer share one scheduled terminal fit; neither scheduler runs an idle loop.
+
 ### Linux packages
 
 Download the package from [GitHub Releases](https://github.com/dugynoo/project-desk/releases):
@@ -154,7 +177,9 @@ git push --follow-tags
 ```
 `npm version` also writes the version to `src-tauri/Cargo.toml` and `Cargo.lock` (`scripts/sync-version.mjs`).
 
-The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb, rpm, Arch Linux x86_64 .pkg.tar.zst) and creates a draft release. The release notes list the commit subjects since the previous tag, and the app shows them when it offers the update. All supported installations discover the new release after publication. Windows, macOS and Linux AppImage use the built-in updater; Debian, RPM and Arch packages are upgraded through the package manager.
+Before running `npm version`, update `RELEASE_NOTES.md` with 3–5 short, user-facing bullets for the upcoming release. Mention new features, fixes and any essential upgrade instruction; avoid commit lists and implementation details. Commit the notes with the changes they describe. The workflow reads this file from the release tag, so rebuilds use the same summary.
+
+The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb, rpm, Arch Linux x86_64 .pkg.tar.zst) and creates a draft release using `RELEASE_NOTES.md`. The app displays the complete notes as plain text when it offers the update. All supported installations discover the new release after publication. Windows, macOS and Linux AppImage use the built-in updater; Debian, RPM and Arch packages are upgraded through the package manager.
 
 The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
 
@@ -171,3 +196,11 @@ UI strings live in `src/i18n.ts`. English defines the set of keys, and TypeScrip
 ## License
 
 [MIT](LICENSE)
+
+
+Terminal output uses bounded flow control: the PTY reader waits when unprocessed
+output reaches 256 KiB per terminal (plus at most one decoded read chunk).
+The frontend acknowledges roughly every 64 KiB after xterm has parsed it.
+Large log bursts slow the producer instead of growing an unbounded parser queue;
+normal small writes do not require an acknowledgement. Closing a session or
+shutting down releases waiting readers, and each launch has its own output ID.

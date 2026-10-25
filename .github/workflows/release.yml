@@ -38,7 +38,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0 # kvôli predošlému tagu v release notes
 
       - name: Tag matches app version
         shell: bash
@@ -49,17 +48,16 @@ jobs:
             exit 1
           fi
 
-      # Commity od predošlého tagu. Appka ich ukáže pri ponuke aktualizácie (riadky začínajúce „- “).
+      # Curated user-facing summary, committed before tagging the release.
       - name: Release notes
         id: notes
         shell: bash
         run: |
-          prev=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
+          test -s RELEASE_NOTES.md
           {
             echo "body<<EOF_NOTES"
-            echo "Windows, macOS and AppImage installs update themselves. Debian/Ubuntu: install the .deb with apt. Arch: install the .pkg.tar.zst with pacman -U. Fedora/openSUSE: install the .rpm with dnf/zypper. Project Desk checks for new versions on all these formats. Restart the app after updating a system package."
+            cat RELEASE_NOTES.md
             echo
-            git log --no-merges --format='- %s' "${prev:+$prev..}$RELEASE_TAG" | grep -Ev '^- chore: release [0-9]' || true
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
 

@@ -1,6 +1,21 @@
 //! Súbor z výstupu terminálu: otvoriť v predvolenej aplikácii systému alebo ukázať v priečinku.
 use std::path::Path;
 
+/// Compare directory identities, respecting the actual filesystem's case rules
+/// and aliases. Keep only the selected handle and one candidate open at a time.
+pub fn project_exists(path: &str, existing: &[String]) -> Result<bool, String> {
+    let selected = Path::new(path);
+    if !selected.is_absolute() || !selected.is_dir() {
+        return Err(format!("file.missing: {path}"));
+    }
+    let selected = same_file::Handle::from_path(selected)
+        .map_err(|e| format!("file.missing: {path}: {e}"))?;
+    Ok(existing.iter().any(|other| {
+        // Unavailable old projects must not prevent adding a reachable project.
+        other == path || same_file::Handle::from_path(other).is_ok_and(|handle| handle == selected)
+    }))
+}
+
 /// Prípony, ktoré by predvolená aplikácia spustila ako program, skript, inštalátor alebo skratku.
 /// Takýto súbor ide len do editora; nastavenie to neprepíše.
 const RUNNABLE: &[&str] = &[
@@ -58,6 +73,54 @@ pub fn reveal(path: &str) -> Result<(), String> {
 mod tests {
     use super::is_runnable;
     use std::path::Path;
+
+    struct Fixture(std::path::PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("project-desk-path-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self, name: &str) -> String {
+            self.0.join(name).to_str().unwrap().to_owned()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    #[test]
+    fn projects_follow_filesystem_case_rules_and_ignore_missing_old_paths() {
+        let f = Fixture::new();
+        let upper = f.path("Project");
+        let lower = f.path("project");
+        std::fs::create_dir(&upper).unwrap();
+        let same = match std::fs::create_dir(&lower) {
+            Ok(()) => false,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => true,
+            Err(e) => panic!("cannot create fixture: {e}"),
+        };
+        assert_eq!(super::project_exists(&lower, std::slice::from_ref(&upper)).unwrap(), same);
+        assert!(super::project_exists(&upper, std::slice::from_ref(&upper)).unwrap());
+        assert!(super::project_exists(&f.path("Project/."), std::slice::from_ref(&upper)).unwrap());
+        assert!(!super::project_exists(&upper, &[f.path("missing")]).unwrap());
+        assert!(super::project_exists(&f.path("missing"), &[]).is_err());
+        let file = f.path("file");
+        std::fs::write(&file, b"").unwrap();
+        assert!(super::project_exists(&file, &[]).is_err());
+        assert!(super::project_exists(".", &[]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_symlink_is_the_same_directory() {
+        let f = Fixture::new();
+        let original = f.path("original");
+        let alias = f.path("alias");
+        std::fs::create_dir(&original).unwrap();
+        std::os::unix::fs::symlink(&original, &alias).unwrap();
+        assert!(super::project_exists(&alias, &[original]).unwrap());
+    }
 
     #[test]
     fn documents_open_programs_do_not() {

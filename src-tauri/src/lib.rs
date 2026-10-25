@@ -11,6 +11,8 @@ mod persistence;
 mod usage;
 mod shutdown;
 mod updates;
+mod instance;
+mod file_drop;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -44,6 +46,7 @@ struct AppInfo {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SpawnArgs {
+    output_id: String,
     provider: Option<String>,
     id: String,
     cwd: String,
@@ -92,7 +95,7 @@ fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     args: SpawnArgs,
-    on_output: Channel<String>,
+    on_output: Channel<pty::OutputChunk>,
 ) -> Result<(), String> {
     if !std::path::Path::new(&args.cwd).is_dir() {
         return Err(format!("project.missingFolder: {}", args.cwd));
@@ -110,6 +113,7 @@ fn pty_spawn(
     }
     let req = SpawnRequest {
         id: args.id,
+        output_id: args.output_id,
         cwd: args.cwd,
         command: args.command,
         shell: args.shell.filter(|s| !s.trim().is_empty()),
@@ -118,6 +122,16 @@ fn pty_spawn(
         rows: args.rows,
     };
     state.pty.spawn(app, req, on_output)
+}
+
+#[tauri::command]
+fn pty_output_ack(state: State<'_, AppState>, output_id: String, through: u64) {
+    state.pty.acknowledge_output(&output_id, through);
+}
+
+#[tauri::command]
+fn pty_output_cancel(state: State<'_, AppState>, output_id: String) {
+    state.pty.cancel_output(&output_id);
 }
 
 #[tauri::command]
@@ -183,6 +197,12 @@ async fn reveal_file(path: String) -> Result<(), String> {
     files::reveal(&path)
 }
 
+#[tauri::command]
+async fn project_exists(path: String, existing: Vec<String>) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || files::project_exists(&path, &existing))
+        .await.map_err(|e| e.to_string())?
+}
+
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
 #[tauri::command]
 fn resolve_file(cwd: String, candidate: String) -> Option<String> {
@@ -202,16 +222,22 @@ fn resolve_file(cwd: String, candidate: String) -> Option<String> {
     p.is_file().then(|| p.to_string_lossy().into_owned())
 }
 
+#[tauri::command]
+async fn agent_retain(state: State<'_, AppState>, active_ids: Vec<String>) -> Result<(), String> {
+    let watcher = state.usage.clone();
+    tauri::async_runtime::spawn_blocking(move || watcher.retain(&active_ids)).await.map_err(|e| e.to_string())
+}
+
 /// Tokeny a stav agenta z jeho session súboru.
 #[tauri::command]
-async fn agent_poll(state: State<'_, AppState>, provider: String, agent_id: String) -> Result<Option<usage::Poll>, String> {
+async fn agent_poll(state: State<'_, AppState>, provider: String, agent_id: String, generation: u64) -> Result<Option<usage::Poll>, String> {
     let provider = match provider.as_str() {
         "claude" => usage::Provider::Claude,
         "codex" => usage::Provider::Codex,
         _ => return Ok(None),
     };
     let watcher = state.usage.clone();
-    tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id)).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id, generation)).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -245,13 +271,29 @@ pub fn run() {
         eprintln!("Orphan guard is off, terminals may outlive a crash: {e}");
     }
     let app = tauri::Builder::default()
+        // Must run before other plugins and before hooks or state are opened.
+        // The bundle identifier keeps development and production independent.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                if window.is_minimized().unwrap_or(false) {
+                    let _ = window.unminimize();
+                }
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_webview_event(file_drop::on_event)
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
+            // The plugin can fail open without D-Bus on Linux. The file lock
+            // also protects the same directory across separate login sessions.
+            let lock = instance::DataLock::acquire(&config_dir)?;
+            app.resources_table().add(lock);
             let hooks = match hooks::start(app.handle().clone(), &config_dir) {
                 Ok(h) => Some(h),
                 Err(e) => {
@@ -278,6 +320,8 @@ pub fn run() {
             shutdown_pending,
             shutdown_ready,
             pty_spawn,
+            pty_output_ack,
+            pty_output_cancel,
             pty_write,
             pty_resize,
             pty_kill,
@@ -285,12 +329,14 @@ pub fn run() {
             open_file_default,
             prepare_update,
             reveal_file,
+            project_exists,
             list_editors,
             resolve_file,
             find_codex_session,
             recover_codex_session,
             list_conversations,
-            agent_poll
+            agent_poll,
+            agent_retain
         ])
         .build(tauri::generate_context!())
         .expect("Project Desk failed to start");
