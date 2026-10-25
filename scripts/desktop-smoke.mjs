@@ -56,20 +56,37 @@ let app, browser, page, exit;
 const errors = [];
 async function launch() {
   const port = await freePort();
-  const env = { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` };
+  const env = { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+    WEBVIEW2_USER_DATA_FOLDER: join(fixture, 'webview-profile') };
   delete env.NO_COLOR;
   app = spawn(executable, [], { cwd: fixture, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   exit = once(app, 'exit');
   app.stdout.on('data', data => process.stdout.write(data));
   app.stderr.on('data', data => process.stderr.write(data));
-  const deadline = Date.now() + 30_000;
-  let endpoint;
+  const deadline = Date.now() + 60_000;
+  let endpoint, connectionError;
   while (Date.now() < deadline) {
     if (app.exitCode !== null) throw Error(`App exited at startup: ${app.exitCode}`);
-    try { endpoint = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) })).json(); break; } catch {}
+    try { endpoint = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) })).json(); break; } catch (error) { connectionError = String(error); }
     await new Promise(r => setTimeout(r, 100));
   }
-  if (!endpoint) throw Error('WebView2 debugging endpoint did not start');
+  if (!endpoint) {
+    const diagnostics = await promisify(execFile)(state.settings.shell, ['-NoProfile', '-NonInteractive', '-Command', `
+      Get-Process -Id $env:PROJECT_DESK_SMOKE_PID | Select-Object Id, Responding, MainWindowTitle, SessionId | Format-List
+      Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'msedgewebview2.exe' -or $_.ProcessId -eq $env:PROJECT_DESK_SMOKE_PID } | Select-Object Name, ProcessId, ParentProcessId, CommandLine | Format-List
+      Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -AssemblyName System.Drawing
+      $bounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+      $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+      $graphics = [Drawing.Graphics]::FromImage($bitmap)
+      $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+      $bitmap.Save($env:PROJECT_DESK_SMOKE_SCREENSHOT)
+      $graphics.Dispose(); $bitmap.Dispose()
+    `], { windowsHide: true, timeout: 15_000, env: { ...process.env,
+      PROJECT_DESK_SMOKE_PID: String(app.pid), PROJECT_DESK_SMOKE_SCREENSHOT: join(artifacts, 'startup.png') } }).catch(error => ({ stdout: String(error) }));
+    await writeFile(join(artifacts, 'startup.txt'), diagnostics.stdout);
+    throw Error(`WebView2 debugging endpoint did not start: ${connectionError}`);
+  }
   browser = await chromium.connectOverCDP(endpoint.webSocketDebuggerUrl, { timeout: 15_000 });
   browser.contexts()[0].setDefaultTimeout(15_000);
   page = browser.contexts()[0].pages()[0] || await browser.contexts()[0].waitForEvent('page');
