@@ -23,8 +23,12 @@ const fixture = await mkdtemp(join(tmpdir(), 'project-desk-smoke-'));
 const identifier = `eu.effistream.projectdesk.smoke${Date.now()}.dev`;
 const stateDir = join(process.env.APPDATA, identifier);
 const config = join(fixture, 'tauri.json');
+const debugPort = await freePort();
 await writeFile(config, JSON.stringify({ identifier, productName: 'Project Desk smoke', app: {
-  windows: [{ title: identifier, width: 1200, height: 800 }],
+  // Elevated CI hosts ignore browser flags from environment variables. Pass
+  // them through the generated test config, never the shipped configuration.
+  windows: [{ title: identifier, width: 1200, height: 800,
+    additionalBrowserArgs: `--remote-debugging-port=${debugPort}` }],
 } }));
 await writeFile(join(artifacts, 'fixture.json'), JSON.stringify({ fixture, stateDir, identifier }, null, 2));
 console.log(`Isolated fixture: ${fixture}\nIsolated state: ${stateDir}`);
@@ -55,8 +59,8 @@ async function freePort() {
 let app, browser, page, exit;
 const errors = [];
 async function launch() {
-  const port = await freePort();
-  const env = { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+  const port = debugPort;
+  const env = { ...process.env,
     WEBVIEW2_USER_DATA_FOLDER: join(fixture, 'webview-profile') };
   delete env.NO_COLOR;
   app = spawn(executable, [], { cwd: fixture, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
