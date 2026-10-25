@@ -5,6 +5,11 @@ use instance::DataLock;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
+// On Unix a concurrently spawned child can briefly inherit another test's
+// open lock across fork, until exec closes CLOEXEC descriptors. Do not let
+// that unrelated child keep the normal-cleanup test's lock alive.
+static PROCESS_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct TempDir(std::path::PathBuf);
 impl TempDir {
     fn new() -> Self {
@@ -19,6 +24,7 @@ impl Drop for TempDir {
 
 #[test]
 fn separate_process_is_blocked_and_crash_releases_lock() {
+    let _serial = PROCESS_TEST.lock().unwrap();
     const DIR_ENV: &str = "PROJECT_DESK_LOCK_TEST_DIR";
     if let Some(dir) = std::env::var_os(DIR_ENV) {
         let _lock = DataLock::acquire(std::path::Path::new(&dir)).unwrap();
@@ -52,6 +58,7 @@ fn separate_process_is_blocked_and_crash_releases_lock() {
 
 #[test]
 fn independent_directories_and_normal_cleanup_allow_restart() {
+    let _serial = PROCESS_TEST.lock().unwrap();
     let dir = TempDir::new();
     let prod = dir.0.join("production");
     let dev = dir.0.join("development");
