@@ -1,3 +1,6 @@
+import { createBranches } from "./branches.ts";
+import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
+import { normalizeFontSize, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
 import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
@@ -303,7 +306,7 @@ function createRuntime(s: Session): Runtime {
 
   const term = new Terminal({
     fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
-    fontSize: 13,
+    fontSize: state.settings.fontSize,
     cursorBlink: true,
     scrollback: 5000,
     allowProposedApi: true,
@@ -323,7 +326,7 @@ function createRuntime(s: Session): Runtime {
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
     const mod = e.ctrlKey || e.metaKey;
-    if (isAppShortcut(e)) return handleGlobalKey(e);
+    if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
     // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
     if (mod && e.key.toLowerCase() === "c" && term.hasSelection()) {
       void navigator.clipboard.writeText(term.getSelection());
@@ -836,6 +839,8 @@ function select(id: string, focus = true) {
   if (state.ui.grid) zoomedId = state.ui.paneSlots.includes(id) ? (zoomedId === id ? id : undefined) : id;
   if (attentionOnly && !ATTENTION.has(statusOf(id))) attentionOnly = false;
   state.ui.activeSessionId = id;
+  const selectedProject = project(s.projectId);
+  if (selectedProject) refreshBranches(true, [selectedProject.path]);
   s.lastUsedAt = Date.now();
   unread.delete(id);
   readAttention(state, id);
@@ -1195,7 +1200,13 @@ function startProjectDrag(e: PointerEvent, p: Project, box: HTMLElement) {
 
 let closeSessionMenu: (() => void) | undefined;
 
+const branches = createBranches(path => invoke<string | null>("project_branch", { path }), () => renderSidebar());
+function refreshBranches(revisit = false, paths = state.projects.map(p => p.path)) {
+  branches.configure(state.settings.showGitBranch, state.projects.map(p => p.path));
+  branches.refresh(paths, revisit);
+}
 function renderSidebar() {
+  refreshBranches();
   if (projectDrag) return;
   closeSessionMenu?.();
   closeSessionMenu = undefined;
@@ -1239,12 +1250,18 @@ function renderSidebar() {
       iconButton("✕", t("project.remove"), () => void removeProject(p)),
     );
     const name = el("span", "name", p.name);
+    const branch = branches.get(p.path);
+    if (branch) {
+      name.append(el("span", "git-branch", " · " + branch));
+      name.title = p.name + " · " + branch;
+    }
     if (p.pinned) name.prepend(el("span", "pin", "★ "));
     row.append(el("span", "chev", p.collapsed ? "▸" : "▾"), name, actions);
     row.addEventListener("pointerdown", (e) => startProjectDrag(e, p, box));
     row.addEventListener("click", () => {
       if (projectDrag?.moved) return;
       p.collapsed = !p.collapsed;
+      if (!p.collapsed) refreshBranches(true, [p.path]);
       save();
       renderSidebar();
     });
@@ -1736,7 +1753,7 @@ function applyLanguage() {
 const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, saves.flush, () => info.automaticUpdates);
 const showSettings = createSettings(
   () => state.settings,
-  (draft, langChanged) => { state.settings = draft; save(); if (langChanged) applyLanguage(); else renderSidebar(); },
+  (draft, langChanged) => { state.settings = draft; applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); refreshShortcutHints(); },
   modal, toast, checkUpdate, installUpdate,
 );
 const openSettings = () => showSettings(info);
@@ -1744,52 +1761,75 @@ const openSettings = () => showSettings(info);
 
 // ---------- klávesy, resizer, štart ----------
 
-/** Číslo z Ctrl+1–9. Podľa `code`, lebo na slovenskej klávesnici je v hornom rade `+ľščťžýáí`. */
-function digitOf(e: KeyboardEvent): number | undefined {
-  const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
-  return m ? Number(m[1]) : undefined;
-}
-
-/** Ctrl+K, Ctrl+G, Ctrl+1–9, Ctrl+Shift+F a Ctrl+Shift+T patria aplikácii, nie procesu v termináli. */
-function isAppShortcut(e: KeyboardEvent): boolean {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
-  const key = e.key.toLowerCase();
-  return e.shiftKey ? key === "f" || key === "t" || key === "a" || key === "enter" : key === "k" || key === "g" || digitOf(e) !== undefined;
-}
-
-function handleGlobalKey(e: KeyboardEvent): boolean {
-  const key = e.key.toLowerCase();
-  const n = digitOf(e);
-  if (n !== undefined && !e.shiftKey) {
-    e.preventDefault();
-    const s = sessionByNumber(state, n);
-    const p = s && state.projects.find((x) => x.id === s.projectId);
-    if (p?.collapsed) p.collapsed = false;
-    if (s) select(s.id);
-    return false;
+function applyFontSize() {
+  for (const rt of runtimes.values()) {
+    if (rt.term.options.fontSize !== state.settings.fontSize) rt.term.options.fontSize = state.settings.fontSize;
   }
-  if (e.shiftKey) {
-    e.preventDefault();
-    if (key === "enter") { if (state.ui.activeSessionId) togglePaneZoom(zoomedId ?? state.ui.activeSessionId); }
-    else if (key === "a") jumpAttention();
-    else if (key === "t") openTemplates();
-    else if (key === "f") {
-      const rt = runtimes.get(state.ui.activeSessionId ?? "");
-      if (rt) openSearch(rt);
+  fitSoon();
+}
+function changeFontSize(value: number) {
+  const size = normalizeFontSize(value);
+  if (size === state.settings.fontSize) return;
+  state.settings.fontSize = size;
+  applyFontSize();
+  save();
+}
+function appActions(): PaletteAction[] {
+  const active = session(state.ui.activeSessionId ?? "");
+  const p = active ? project(active.projectId) : undefined;
+  const rt = runtimes.get(state.ui.activeSessionId ?? "");
+  const run: Partial<Record<ActionId, () => void>> = {
+    fontIncrease: () => changeFontSize(state.settings.fontSize + 1),
+    fontDecrease: () => changeFontSize(state.settings.fontSize - 1),
+    fontReset: () => changeFontSize(FONT_DEFAULTS.fontSize),
+    palette: openPalette, switch: quickSwitch, grid: toggleGrid, templates: openTemplates,
+    attention: jumpAttention, search: () => { if (rt) openSearch(rt); },
+    zoom: () => { if (active) togglePaneZoom(zoomedId ?? active.id); },
+    settings: openSettings, shortcuts: () => showSettings(info, true),
+    layouts: () => showSavedLayouts(state, modal, save, restorePaneLayout),
+    notifications: notificationCenter.show, history: showClosedSessions,
+    editor: () => { if (p) openEditor(p.path); }, addProject: () => void addProject(),
+  };
+  for (const provider of ["claude", "codex", "antigravity", "shell"] as const)
+    run[provider] = () => { if (p) void createSession(p, provider); };
+  return ACTION_IDS.map(id => {
+    if (id.startsWith("session")) {
+      const s = sessionByNumber(state, Number(id.slice(7)));
+      return { id, enabled: !!s, run: () => {
+        if (!s) return;
+        const target = project(s.projectId); if (target) target.collapsed = false;
+        select(s.id);
+      } };
     }
-    return false;
+    const needsProject = ["editor", "claude", "codex", "antigravity", "shell"].includes(id);
+    return { id, enabled: needsProject ? !!p : id === "search" ? !!rt : id === "zoom" ? !!active : true, run: run[id]! };
+  });
+}
+function openPalette() {
+  const active = session(state.ui.activeSessionId ?? "");
+  const p = active ? project(active.projectId) : undefined;
+  showPalette(modal, appActions().filter(a => a.id !== "palette"), state.settings.shortcuts, info.platform === "macos",
+    p ? t("actions.context", { name: p.name }) : t("actions.noProject"));
+}
+function isAppShortcut(e: KeyboardEvent): boolean {
+  return shortcutAction(e, state.settings.shortcuts) !== undefined;
+}
+function handleGlobalKey(e: KeyboardEvent): boolean {
+  const id = shortcutAction(e, state.settings.shortcuts);
+  if (!id) return true;
+  e.preventDefault(); e.stopPropagation();
+  if (!e.repeat) {
+    const action = appActions().find(a => a.id === id);
+    if (action?.enabled) action.run();
   }
-  if (key === "k") {
-    e.preventDefault();
-    quickSwitch();
-    return false;
+  return false;
+}
+function refreshShortcutHints() {
+  for (const [selector, id] of Object.entries({ "#btn-palette": "palette", "#btn-switch": "switch", "#btn-grid": "grid", "#btn-templates": "templates" })) {
+    const button = document.querySelector<HTMLElement>(selector);
+    const binding = bindingLabel(bindingFor(id as ActionId, state.settings.shortcuts), info.platform === "macos");
+    if (button) { button.title = actionLabel(id as ActionId) + (binding ? ` (${binding})` : ""); button.setAttribute("aria-label", button.title); }
   }
-  if (key === "g") {
-    e.preventDefault();
-    toggleGrid();
-    return false;
-  }
-  return true;
 }
 
 function setupResizer() {
@@ -1828,6 +1868,8 @@ async function main() {
 
   setupResizer();
   $("#btn-add-project").onclick = () => void addProject();
+  $("#btn-palette").onclick = openPalette;
+  refreshShortcutHints();
   $("#btn-switch").onclick = quickSwitch;
   $("#btn-grid").onclick = toggleGrid;
   $("#btn-settings").onclick = openSettings;
@@ -1870,6 +1912,7 @@ async function main() {
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
+      refreshBranches(true);
       let changed = false;
       for (const id of visibleIds()) {
         unread.delete(id);

@@ -1,9 +1,10 @@
+import { editShortcuts } from "./actions.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { el } from "./dom.ts";
 import { cliChecks } from "./cli-check.ts";
 import { t, errorText, LANGUAGES } from "./i18n.ts";
-import { CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
+import { MIN_FONT_SIZE, MAX_FONT_SIZE, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
 
 interface SettingsInfo { platform: string; hooksEnabled: boolean; stateFile: string; updates: boolean }
@@ -86,8 +87,9 @@ export function createSettings(
   }
 
 
-  function openSettings(info: SettingsInfo) {
+  function openSettings(info: SettingsInfo, keyboard = false) {
     const st = getSettings();
+    let shortcuts = { ...st.shortcuts };
     modal(
       (box, close, signal) => {
         const field = (label: string, value: string, placeholder = "") => {
@@ -99,6 +101,30 @@ export function createSettings(
           return input;
         };
         box.append(el("h3", "", t("settings.title")));
+        const keys = el("button", "", t("actions.shortcuts"));
+        keys.id = "edit-shortcuts";
+        keys.onclick = () => editShortcuts(box, shortcuts, info.platform === "macos", value => { shortcuts = value; });
+        box.append(keys);
+        const display = el("section", "display-settings");
+        display.append(el("h4", "", t("settings.display")));
+        box.append(display);
+        const fontSize = el("input");
+        fontSize.id = "terminal-font-size";
+        fontSize.type = "number";
+        fontSize.min = String(MIN_FONT_SIZE);
+        fontSize.max = String(MAX_FONT_SIZE);
+        fontSize.step = "1";
+        fontSize.value = String(st.fontSize);
+        const fontLabel = el("label", "", t("settings.fontSize"));
+        fontLabel.htmlFor = fontSize.id;
+        display.append(fontLabel, fontSize);
+        const gitBranch = el("input");
+        gitBranch.type = "checkbox";
+        gitBranch.id = "show-git-branch";
+        gitBranch.checked = st.showGitBranch;
+        const gitLabel = el("label", "check");
+        gitLabel.append(gitBranch, document.createTextNode(t("settings.gitBranch")));
+        display.append(gitLabel, el("div", "note", t("settings.gitBranchNote")));
         const language = el("select");
         for (const l of LANGUAGES) language.append(new Option(l.label, l.id, false, l.id === st.language));
         box.append(el("label", "", t("settings.language")), language);
@@ -164,7 +190,11 @@ export function createSettings(
         box.append(actions);
         cancel.onclick = close;
         save_.onclick = () => {
+          if (!fontSize.value || !fontSize.reportValidity()) { fontSize.focus(); return; }
           const draft = settingsDraft(st, {
+            fontSize: Number(fontSize.value),
+            showGitBranch: gitBranch.checked,
+            shortcuts,
             defaultProvider: defaultProvider.value as Provider,
             antigravityCommand: antigravity.value.trim() || "agy",
             claudeCommand: claude.value.trim() || "claude",
@@ -181,7 +211,7 @@ export function createSettings(
           commit(draft, langChanged);
           close();
         };
-        claude.focus();
+        if (keyboard) keys.click(); else claude.focus();
       },
       () => {},
     );

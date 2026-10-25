@@ -205,3 +205,16 @@ button.icon.on { color: var(--accent); }
 .cli-checks { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; overflow-wrap: anywhere; }
 .cli-checks button { margin-top: 6px; padding: 6px 10px; cursor: pointer; }
 .cli-checks button:disabled { opacity: .5; cursor: default; }
+
+.palette-list, .shortcut-list { max-height: 48vh; overflow-y: auto; margin: 12px 0; }
+.palette-option { display: flex; justify-content: space-between; gap: 16px; padding: 10px; cursor: pointer; border-radius: 4px; }
+.palette-option[aria-selected="true"], .palette-option:hover { background: #2a3444; }
+.palette-option kbd { white-space: nowrap; color: #aab4c4; }
+.shortcut-row { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(100px, 140px) auto auto; gap: 6px; align-items: center; padding: 6px 0; }
+.shortcut-row button { padding: 6px; }
+.shortcut-record[data-recording="true"] { outline: 2px solid #7aa2f7; }
+@media (max-width: 550px) { .shortcut-row { grid-template-columns: 1fr auto auto; } .shortcut-row > span { grid-column: 1 / -1; } }
+
+.project-row .git-branch { color: var(--muted); font-weight: 400; }
+.display-settings { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 12px; }
+.display-settings h4 { margin: 12px 0 8px; }

@@ -4,6 +4,7 @@ mod cli;
 mod conversations;
 mod editors;
 mod files;
+mod git;
 mod hooks;
 pub mod hook_relay;
 mod job;
@@ -314,6 +315,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            git::project_branch,
             app_info,
             updates::check_release,
             load_state,

@@ -86,6 +86,48 @@ Status support follows the [documented hooks](https://www.antigravity.google/doc
 ### Prompt templates
 Press **✦** or **Ctrl+Shift+T**. Templates can be shared by all projects or belong to one project. A template is pasted into the active session as a single bracketed paste and can optionally be sent right away.
 
+### Command palette and keyboard shortcuts
+
+Open the command palette with **Ctrl+Shift+P** (Cmd+Shift+P on macOS), or the
+**>_** button in the sidebar header. Search actions and use arrows/Enter or click
+a result. Project actions target the project of the selected session, shown in
+the palette; unavailable actions are omitted.
+
+**Settings → Keyboard shortcuts** opens a separate settings view. Click a binding,
+then press the new combination. You can disable bindings, reset one, or reset all.
+Duplicate bindings are rejected. Return to Settings and **Save** to apply changes;
+Cancel leaves saved bindings unchanged. Other unsaved settings survive switching
+between these views. Existing settings retain the default shortcuts.
+
+Bindings support Ctrl/Cmd plus a letter, digit, F1–F12, Enter, plus or minus, optionally with
+Shift. Ctrl and Cmd are equivalent for app actions. Number-row and numpad bindings
+work on localized keyboards. Clipboard and common close/undo combinations are
+reserved; other app bindings take priority over terminal input. OS-reserved
+shortcuts may not reach the app. Editing bindings does not change shortcuts inside
+Claude/Codex or register system-wide hotkeys. App shortcuts are suspended in dialogs.
+
+### Display settings
+
+Settings → Display includes terminal font size and an optional Git branch label
+beside project names (off by default). The full project and branch name is in
+the tooltip. Requires Git on PATH; non-repositories, detached HEAD and unavailable
+Git show no label. Nested folders, unborn branches and linked worktrees are supported.
+
+Branch lookups run on enabling, adding/opening projects, selecting sessions and
+returning to the app, with a short cache to coalesce repeated events. There is no
+background polling or file watcher; when disabled no new Git processes are started.
+A branch changed inside the terminal is refreshed on the next such interaction,
+not immediately. Probes run serially with a two-second timeout.
+
+### Terminal font size
+
+Settings controls the shared terminal font size (8–32 px, default 13 px).
+Ctrl/Cmd + plus (or equals) increases it, minus decreases it, and 0 resets it.
+These actions also appear in the command palette and can be remapped or disabled.
+Changes apply to all terminals and persist across restarts; Settings changes apply
+on Save. Numpad plus/minus work too. Localized digit-row session shortcuts retain
+their existing behavior.
+
 ### Terminal
 - **Saved layouts:** open **Saved layouts** in the sidebar to save a named snapshot of the panel mode, session assignments, order and sizes. Open a saved layout to switch arrangements without stopping running sessions or starting stopped ones. Missing sessions leave empty panels. Edit a saved name to rename it, explicitly overwrite it with the current panels, or delete the layout without closing any sessions. Snapshots and the current arrangement survive app restarts independently.
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.

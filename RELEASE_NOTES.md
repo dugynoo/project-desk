@@ -1,3 +1,3 @@
-- Fix Shift + drag and drop not inserting file paths into terminals.
-- Show installed Claude, Codex and Antigravity CLI versions in Settings.
-- Recheck CLI availability on demand, with timeouts and no background polling.
+- Add a command palette and customizable keyboard shortcuts in Settings.
+- Adjust terminal font size with shortcuts or Display settings.
+- Optionally show Git branches beside projects, with no background polling.

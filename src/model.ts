@@ -64,6 +64,9 @@ export interface Session {
 }
 
 export interface Settings {
+  showGitBranch: boolean;
+  fontSize: number;
+  shortcuts: Partial<Record<ActionId, string>>;
   defaultProvider: Provider;
   claudeCommand: string;
   antigravityCommand: string;
@@ -121,6 +124,9 @@ export interface PersistedState {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  showGitBranch: false,
+  fontSize: 13,
+  shortcuts: {},
   defaultProvider: "claude",
   claudeCommand: "claude --dangerously-skip-permissions",
   codexCommand: "codex --dangerously-bypass-approvals-and-sandbox",
@@ -236,9 +242,12 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
   state.notifications = state.notifications.slice(0, ATTENTION_HISTORY_LIMIT);
   if (isObj(data.settings)) {
     for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+      if (key === "shortcuts") continue;
       const v = data.settings[key];
       if (typeof v === typeof DEFAULT_SETTINGS[key]) (state.settings as unknown as Record<string, unknown>)[key] = v;
     }
+    state.settings.fontSize = normalizeFontSize(data.settings.fontSize);
+    state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
     if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
     if (typeof data.settings.editorId !== "string" && typeof data.settings.editorCommand === "string") {
@@ -768,4 +777,67 @@ export function createDiscovery(now: () => number = () => performance.now()) {
       } finally { busy = false; }
     },
   };
+}
+
+// App actions share one binding registry. Empty strings explicitly disable bindings.
+export const MIN_FONT_SIZE = 8;
+export const MAX_FONT_SIZE = 32;
+export function normalizeFontSize(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(value))) : 13;
+}
+
+export const ACTION_DEFAULTS = {
+  palette: 'Mod+Shift+P', switch: 'Mod+K', grid: 'Mod+G',
+  search: 'Mod+Shift+F', templates: 'Mod+Shift+T', attention: 'Mod+Shift+A', zoom: 'Mod+Shift+Enter',
+  session1: 'Mod+1', session2: 'Mod+2', session3: 'Mod+3', session4: 'Mod+4',
+  session5: 'Mod+5', session6: 'Mod+6', session7: 'Mod+7', session8: 'Mod+8', session9: 'Mod+9',
+  fontIncrease: 'Mod+Plus', fontDecrease: 'Mod+Minus', fontReset: 'Mod+0',
+  settings: '', shortcuts: '', layouts: '', notifications: '', history: '', editor: '',
+  addProject: '', claude: '', codex: '', antigravity: '', shell: '',
+} as const;
+export type ActionId = keyof typeof ACTION_DEFAULTS;
+export const ACTION_IDS = Object.keys(ACTION_DEFAULTS) as ActionId[];
+export type Shortcuts = Partial<Record<ActionId, string>>;
+export function bindingFor(id: ActionId, bindings: Shortcuts): string { return bindings[id] ?? ACTION_DEFAULTS[id]; }
+export function validBinding(value: unknown): value is string {
+  return typeof value === 'string' && (value === '' || /^Mod\+(Shift\+)?([A-Z0-9]|Plus|Minus|Enter|F(?:[1-9]|1[0-2]))$/.test(value)
+    && !['Mod+Shift+Plus', 'Mod+Shift+Minus', 'Mod+C', 'Mod+V', 'Mod+X', 'Mod+Q', 'Mod+W', 'Mod+Z', 'Mod+Shift+C', 'Mod+Shift+V'].includes(value));
+}
+export function shortcutConflict(bindings: Shortcuts): ActionId | undefined {
+  const seen = new Set<string>();
+  for (const id of ACTION_IDS) {
+    const value = bindingFor(id, bindings);
+    if (value && seen.has(value)) return id;
+    if (value) seen.add(value);
+  }
+}
+export function parseShortcuts(value: unknown): Shortcuts {
+  if (!isObj(value)) return {};
+  const result: Shortcuts = {};
+  for (const id of ACTION_IDS) if (validBinding(value[id])) result[id] = value[id];
+  // Added defaults must not override an older custom assignment.
+  for (const id of ['fontIncrease', 'fontDecrease', 'fontReset'] as const) {
+    if (result[id] === undefined && Object.values(result).includes(ACTION_DEFAULTS[id])) result[id] = '';
+  }
+  // Invalid saved collisions must never make dispatch depend on object order.
+  return shortcutConflict(result) ? {} : result;
+}
+export interface ShortcutEvent {
+  key: string; code: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean;
+  isComposing?: boolean; getModifierState?: (key: string) => boolean;
+}
+export function bindingFromEvent(e: ShortcutEvent): string | undefined {
+  if (e.isComposing || e.getModifierState?.('AltGraph') || e.altKey || !(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return;
+  // Symbol keys normalize Shift needed to type +; digit-row navigation stays layout-independent.
+  if (e.code === 'NumpadAdd' || e.code === 'Equal' || (e.key === '+' && !/^Digit/.test(e.code))) return 'Mod+Plus';
+  if (e.code === 'NumpadSubtract' || e.key === '-') return 'Mod+Minus';
+  const digit = /^(?:Digit|Numpad)([0-9])$/.exec(e.code);
+  const key = digit?.[1] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  const binding = `Mod+${e.shiftKey ? 'Shift+' : ''}${key}`;
+  return validBinding(binding) && binding ? binding : undefined;
+}
+export function shortcutAction(e: ShortcutEvent, bindings: Shortcuts): ActionId | undefined {
+  const binding = bindingFromEvent(e);
+  return binding ? ACTION_IDS.find(id => bindingFor(id, bindings) === binding) : undefined;
 }
