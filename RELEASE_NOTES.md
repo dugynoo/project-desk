@@ -1,5 +1,3 @@
-- Paste file paths into a terminal with Shift + drag and drop.
-- Keep terminals responsive during heavy output and reduce background session tracking work.
-- Prevent duplicate app instances and overlapping updates.
-- Fix project detection on case-sensitive filesystems and cleanup when switching dialogs.
-- Show complete release notes and refresh available updates correctly.
+- Fix Shift + drag and drop not inserting file paths into terminals.
+- Show installed Claude, Codex and Antigravity CLI versions in Settings.
+- Recheck CLI availability on demand, with timeouts and no background polling.

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { el } from "./dom.ts";
+import { cliChecks } from "./cli-check.ts";
 import { t, errorText, LANGUAGES } from "./i18n.ts";
 import { CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
@@ -113,6 +114,7 @@ export function createSettings(
         const antigravity = field(t("settings.antigravity"), st.antigravityCommand, "agy");
         box.append(el("div", "note", t("info.noteAntigravity")));
         const shell = field(t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
+        cliChecks(box, [claude, codex, antigravity], shell, signal);
         const editor = editorPicker(box, st, info, signal);
         const systemExts = field(t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
         box.append(el("div", "note", t("settings.systemOpenNote")));

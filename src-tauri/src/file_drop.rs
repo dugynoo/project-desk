@@ -1,6 +1,6 @@
 //! Sample modifiers at the native drop, before asynchronous frontend delivery.
 use serde::Serialize;
-use tauri::{DragDropEvent, Emitter, Webview, WebviewEvent};
+use tauri::{DragDropEvent, Emitter, Window, WindowEvent};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,9 +11,11 @@ struct FileDrag {
     shift: bool,
 }
 
-pub fn on_event(webview: &Webview, event: &WebviewEvent) {
-    if webview.label() != "main" { return; }
-    let WebviewEvent::DragDrop(event) = event else { return; };
+pub fn on_event(window: &Window, event: &WindowEvent) {
+    // Tauri routes WindowContent (our main WebviewWindow) drops through
+    // WindowEvent; WebviewEvent is only used for separate child webviews.
+    if window.label() != "main" { return; }
+    let WindowEvent::DragDrop(event) = event else { return; };
     let (kind, paths, position) = match event {
         DragDropEvent::Enter { paths, position } => ("enter", paths.as_slice(), Some(*position)),
         DragDropEvent::Over { position } => ("over", [].as_slice(), Some(*position)),
@@ -21,7 +23,7 @@ pub fn on_event(webview: &Webview, event: &WebviewEvent) {
         DragDropEvent::Leave => ("leave", [].as_slice(), None),
         _ => return,
     };
-    let _ = webview.emit("terminal-file-drag", FileDrag {
+    let _ = window.emit("terminal-file-drag", FileDrag {
         kind,
         // Do not turn non-Unicode filenames into a different, incorrect path.
         paths: paths.iter().map(|path| path.to_str().unwrap_or("").to_owned()).collect(),

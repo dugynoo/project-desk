@@ -1,5 +1,6 @@
 mod antigravity;
 mod codex;
+mod cli;
 mod conversations;
 mod editors;
 mod files;
@@ -287,7 +288,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .on_webview_event(file_drop::on_event)
+        .on_window_event(file_drop::on_event)
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             // The plugin can fail open without D-Bus on Linux. The file lock
@@ -331,6 +332,7 @@ pub fn run() {
             reveal_file,
             project_exists,
             list_editors,
+            cli::check_cli,
             resolve_file,
             find_codex_session,
             recover_codex_session,

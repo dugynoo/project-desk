@@ -202,3 +202,6 @@ button.icon.on { color: var(--accent); }
 .saved-layout-list { margin-top: 16px; }
 .saved-layout-row { border-top: 1px solid var(--line); padding: 12px 0; }
 .saved-layout-row .actions { flex-wrap: wrap; }
+.cli-checks { margin: 12px 0; padding: 10px; border: 1px solid var(--line); border-radius: 6px; overflow-wrap: anywhere; }
+.cli-checks button { margin-top: 6px; padding: 6px 10px; cursor: pointer; }
+.cli-checks button:disabled { opacity: .5; cursor: default; }

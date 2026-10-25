@@ -1,5 +1,13 @@
 # Project Desk
 
+Settings checks the installed Claude, Codex and Antigravity CLI versions on opening;
+use **Check CLI versions** to retry after changing a command or installing a CLI.
+Checks run locally via `--version` in the configured shell, with an eight-second
+timeout and no recurring background checks. Standard agent commands (including
+quoted executable paths and startup flags) are supported. Wrappers such as `npx`
+and custom shell syntax are marked as not automatically verifiable; this does not
+prevent launching sessions. The check does not verify sign-in or newer releases.
+
 A desktop app for running Claude Code, Codex, Antigravity CLI and plain shell sessions across many projects from one window. Each project lists its sessions with a live status, so you can see at a glance which agent is working, which one is done and which one is waiting for you.
 
 It replaces the earlier Cursor extension. Your editor opens only when you ask for it.
