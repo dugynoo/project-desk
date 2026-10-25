@@ -73,7 +73,7 @@ fn same_dir(a: &str, b: &str) -> bool {
 }
 
 /// RFC 3339 v UTC (`2026-10-21T18:06:23.297Z`) na milisekundy od epochy.
-fn parse_utc_ms(ts: &str) -> Option<u64> {
+pub(crate) fn parse_utc_ms(ts: &str) -> Option<u64> {
     let b = ts.as_bytes();
     if b.len() < 19 || b[4] != b'-' || b[10] != b'T' {
         return None;

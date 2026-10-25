@@ -52,7 +52,7 @@ export function createSettings(
       el("div", "note", t("editor.argsNote")),
     );
     const editorLabel = el("label", "", t("editor.label")); editorLabel.htmlFor = select.id;
-    box.append(editorLabel, select, note, custom);
+    box.append(editorLabel, select, el("div", "note", t("editor.externalNote")), note, custom);
 
     const sync = () => {
       custom.hidden = select.value !== CUSTOM_EDITOR;
@@ -90,6 +90,7 @@ export function createSettings(
         return { editorId: select.value, customEditorPath: st.customEditorPath, customEditorArgs: st.customEditorArgs };
       }
       const path = program.value.trim().replace(/^"(.*)"$/, "$1");
+      if (!path && select.options.length === 1 && !st.customEditorPath && st.editorId !== CUSTOM_EDITOR) return { editorId: st.editorId, customEditorPath: "", customEditorArgs: st.customEditorArgs };
       if (!path) return t("err.editor.needProgram");
       return { editorId: CUSTOM_EDITOR, customEditorPath: path, customEditorArgs: args.value.trim() || "%TARGET_PATH%" };
     };
@@ -196,9 +197,20 @@ export function createSettings(
         agents.append(el("div", "note", t("info.noteAntigravity")));
         const shell = field(agents, t("settings.shell"), st.shell, info.platform === "windows" ? "powershell.exe" : "$SHELL");
         cliChecks(agents, [claude, codex, antigravity], shell, signal);
+        const fileEditor = el("select");
+        fileEditor.id = "file-editor";
+        fileEditor.append(new Option(t("editor.builtin"), "builtin"), new Option(t("editor.external"), "external"));
+        fileEditor.value = st.fileEditor;
+        const fileLabel = el("label", "", t("editor.fileTarget")); fileLabel.htmlFor = fileEditor.id;
+        editors.append(fileLabel, fileEditor);
         const editor = editorPicker(editors, st, info, signal);
         const systemExts = field(editors, t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
         editors.append(el("div", "note", t("settings.systemOpenNote")));
+        const editorFont = field(editors, t("editor.fontSize"), String(st.editorFontSize));
+        editorFont.type = "number"; editorFont.min = String(MIN_FONT_SIZE); editorFont.max = String(MAX_FONT_SIZE); editorFont.step = "1";
+        const wrap = el("input"); wrap.type = "checkbox"; wrap.checked = st.editorWordWrap;
+        const wrapLabel = el("label", "check"); wrapLabel.append(wrap, document.createTextNode(t("editor.wordWrap")));
+        editors.append(wrapLabel);
         const notifLabel = el("label", "check");
         const notif = el("input");
         notif.type = "checkbox";
@@ -256,8 +268,14 @@ export function createSettings(
           if (!fontSize.value || !fontSize.checkValidity()) {
             activate(1); fontSize.focus(); fontSize.reportValidity(); return;
           }
+          if (!editorFont.value || !editorFont.checkValidity()) {
+            activate(3); editorFont.focus(); editorFont.reportValidity(); return;
+          }
           const draft = settingsDraft(st, {
             fontSize: Number(fontSize.value),
+            fileEditor: fileEditor.value as Settings["fileEditor"],
+            editorFontSize: Number(editorFont.value),
+            editorWordWrap: wrap.checked,
             showGitBranch: gitBranch.checked,
             shortcuts,
             defaultProvider: defaultProvider.value as Provider,

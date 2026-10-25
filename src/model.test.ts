@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  fileOpenTarget,
   backgroundStatus,
   droppedFilePaths,
   savePanePreset,
@@ -26,6 +27,7 @@ import {
   settingsDraft,
   emptyState,
   codexStatusAfter,
+  codexPollEvents,
   findFileRefs,
   formatTokens,
   moveProject,
@@ -44,6 +46,21 @@ import {
   statusAfterStartupTimeout,
   type Session,
 } from "./model.ts";
+
+test("Codex usage-only polls cannot invent completion or notifications", () => {
+  assert.deepEqual(codexPollEvents({ status: null, events: [] }), []);
+  assert.deepEqual(codexPollEvents({ status: "task_started", events: [] }), ["task_started"]);
+  assert.deepEqual(codexPollEvents({ status: "task_complete", events: ["task_started", "task_complete"] }), ["task_started", "task_complete"]);
+});
+
+test("Claude reports immediate permission requests and recovers after failed tools and API errors", () => {
+  const ev = (event: string) => ({ deskSessionId: "s", event });
+  assert.equal(statusAfter("working", ev("PermissionRequest")), "needs-you");
+  assert.equal(statusAfter("needs-you", ev("PostToolUseFailure")), "working");
+  assert.equal(statusAfter("working", ev("StopFailure")), "needs-you");
+  assert.equal(statusAfter("needs-you", ev("UserPromptSubmit")), "working");
+  assert.equal(statusAfter("working", ev("Stop")), "done");
+});
 
 test("file drops quote complete paths without sending a command or Enter", () => {
   assert.equal(droppedFilePaths(["C:\\My files\\žluťoučký.png", "C:\\O'Brien.txt"], "windows"), "'C:\\My files\\žluťoučký.png' 'C:\\O''Brien.txt' ");
@@ -852,4 +869,29 @@ test("text editor preserves BOM and line endings without silently normalizing mi
   assert.equal(textFileFormat("a\r\nb\n"), undefined);
   assert.equal(textFileFormat("a\0"), undefined);
   assert.equal(textFileFormat("a\rb"), undefined);
+});
+
+
+test("editor preferences migrate independently of the external editor and survive reload", () => {
+  const old = parseState(JSON.stringify({ settings: { editorId: "cursor" } })).state;
+  assert.equal(old.settings.fileEditor, "builtin");
+  assert.equal(old.settings.editorId, "cursor");
+  assert.equal(old.settings.editorFontSize, 13);
+  assert.equal(old.settings.editorWordWrap, false);
+  Object.assign(old.settings, { fileEditor: "external", editorFontSize: 18, editorWordWrap: true });
+  assert.deepEqual(parseState(JSON.stringify(old)).state.settings, old.settings);
+  const invalid = parseState(JSON.stringify({ settings: { fileEditor: "unknown", editorFontSize: 999, editorWordWrap: "yes" } })).state.settings;
+  assert.equal(invalid.fileEditor, "builtin");
+  assert.equal(invalid.editorFontSize, 32);
+  assert.equal(invalid.editorWordWrap, false);
+});
+
+test("file links use preferred editor with system-extension precedence", () => {
+  const settings = emptyState().settings;
+  assert.equal(fileOpenTarget("/project/main.ts", settings), "builtin");
+  settings.fileEditor = "external";
+  assert.equal(fileOpenTarget("/project/main.ts", settings), "external");
+  assert.equal(fileOpenTarget("/project/photo.PNG", settings), "system");
+  settings.systemOpenExts = "";
+  assert.equal(fileOpenTarget("/project/photo.PNG", settings), "external");
 });

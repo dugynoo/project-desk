@@ -7,11 +7,23 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
 import { el, $ } from "./dom.ts";
 import { t, errorText } from "./i18n.ts";
-import { textFileFormat } from "./model.ts";
+import { textFileFormat, type Settings } from "./model.ts";
 
 type Document = { path: string; text: string };
 export function createTextEditor(confirmDiscard: () => Promise<boolean>, external: (path: string) => void,
-  visibilityChanged: (visible: boolean) => void = () => {}) {
+  visibilityChanged: (visible: boolean) => void = () => {},
+  getSettings: () => Pick<Settings, "editorFontSize" | "editorWordWrap"> = () => ({ editorFontSize: 13, editorWordWrap: false }),
+  externalLabel: () => string = () => t("editor.external")) {
+  const appearance = new Compartment();
+  const appearanceExtensions = () => {
+    const settings = getSettings();
+    return [EditorView.theme({ "&": { fontSize: `${settings.editorFontSize}px` } }),
+      ...(settings.editorWordWrap ? [EditorView.lineWrapping] : [])];
+  };
+  function configure() {
+    view?.dispatch({ effects: appearance.reconfigure(appearanceExtensions()) });
+    outside.textContent = fallback.textContent = externalLabel();
+  }
   let view: EditorView | undefined;
   let document: Document | undefined;
   let savedDoc: Text | undefined;
@@ -25,7 +37,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
   const title = el("span", "text-editor-title");
   const saveButton = el("button", "", t("textEditor.save"));
   const reload = el("button", "", t("textEditor.reload"));
-  const outside = el("button", "", t("menu.openEditor"));
+  const outside = el("button", "", externalLabel());
+  const fallback = el("button", "", externalLabel());
+  fallback.hidden = true;
   const close = el("button", "", "×");
   close.setAttribute("aria-label", t("common.close"));
   const message = el("div", "text-editor-message");
@@ -37,7 +51,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     if (wasHidden) visibilityChanged(true);
   }
   bar.append(title, saveButton, reload, outside, close);
-  panel.append(bar, message, host);
+  panel.append(bar, message, fallback, host);
   const divider = el("div", "editor-divider");
   divider.hidden = true;
   divider.tabIndex = 0;
@@ -71,7 +85,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     title.textContent = (dirty() ? "● " : "") + (document?.path.split(/[\\/]/).at(-1) ?? "");
     title.title = document?.path ?? "";
     saveButton.disabled = busy || !dirty();
-    reload.disabled = outside.disabled = close.disabled = busy;
+    reload.disabled = busy || !document;
+    outside.disabled = busy || !document;
+    close.disabled = fallback.disabled = busy;
   }
   async function mayClose() {
     if (busy) return false;
@@ -96,6 +112,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     if (!force && document?.path === path && view) { view.focus(); return; }
     if (!await mayClose() || busy) return;
     busy = true; refresh();
+    fallback.hidden = true;
     try {
       const doc = await invoke<Document>("text_open", { path });
       const format = textFileFormat(doc.text);
@@ -105,7 +122,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
       const language = new Compartment();
       view = new EditorView({ parent: host, state: EditorState.create({
         doc: format.text,
-        extensions: [basicSetup, oneDark, language.of([]),
+        extensions: [basicSetup, oneDark, language.of([]), appearance.of(appearanceExtensions()),
           keymap.of([{ key: "Mod-s", run: () => { void save(); return true; } }]),
           EditorView.updateListener.of(update => { if (update.docChanged) refresh(); }),
           EditorView.contentAttributes.of({ "aria-label": doc.path }),
@@ -125,6 +142,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     } catch (e) {
       reveal();
       message.textContent = errorText(e);
+      fallback.textContent = externalLabel();
+      fallback.onclick = () => external(path);
+      fallback.hidden = false;
     } finally { busy = false; refresh(); }
   }
   saveButton.onclick = () => void save();
@@ -147,5 +167,5 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     } catch (e) { if (document === current) message.textContent = errorText(e); }
     finally { checking = false; }
   });
-  return { open, mayClose, pending: () => busy || dirty() };
+  return { open, configure, mayClose, pending: () => busy || dirty() };
 }

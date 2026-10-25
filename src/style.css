@@ -303,7 +303,7 @@ button.icon { min-width: 24px; min-height: 24px; }
 .text-editor-message { padding: 0 8px; font-size: 12px; overflow-wrap: anywhere; }
 .text-editor-message:not(:empty) { padding: 8px; }
 .text-editor-host { flex: 1; min-height: 0; overflow: hidden; }
-.text-editor .cm-editor { height: 100%; font-size: 13px; }
+.text-editor .cm-editor { height: 100%; }
 .text-editor .cm-scroller { overflow: auto; }
 .editor-divider { flex: 0 0 5px; cursor: col-resize; background: var(--line); touch-action: none; }
 .editor-divider:hover, .editor-divider:focus-visible { background: var(--accent); }

@@ -1,3 +1,3 @@
-﻿- Add a lightweight built-in text editor beside the terminal, with safe saves and automatic return to the grid.
-- Add opt-in Claude background sessions on Windows to preserve running work across app restarts.
-- Keep unsaved editor changes protected during closing and updates.
+- Add editor preferences for file links, font size and line wrapping.
+- Improve Claude status reporting and prevent stale Codex statuses after resume.
+- Refactor terminal/sidebar code and add desktop restart and crash-recovery checks.

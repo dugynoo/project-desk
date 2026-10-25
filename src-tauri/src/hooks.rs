@@ -16,7 +16,7 @@ pub const SETTINGS_ENV: &str = "PROJECT_DESK_HOOK_SETTINGS";
 pub const PORT_ENV: &str = "PROJECT_DESK_HOOK_PORT";
 pub const RELAY_ARG: &str = "--project-desk-session-start";
 
-const EVENTS: [&str; 6] = ["SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "SessionEnd"];
+pub const EVENTS: [&str; 9] = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"];
 const MAX_BODY: u64 = 1024 * 1024;
 
 #[derive(Clone, Serialize)]

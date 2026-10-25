@@ -44,3 +44,15 @@ jobs:
         working-directory: src-tauri
       - run: cargo test
         working-directory: src-tauri
+
+      - name: Native desktop smoke (Windows WebView2)
+        if: matrix.platform == 'windows-latest'
+        timeout-minutes: 10
+        run: npm run test:desktop
+
+      - name: Desktop smoke diagnostics
+        if: failure() && matrix.platform == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-windows
+          path: test-results/desktop/

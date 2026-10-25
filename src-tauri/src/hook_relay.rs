@@ -16,8 +16,7 @@ fn payload(input: &str) -> Option<String> {
 fn background_payload(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     uuid::Uuid::parse_str(v["session_id"].as_str()?).ok()?;
-    if !["SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "SessionEnd"]
-        .contains(&v["hook_event_name"].as_str()?) { return None; }
+    if !hooks::EVENTS.contains(&v["hook_event_name"].as_str()?) { return None; }
     let mut out = serde_json::Map::new();
     for key in ["session_id", "hook_event_name", "tool_name", "notification_type"] {
         if let Some(value) = v[key].as_str() { out.insert(key.into(), json!(value)); }
@@ -82,5 +81,19 @@ mod tests {
         assert!(payload("bad json").is_none());
         assert!(payload(&json!({"hook_event_name":"Stop", "session_id":id}).to_string()).is_none());
         assert!(payload(r#"{"hook_event_name":"SessionStart","session_id":"invalid"}"#).is_none());
+    }
+    #[test]
+    fn background_forwards_failure_and_permission_metadata_only() {
+        for event in ["PermissionRequest", "PostToolUseFailure", "StopFailure"] {
+            let input = json!({"hook_event_name":event,
+                "session_id":"11111111-1111-4111-8111-111111111111",
+                "tool_name":"Bash", "tool_input":{"command":"private"},
+                "error_details":"private", "last_assistant_message":"private"});
+            let output = background_payload(&input.to_string()).unwrap();
+            assert!(!output.contains("private"));
+            let output: Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(output["hook_event_name"], event);
+            assert_eq!(output["tool_name"], "Bash");
+        }
     }
 }

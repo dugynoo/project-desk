@@ -137,7 +137,7 @@ pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> 
         let bypass = launch_options(command)?;
         let executable = std::env::current_exe().map_err(error)?;
         let mut hooks = serde_json::Map::new();
-        for event in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Notification", "Stop", "SessionEnd"] {
+        for event in crate::hooks::EVENTS {
             hooks.insert(event.into(), json!([{ "hooks": [{ "type": "command", "command": executable,
                 "args": [RELAY, dir.join("background-endpoint.json"), id], "timeout": 2 }] }]));
         }

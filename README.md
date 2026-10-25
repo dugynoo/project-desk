@@ -1,14 +1,26 @@
 # Project Desk
 
-Settings checks the installed Claude, Codex and Antigravity CLI versions on opening;
-use **Check CLI versions** to retry after changing a command or installing a CLI.
-Checks run locally via `--version` in the configured shell, with an eight-second
-timeout and no recurring background checks. Standard agent commands (including
-quoted executable paths and startup flags) are supported. Wrappers such as `npx`
-and custom shell syntax are marked as not automatically verifiable; this does not
-prevent launching sessions. The check does not verify sign-in or newer releases.
-
 A desktop app for running Claude Code, Codex, Antigravity CLI and plain shell sessions across many projects from one window. Each project lists its sessions with a live status, so you can see at a glance which agent is working, which one is done and which one is waiting for you.
+
+**[Download for Windows, macOS and Linux](https://github.com/dugynoo/project-desk/releases/latest)** | [Get started](#get-started) | [Report a problem](https://github.com/dugynoo/project-desk/issues)
+
+- Keep projects and agent conversations together, with status and notifications.
+- Arrange terminals side by side or in a grid, and resume saved conversations.
+- Make quick file edits in the built-in editor or open your preferred external editor.
+
+![Project Desk with a project sidebar, a running shell and the built-in text editor](docs/images/project-desk-editor.png)
+
+*Windows desktop using an isolated demo project and shell sessions; no private agent conversations.*
+
+### Get started
+
+1. Install the package for your OS from the download link above.
+2. Install and sign in to the agent CLI you want to use (Claude Code, Codex or Antigravity). Plain shell sessions need no agent.
+3. Choose **Add project**, select a folder, then use **+** or **▾** to open a session.
+
+The interface is available in English, Slovak and Czech. See [agent status](#agent-status) for provider-specific tracking limits.
+
+## App behavior
 
 It replaces the earlier Cursor extension. Your editor opens only when you ask for it.
 
@@ -21,6 +33,16 @@ protects state when desktop instance discovery is unavailable (for example, Linu
 a session bus). The lock is released on exit or crash; do not delete `instance.lock` manually.
 After upgrading from a version without this protection, close the older app before launching
 the new version.
+
+### CLI version checks
+
+Settings checks the installed Claude, Codex and Antigravity CLI versions on opening;
+use **Check CLI versions** to retry after changing a command or installing a CLI.
+Checks run locally via `--version` in the configured shell, with an eight-second
+timeout and no recurring background checks. Standard agent commands (including
+quoted executable paths and startup flags) are supported. Wrappers such as `npx`
+and custom shell syntax are marked as not automatically verifiable; this does not
+prevent launching sessions. The check does not verify sign-in or newer releases.
 
 ## Features
 
@@ -47,8 +69,8 @@ Session metadata is scanned incrementally with fixed-size buffers. Large histori
 
 Green **Done** means the agent is ready for another prompt (including initial readiness or an interrupted turn); yellow **Working** means a turn is in progress; red **Waiting for input** means a reported approval request or question. Shells retain their neutral **Running** status.
 Startup preserves status events received while launching the terminal. If no readiness event arrives within 15 seconds, the neutral **Status unavailable** label replaces **Starting**; later events still restore live tracking. Before resuming a Codex item with a missing conversation ID, Desk checks session metadata around the item's original creation time (5 seconds before to 60 seconds after), including older sessions. It saves and resumes the ID only when exactly one unclaimed, non-subagent conversation matches the project and time window. New-session discovery also requires a unique valid, non-subagent conversation. Overlapping unlinked launches in the same directory stay unlinked rather than guessing ownership; delayed discovery results are discarded after a close or restart. Ambiguous matches stay unlinked; Desk does not select whichever conversation was active most recently. Manually selecting an unrelated older conversation in the Codex picker still cannot be linked automatically.
-- **Claude Code:** status comes from Claude Code hooks: *Working*, *Waiting for input*, *Done*, *Agent exited*. The app starts Claude with `--settings` pointing at HTTP hooks on a local endpoint. Your `~/.claude` settings are never modified.
-- **Codex:** status comes from the Codex session file in `~/.codex/sessions`: *Working*, *Done*. The app reads only the event type (`task_started`, `task_complete`, `turn_aborted`). The last known state is restored without replaying old notifications. Approval requests are not persisted in this file, so Codex approval waiting cannot currently be detected.
+- **Claude Code:** status comes from Claude Code hooks: *Working*, *Waiting for input*, *Done*, *Agent exited*. Permission requests report waiting immediately; failed tools return to working, and a turn-ending API error reports that attention is needed. The app starts Claude with `--settings` pointing at local hooks. Hooks only observe status and never approve or deny requests. Your `~/.claude` settings are never modified. See the [Claude hook lifecycle](https://code.claude.com/docs/en/hooks).
+- **Codex:** status comes from event types and timestamps in the Codex session file in `~/.codex/sessions`: *Working*, *Done*. Historical usage totals survive resume, but status from before the current process launch is ignored: an interrupted old turn is not proof of current work. Usage data alone does not imply completion. Until a current status arrives, startup falls back to *Status unavailable*. Current-launch snapshots do not replay old notifications. Approval waiting still cannot be detected reliably from this file.
 - **Antigravity CLI:** project-local hooks report activity, completion and explicit `ask_question` / `ask_permission` tools. Automatic permission dialogs are not exposed by these hooks; token usage is not tracked. See setup below.
 - **Notifications:** a system notification and an unread dot appear when an agent finishes or needs you while you are looking elsewhere.
 - **Attention overview:** the sidebar counts waiting, completed and working sessions. Use **Needs attention** to filter to waiting/completed sessions; **Ctrl+Shift+A** jumps to the next one.
@@ -166,6 +188,13 @@ on Save. Numpad plus/minus work too. Localized digit-row session shortcuts retai
 their existing behavior.
 
 ### Terminal
+
+Terminal output uses bounded flow control: the PTY reader waits when unprocessed
+output reaches 256 KiB per terminal (plus at most one decoded read chunk).
+The frontend acknowledges roughly every 64 KiB after xterm has parsed it.
+Large log bursts slow the producer instead of growing an unbounded parser queue;
+normal small writes do not require an acknowledgement. Closing a session or
+shutting down releases waiting readers, and each launch has its own output ID.
 - **Saved layouts:** open **Layout → Saved layouts** beside the sidebar search button to save a named snapshot of the panel mode, session assignments, order and sizes. Open a saved layout to switch arrangements without stopping running sessions or starting stopped ones. Missing sessions leave empty panels. Edit a saved name to rename it, explicitly overwrite it with the current panels, or delete the layout without closing any sessions. Snapshots and the current arrangement survive app restarts independently.
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.
 - **Ctrl+click** a URL to open it in your browser. Ctrl+click a file path such as `src/main.ts:120` to open it in your editor at that line. File types listed in ⚙ Settings (by default HTML, PDF and images) open in the default app instead, so an HTML file opens in the browser.
@@ -188,6 +217,14 @@ Detection does not rely on `PATH` on Windows and macOS. Cursor, for example, put
 Supported editors: Cursor, VS Code, VS Code Insiders, Windsurf, VSCodium, Trae, Zed, Sublime Text, IntelliJ IDEA, WebStorm, PhpStorm, PyCharm, Rider, GoLand, RustRover, CLion and Notepad++. All of them open a file at the clicked line.
 
 **Other program…** is for anything else. Pick the program and set its arguments. `%TARGET_PATH%` is replaced with the file or folder path and `%LINE%` with the line number. The default `%TARGET_PATH%` is enough for most programs.
+
+### Built-in text editor
+
+Use the pencil button in the sidebar to open a lightweight editor beside the terminal. Ctrl/Cmd-click a text-file path uses Settings > Editor > Open text-file links in; system-application extensions take precedence. The pencil and explicit built-in context-menu action always use the built-in editor. Set its font size and line wrapping in the same settings tab; changes apply to open files without discarding edits. Unsupported files offer an external-editor action. In a grid, the active terminal is temporarily expanded; closing the editor restores the grid with its existing slots and sizes. A terminal already expanded before opening the editor stays expanded, and manual layout changes made while editing are respected. Drag the divider (or focus it and use arrow keys) to resize. The file context menu still offers the external editor and system application.
+
+The editor loads on demand, supports syntax highlighting, search, undo/redo and Ctrl/Cmd+S, and keeps one file open at a time. It accepts UTF-8 text up to 2 MiB, preserving BOM and consistent LF/CRLF endings. Binary, invalid UTF-8 and mixed-line-ending files are rejected. Hard-linked files must be saved with an external editor to avoid breaking their links. Symlinks are resolved when opening.
+
+Saving checks for changes on disk and refuses to overwrite a different version; copy your edits before Reload if needed. There is also a check on window focus, with no polling. Unsaved edits prompt before closing or switching files and block updates/restarts until saved or discarded. Writes use a synchronized temporary file in the same directory and atomic replacement, preserving standard permissions. This is optimistic conflict detection, not a lock against unrelated writers; a writer racing the final replacement can still conflict. Atomic replacement may not preserve custom ACLs/extended attributes. The implementation is shared across Windows, macOS and Linux; desktop testing for this change was performed on Windows.
 
 ### Updates
 Release builds check [GitHub Releases](https://github.com/dugynoo/project-desk/releases) shortly after start and then every 6 hours. **Check for updates** in ⚙ Settings is available on every supported Linux installation as well as Windows and macOS. Development builds do not check for releases.
@@ -233,7 +270,7 @@ The app state is stored in `%APPDATA%\eu.effistream.projectdesk\state.json`. The
 
 State writes are serialized and flushed before closing the window or installing an update. `state.json.bak` keeps the previous valid state. If the main file is damaged or missing, the app recovers from that backup and reports it. A damaged main file is preserved as `state.json.corrupt-<id>` on the next save. If neither file can be loaded, startup reports the error instead of silently replacing the data with an empty workspace.
 
-Frontend orchestration lives in `src/main.ts`; settings, dialogs, updates, and the save queue have separate modules. Pure session lifecycle and grid rules live in `src/model.ts`; native state recovery lives in `src-tauri/src/persistence.rs`.
+`src/sidebar.ts` owns sidebar rendering, inline rename, menus, filtering, project dragging and branch display; it delegates session lifecycle actions through callbacks. Frontend orchestration lives in `src/main.ts`; settings, dialogs, updates, and the save queue have separate modules. `src/agent-monitor.ts` owns conversation discovery, usage polling and hook handling; it receives current state, lifecycle metadata and callbacks without importing the UI or Tauri. Scheduling and native subscriptions remain in `main.ts`. `src/terminal-runtime.ts` constructs xterm views and wires input, while `src/terminal-lifecycle.ts` owns process start/resume, output acknowledgements, close/exit handling and resource disposal. The lifecycle module receives native operations and UI callbacks explicitly, so asynchronous recovery and cleanup can be tested without launching agents. `src/terminal-search.ts` owns the xterm search UI, and `src/system-notifications.ts` handles native notification permissions and delivery. Modules use explicit dependencies and never import `main.ts`. Pure session lifecycle and grid rules live in `src/model.ts`; native state recovery lives in `src-tauri/src/persistence.rs`.
 
 Status-driven sidebar/header refreshes are coalesced into one animation frame while every status event is still processed immediately. Layout changes, split handles and the stage resize observer share one scheduled terminal fit; neither scheduler runs an idle loop.
 
@@ -277,25 +314,19 @@ The installers are not code-signed, so Windows SmartScreen and macOS Gatekeeper 
 - **Windows:** click *More info → Run anyway*.
 - **macOS:** if macOS says the app "is damaged and can't be opened", move it to Applications and run `xattr -cr "/Applications/Project Desk.app"` in Terminal once.
 
+### Desktop smoke tests
+
+On Windows, `npm run test:desktop` builds and exercises an isolated native app with
+synthetic shell sessions. It covers session restart, persistence across application
+relaunch, grid/editor interaction, saving, dirty-file protection and editor settings.
+It also forcefully terminates the test app, checks shell/child-process cleanup and
+verifies recovery from the last saved state without reviving stopped sessions.
+It also runs in Windows CI. See [the desktop test guide](scripts/desktop/README.md)
+for prerequisites, diagnostic artifacts and current platform limitations.
+
 ### Translations
 UI strings live in `src/i18n.ts`. English defines the set of keys, and TypeScript fails the build if Slovak or Czech is missing one. Rust returns error codes such as `editor.missing` or `pty.openFailed: <detail>`, and the UI translates them. A test checks that every error code in `src-tauri/src` has a translation.
 
 ## License
 
 [MIT](LICENSE)
-
-
-Terminal output uses bounded flow control: the PTY reader waits when unprocessed
-output reaches 256 KiB per terminal (plus at most one decoded read chunk).
-The frontend acknowledges roughly every 64 KiB after xterm has parsed it.
-Large log bursts slow the producer instead of growing an unbounded parser queue;
-normal small writes do not require an acknowledgement. Closing a session or
-shutting down releases waiting readers, and each launch has its own output ID.
-
-### Built-in text editor
-
-Use the pencil button in the sidebar or Ctrl/Cmd-click a text-file path in a terminal to open a lightweight editor beside the terminal. In a grid, the active terminal is temporarily expanded; closing the editor restores the grid with its existing slots and sizes. A terminal already expanded before opening the editor stays expanded, and manual layout changes made while editing are respected. Drag the divider (or focus it and use arrow keys) to resize. The file context menu still offers the external editor and system application.
-
-The editor loads on demand, supports syntax highlighting, search, undo/redo and Ctrl/Cmd+S, and keeps one file open at a time. It accepts UTF-8 text up to 2 MiB, preserving BOM and consistent LF/CRLF endings. Binary, invalid UTF-8 and mixed-line-ending files are rejected. Hard-linked files must be saved with an external editor to avoid breaking their links. Symlinks are resolved when opening.
-
-Saving checks for changes on disk and refuses to overwrite a different version; copy your edits before Reload if needed. There is also a check on window focus, with no polling. Unsaved edits prompt before closing or switching files and block updates/restarts until saved or discarded. Writes use a synchronized temporary file in the same directory and atomic replacement, preserving standard permissions. This is optimistic conflict detection, not a lock against unrelated writers; a writer racing the final replacement can still conflict. Atomic replacement may not preserve custom ACLs/extended attributes. The implementation is shared across Windows, macOS and Linux; desktop testing for this change was performed on Windows.

@@ -80,6 +80,9 @@ export interface Settings {
   /** Jazyk UI: "en" | "sk" | "cs". */
   language: string;
   /** ID nájdeného editora, "" = prvý nájdený, "custom" = vlastný program. */
+  fileEditor: "builtin" | "external";
+  editorFontSize: number;
+  editorWordWrap: boolean;
   editorId: string;
   customEditorPath: string;
   /** Argumenty vlastného editora; `%TARGET_PATH%` = súbor alebo priečinok, `%LINE%` = riadok. */
@@ -139,6 +142,9 @@ export const DEFAULT_SETTINGS: Settings = {
   antigravityCommand: "agy",
   shell: "",
   language: "en",
+  fileEditor: "builtin",
+  editorFontSize: 13,
+  editorWordWrap: false,
   editorId: "",
   customEditorPath: "",
   customEditorArgs: "%TARGET_PATH%",
@@ -252,6 +258,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
       const v = data.settings[key];
       if (typeof v === typeof DEFAULT_SETTINGS[key]) (state.settings as unknown as Record<string, unknown>)[key] = v;
     }
+    state.settings.editorFontSize = normalizeFontSize(data.settings.editorFontSize);
+    if (!["builtin", "external"].includes(state.settings.fileEditor)) state.settings.fileEditor = "builtin";
     state.settings.fontSize = normalizeFontSize(data.settings.fontSize);
     state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
@@ -467,7 +475,11 @@ export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
     case "PreInvocation":
     case "UserPromptSubmit":
     case "PostToolUse":
+    case "PostToolUseFailure":
       return "working";
+    case "PermissionRequest":
+    case "StopFailure":
+      return "needs-you";
     case "PreToolUse":
       return ev.toolName === "ask_permission" || ev.toolName === "ask_question" ? "needs-you" : "working";
     case "Stop":
@@ -527,6 +539,11 @@ export function codexStatusAfter(event: string): Status | undefined {
   if (event === "task_complete" || event === "turn_complete") return "done";
   if (event === "turn_aborted") return "done";
   return undefined;
+}
+
+/** No event means no evidence; never invent completion from usage metadata. */
+export function codexPollEvents(poll: { events: string[]; status: string | null }): string[] {
+  return poll.events.length ? poll.events : poll.status ? [poll.status] : [];
 }
 
 /** Poradie v zozname: pripnuté hore, inak tak, ako ich používateľ usporiadal. */
@@ -864,4 +881,9 @@ export function textFileFormat(raw: string): { bom: string; separator: string; t
   const normalized = body.replace(/\r\n/g, "\n");
   if (body.includes("\0") || normalized.includes("\r") || (body.includes("\r\n") && body.replace(/\r\n/g, "").includes("\n"))) return undefined;
   return { bom, separator: body.includes("\r\n") ? "\r\n" : "\n", text: normalized };
+}
+
+/** System file associations take precedence over the preferred text editor. */
+export function fileOpenTarget(file: string, settings: Settings): "system" | "builtin" | "external" {
+  return opensInSystem(file, settings.systemOpenExts) ? "system" : settings.fileEditor;
 }

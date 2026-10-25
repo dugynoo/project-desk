@@ -48,6 +48,7 @@ pub enum Provider {
 
 struct Watch {
     path: PathBuf,
+    generation: u64,
     offset: u64,
     line_start: u64,
     history_end: Option<u64>,
@@ -164,6 +165,7 @@ struct ClaudeUsage {
 #[derive(Deserialize)]
 struct CodexLine {
     #[serde(rename = "type")] kind: String,
+    timestamp: Option<String>,
     payload: Option<CodexPayload>,
 }
 #[derive(Deserialize, Default)]
@@ -241,6 +243,10 @@ impl Watch {
                     }
                 }
                 "task_started" | "task_complete" | "turn_started" | "turn_complete" | "turn_aborted" => {
+                    // A resumed CLI does not continue the old process's active turn.
+                    // Retain usage totals, but accept state only from this launch.
+                    let timestamp = v.timestamp.as_deref().and_then(crate::codex::parse_utc_ms);
+                    if self.generation != 0 && timestamp.map_or(historical, |at| at < self.generation) { return; }
                     self.status = Some(p.kind.clone());
                     if !historical { events.push(p.kind); }
                 }
@@ -258,7 +264,9 @@ impl Watch {
         let len = file.metadata()?.len();
         if len < self.offset || (!self.primed && self.history_end.is_some_and(|end| len < end)) {
             let path = std::mem::take(&mut self.path);
+            let generation = self.generation;
             *self = Watch::new(path);
+            self.generation = generation;
         }
         let history_end = *self.history_end.get_or_insert(len);
         if len == self.offset {
@@ -295,7 +303,14 @@ impl Watch {
     }
 
     fn new(path: PathBuf) -> Self {
-        Watch { path, offset: 0, line_start: 0, history_end: None, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None }
+        Watch { path, generation: 0, offset: 0, line_start: 0, history_end: None, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None }
+    }
+
+    fn set_generation(&mut self, generation: u64) {
+        if self.generation == generation { return; }
+        let path = std::mem::take(&mut self.path);
+        *self = Watch::new(path);
+        self.generation = generation;
     }
 }
 
@@ -327,6 +342,7 @@ impl Watcher {
             watches.insert(agent_id.to_owned(), Watch::new(path));
         }
         let w = watches.get_mut(agent_id)?;
+        w.set_generation(generation);
         let events = w.read_new(provider).ok()?;
         if !w.primed { return None; }
         Some(Poll { stats: w.stats.clone(), status: w.status.clone(), events })
@@ -358,6 +374,46 @@ mod tests {
         let watcher = Watcher { missing: Mutex::new(missing), ..Watcher::default() };
         watcher.retain(&[]);
         assert!(watcher.missing.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn resumed_codex_ignores_old_turns_but_keeps_usage_and_current_events() {
+        let path = temp_file("resume-generation.jsonl");
+        let launch = crate::codex::parse_utc_ms("2026-10-25T12:00:00.000Z").unwrap();
+        append(&path, concat!(
+            "{\"timestamp\":\"2026-10-25T11:00:00.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":42}}}}\n",
+        ));
+        let mut w = Watch::new(path.clone());
+        w.set_generation(launch);
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status, None, "old unfinished turn is not live work");
+        assert_eq!(w.stats.input_tokens, 42);
+        append(&path, "{\"timestamp\":\"2026-10-25T12:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["task_started"]);
+        w.set_generation(launch); // Ordinary polling must not re-prime history.
+        append(&path, "{\"timestamp\":\"2026-10-25T12:00:02.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["task_complete"]);
+        w.set_generation(launch + 3_000); // Rapid restart, before watcher retention.
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status, None);
+        assert_eq!(w.stats.input_tokens, 42);
+        std::fs::write(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n").unwrap();
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.generation, launch + 3_000);
+        assert_eq!(w.status, None, "undated historical state is not live work");
+        append(&path, "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_started\"}}\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["turn_started"]);
+    }
+
+    #[test]
+    fn first_poll_keeps_current_launch_state_without_historical_notifications() {
+        let path = temp_file("early-turn.jsonl");
+        append(&path, "{\"timestamp\":\"2026-10-25T12:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_started\"}}\n");
+        let mut w = Watch::new(path);
+        w.set_generation(crate::codex::parse_utc_ms("2026-10-25T12:00:00.000Z").unwrap());
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty());
+        assert_eq!(w.status.as_deref(), Some("turn_started"));
     }
 
     #[test]
