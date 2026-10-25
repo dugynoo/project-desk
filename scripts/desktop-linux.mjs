@@ -100,10 +100,9 @@ async function launch() {
   await wait('return document.querySelectorAll(".pane.visible").length === 2', 'two terminal panes');
 }
 async function shell(index, text) {
-  const selector = `.pane.visible:nth-child(${index + 1}) textarea.xterm-helper-textarea`;
   // Focus through DOM only; input itself goes through the native WebDriver keys.
-  await evaluate('document.querySelector(arguments[0]).focus()', selector);
-  await type(selector, text + '\uE007');
+  const input = await evaluate('const input = document.querySelectorAll(".pane.visible")[arguments[0]].querySelector("textarea.xterm-helper-textarea"); input.focus(); return input', index);
+  await command('POST', `/element/${input['element-6066-11e4-a52e-4f735466cecf']}/value`, { text: text + '\uE007' });
 }
 async function close() {
   // Native WM_DELETE_WINDOW via the window manager exercises Tauri's save handler.
