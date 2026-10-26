@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -74,7 +74,8 @@ pub struct OutputChunk {
 struct PtySession {
     output: Arc<OutputFlow>,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Input goes through a writer thread: a child that stops reading must not block the caller.
+    input: mpsc::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     pid: Option<u32>,
@@ -82,11 +83,16 @@ struct PtySession {
 
 impl PtySession {
     fn kill(&mut self) -> std::io::Result<()> {
-        // Shell je vedúci vlastnej skupiny procesov; SIGHUP celej skupine ukončí aj agenta v ňom.
+        // Like a terminal hangup: SIGHUP the foreground group (an interactive shell gives
+        // the agent its own group) and the shell's group.
         #[cfg(unix)]
         if let Some(pid) = self.pid {
+            let foreground = self.master.process_group_leader().filter(|&g| g != pid as libc::pid_t);
             // SAFETY: killpg iba posiela signál, nepracuje s pamäťou.
-            unsafe { libc::killpg(pid as libc::pid_t, libc::SIGHUP) };
+            unsafe {
+                if let Some(group) = foreground { libc::killpg(group, libc::SIGHUP); }
+                libc::killpg(pid as libc::pid_t, libc::SIGHUP);
+            }
         }
         // portable-pty 0.9's cloned Windows killer reverses the BOOL success
         // check. Use the native result while the child handle is still held by
@@ -201,6 +207,27 @@ pub fn take_utf8(pending: &mut Vec<u8>) -> String {
     text
 }
 
+/// Forwards PTY output until EOF. After the frontend stops listening it keeps
+/// reading and discards: macOS holds an exiting session leader until its output
+/// is read, and older Windows block ClosePseudoConsole until the pipe drains.
+fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut send: impl FnMut(OutputChunk) -> bool) {
+    let mut buf = [0u8; 16 * 1024];
+    let mut pending = Vec::new();
+    let mut forwarding = true;
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) if !forwarding => {}
+            Ok(n) => {
+                pending.extend_from_slice(&buf[..n]);
+                let text = take_utf8(&mut pending);
+                if text.is_empty() { continue; }
+                forwarding = flow.reserve(text.len()).is_some_and(|ack| send(OutputChunk { data: text, ack }));
+            }
+        }
+    }
+}
+
 impl PtyManager {
     pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<OutputChunk>) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
@@ -229,8 +256,8 @@ impl PtyManager {
             .map_err(|e| format!("pty.shellFailed: {e}"))?;
         drop(pair.slave);
 
-        let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let killer = child.clone_killer();
         let pid = child.process_id();
 
@@ -240,21 +267,16 @@ impl PtyManager {
         let outputs = self.outputs.clone();
         let output_id = req.output_id;
         thread::spawn(move || {
-            let mut buf = [0u8; 16 * 1024];
-            let mut pending = Vec::new();
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        pending.extend_from_slice(&buf[..n]);
-                        let text = take_utf8(&mut pending);
-                        if text.is_empty() { continue; }
-                        let Some(ack) = reader_flow.reserve(text.len()) else { break };
-                        if output.send(OutputChunk { data: text, ack }).is_err() { break; }
-                    }
-                }
-            }
+            pump_output(reader, &reader_flow, |chunk| output.send(chunk).is_ok());
             if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
+        });
+
+        let (input, input_rx) = mpsc::channel::<Vec<u8>>();
+        thread::spawn(move || {
+            // Ends when the session drops its sender or the PTY rejects the write; dropping the writer sends EOF.
+            for data in input_rx {
+                if writer.write_all(&data).and_then(|_| writer.flush()).is_err() { break; }
+            }
         });
 
         let id = req.id.clone();
@@ -276,7 +298,7 @@ impl PtyManager {
             }
         });
 
-        sessions.insert(req.id, PtySession { master: pair.master, writer, killer, pid, output: flow });
+        sessions.insert(req.id, PtySession { master: pair.master, input, killer, pid, output: flow });
         Ok(())
     }
 
@@ -293,10 +315,9 @@ impl PtyManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let s = sessions.get_mut(id).ok_or("pty.notRunning")?;
-        s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
-        s.writer.flush().map_err(|e| e.to_string())
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let s = sessions.get(id).ok_or("pty.notRunning")?;
+        s.input.send(data.as_bytes().to_vec()).map_err(|_| "pty.notRunning".to_string())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
@@ -385,6 +406,32 @@ mod tests {
         assert_eq!(new.state.lock().unwrap().acknowledged, 0);
         manager.kill_all();
         assert_eq!(new.reserve(1), None);
+    }
+
+    #[test]
+    fn cancelled_output_keeps_draining_until_eof() {
+        use super::{pump_output, OutputFlow};
+        use std::io::Read;
+        struct Source { left: usize, read: usize }
+        impl Read for Source {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = buf.len().min(self.left).min(1000);
+                buf[..n].fill(b'x');
+                self.left -= n;
+                self.read += n;
+                Ok(n)
+            }
+        }
+        let flow = OutputFlow::default();
+        let mut source = Source { left: 5000, read: 0 };
+        let mut sent = 0;
+        pump_output(&mut source, &flow, |_| { sent += 1; flow.cancel(); true });
+        assert_eq!((sent, source.read), (1, 5000));
+
+        let mut source = Source { left: 5000, read: 0 };
+        let mut sent = 0;
+        pump_output(&mut source, &OutputFlow::default(), |_| { sent += 1; false });
+        assert_eq!((sent, source.read), (1, 5000));
     }
 
     #[test]
