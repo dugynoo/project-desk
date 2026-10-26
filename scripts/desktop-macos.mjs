@@ -66,14 +66,26 @@ let app, sessionId, endpoint;
 let appLog = '';
 const alive = () => app && app.exitCode === null && app.signalCode === null;
 async function request(method, path, data) {
-  const response = await fetch(endpoint + path, { method, signal: AbortSignal.timeout(15_000),
-    headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) });
+  // The driver allows 30 seconds for script execution; let it return its own
+  // diagnostic before the transport deadline, especially during cold WKWebView startup.
+  const response = await fetch(endpoint + path, { method, signal: AbortSignal.timeout(45_000),
+    headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) })
+    .catch(error => { throw Error(`${method} ${path}: ${error.message}`, { cause: error }); });
   const result = await response.json();
-  if (!response.ok || result.value?.error) throw Error(`${method} ${path}: ${JSON.stringify(result.value)}`);
+  if (!response.ok || result.error || result.value?.error) throw Error(`${method} ${path}: ${JSON.stringify(result)}`);
   return result.value;
 }
 const command = (method, path, data) => request(method, `/session/${sessionId}${path}`, data);
-const evaluate = (script, ...args) => command('POST', '/execute/sync', { script, args });
+// Use the plugin's macOS-hardened evaluation channel for DOM reads/focus only.
+// It handles WebKit reclaiming completion callbacks on cold CI webviews (#540).
+// User actions still go through WebDriver; no application IPC is mocked/invoked.
+const evaluate = (script, ...args) => request('POST', '/wdio/eval', {
+  window_label: 'main', timeout_ms: 30_000,
+  script: `const done = arguments[arguments.length - 1];
+    try { const value = (function() { ${script}\n }).apply(null, ${JSON.stringify(args)});
+      done({ ok: true, value: value === undefined ? null : value });
+    } catch (error) { done({ ok: false, error: String(error) }); }`,
+});
 const wait = (script, message) => until(() => evaluate(script), Boolean, message);
 const saved = async () => JSON.parse(await readFile(statePath, 'utf8'));
 const optionalFile = name => readFile(join(fixture, name), 'utf8').catch(error => {
