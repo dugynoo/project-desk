@@ -159,6 +159,8 @@ const en = {
   "status.exited": "Stopped",
   "session.restart": "Start again / resume conversation",
   "session.exitCode": "Process exited (code {code}). Use Start again to resume.",
+  "session.pause": "Pause",
+  "session.pausedNotice": "Paused. Use Start again to resume the conversation.",
   "session.history": "Recently closed ({n})",
   "grid.pin": "Pin / unpin pane in grid",
   "grid.full": "All four panes are pinned. Unpin one first.",
@@ -225,6 +227,8 @@ const en = {
 
   "close.title": "Close terminal?",
   "close.body": "“{title}” will stop, along with the process running in it. The item disappears from the list.",
+  "pause.title": "Pause a working agent?",
+  "pause.body": "“{title}” is working right now. Pausing interrupts the current step; the conversation can be resumed with Start again.",
 
   "project.pick": "Choose project folder",
   "project.exists": "This folder is already in the list.",
@@ -535,6 +539,8 @@ const sk: Record<Key, string> = {
   "status.exited": "Ukončené",
   "session.restart": "Spustiť znova / obnoviť konverzáciu",
   "session.exitCode": "Proces sa ukončil (kód {code}). Pokračujte cez Spustiť znova.",
+  "session.pause": "Pozastaviť",
+  "session.pausedNotice": "Pozastavené. Konverzáciu obnovíte cez Spustiť znova.",
   "session.history": "Nedávno zatvorené ({n})",
   "grid.pin": "Pripnúť / odopnúť panel v mriežke",
   "grid.full": "Všetky štyri panely sú pripnuté. Najprv jeden odopnite.",
@@ -600,6 +606,8 @@ const sk: Record<Key, string> = {
 
   "close.title": "Zavrieť terminál?",
   "close.body": "„{title}“ sa ukončí vrátane procesu, ktorý v ňom beží. Položka zmizne zo zoznamu.",
+  "pause.title": "Pozastaviť pracujúceho agenta?",
+  "pause.body": "„{title}“ práve pracuje. Pozastavenie preruší aktuálny krok; konverzáciu obnovíte cez Spustiť znova.",
 
   "project.pick": "Vyber priečinok projektu",
   "project.exists": "Tento priečinok už v zozname je.",
@@ -907,6 +915,8 @@ const cs: Record<Key, string> = {
   "status.exited": "Ukončeno",
   "session.restart": "Spustit znovu / obnovit konverzaci",
   "session.exitCode": "Proces se ukončil (kód {code}). Pokračujte přes Spustit znovu.",
+  "session.pause": "Pozastavit",
+  "session.pausedNotice": "Pozastaveno. Konverzaci obnovíte přes Spustit znovu.",
   "session.history": "Nedávno zavřené ({n})",
   "grid.pin": "Připnout / odepnout panel v mřížce",
   "grid.full": "Všechny čtyři panely jsou připnuté. Nejprve jeden odepněte.",
@@ -972,6 +982,8 @@ const cs: Record<Key, string> = {
 
   "close.title": "Zavřít terminál?",
   "close.body": "„{title}“ se ukončí včetně procesu, který v něm běží. Položka zmizí ze seznamu.",
+  "pause.title": "Pozastavit pracujícího agenta?",
+  "pause.body": "„{title}“ právě pracuje. Pozastavení přeruší aktuální krok; konverzaci obnovíte přes Spustit znovu.",
 
   "project.pick": "Vyber složku projektu",
   "project.exists": "Tato složka už v seznamu je.",

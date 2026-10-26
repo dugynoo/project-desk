@@ -20,6 +20,8 @@ interface SidebarDependencies {
   createSession(project: Project, provider: Provider): void;
   start(session: Session): Promise<unknown>;
   closeSession(session: Session): Promise<unknown>;
+  pauseSession(session: Session): Promise<unknown>;
+  canPause(session: Session): boolean;
   removeProject(project: Project): Promise<unknown>;
   openEditor(path: string): void;
   showImport(project: Project): void;
@@ -33,7 +35,7 @@ interface SidebarDependencies {
 /** Owns sidebar DOM and transient interaction state; application state stays with the caller. */
 export function createSidebar(deps: SidebarDependencies) {
   const { getState, runtimes, unread, statusOf, statusLabel, contextLabel, save,
-    renderPaneHeads, select, createSession, start, closeSession, removeProject,
+    renderPaneHeads, select, createSession, start, closeSession, pauseSession, canPause, removeProject,
     openEditor, showImport, showInfo, jumpAttention, showClosedSessions } = deps;
   const PROVIDER_ICON = deps.providerIcons;
   const session = (id: string) => getState().sessions.find(s => s.id === id);
@@ -290,6 +292,7 @@ export function createSidebar(deps: SidebarDependencies) {
           const sessionActions = () => [
             { label: t("session.rename"), run: () => startRename(s) },
             { label: t("session.info"), run: () => showInfo(s) },
+            ...(canPause(s) ? [{ label: t("session.pause"), run: () => void pauseSession(s) }] : []),
             { label: t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"), danger: true, separator: true, run: () => void closeSession(s) },
           ];
           const moreActions = actionsButton(sessionActions, `session-menu-${s.id}`);
