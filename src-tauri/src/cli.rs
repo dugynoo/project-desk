@@ -141,18 +141,23 @@ mod tests {
         }
     }
     fn script(text: &str) -> Command {
-        let mut cmd = Command::new(if cfg!(windows) { "powershell.exe" } else { "/bin/sh" });
-        if cfg!(windows) { cmd.args(["-NoProfile", "-Command", text]); } else { cmd.args(["-c", text]); }
+        // Basic process/output checks do not need PowerShell's cold startup.
+        // The separate probe test below still exercises actual PowerShell launch.
+        let mut cmd = Command::new(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" });
+        if cfg!(windows) { cmd.args(["/D", "/C", text]); } else { cmd.args(["-c", text]); }
         cmd
     }
     #[test]
     fn checks_success_missing_failure_and_timeout() {
-        assert_eq!(run(script("echo 'tool 1.2.3'"), Duration::from_secs(5)).version, "tool 1.2.3");
+        let checked = run(script("echo tool 1.2.3"), Duration::from_secs(5));
+        assert_eq!(checked.status, "available", "{checked:?}");
+        assert_eq!(checked.version, "tool 1.2.3");
         assert_eq!(run(script("exit 127"), Duration::from_secs(5)).status, "missing");
         assert_eq!(run(script("exit 1"), Duration::from_secs(5)).status, "failed");
-        let sleep = if cfg!(windows) { "Start-Sleep 30" } else { "sleep 30" };
+        let mut sleeper = if cfg!(windows) { Command::new("powershell.exe") } else { script("sleep 30") };
+        if cfg!(windows) { sleeper.args(["-NoProfile", "-Command", "Start-Sleep 30"]); }
         let start = Instant::now();
-        assert_eq!(run(script(sleep), Duration::from_millis(100)).status, "timeout");
+        assert_eq!(run(sleeper, Duration::from_millis(100)).status, "timeout");
         assert!(start.elapsed() < Duration::from_secs(5));
     }
     #[test]
