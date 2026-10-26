@@ -380,6 +380,10 @@ test("Codex: prvý štart, pokračovanie v známej konverzácii, výber pri nezn
   assert.equal(codex({ started: true }), `codex resume ${bypass} ${ID}`);
   assert.equal(codex({ started: true, agentSessionId: "x; calc" }), `codex resume ${bypass}`);
   assert.equal(agentCommand(session({ provider: "shell" }), DEFAULT_SETTINGS, "windows", true), undefined);
+  const unix = (over: Partial<Session>, hooks = true) => agentCommand(session({ provider: "codex", ...over }), DEFAULT_SETTINGS, "macos", hooks);
+  assert.equal(unix({ agentSessionId: undefined }), `codex ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS"`);
+  assert.equal(unix({ started: true }), `codex resume ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS" ${ID}`);
+  assert.equal(unix({ started: true }, false), `codex resume ${bypass} ${ID}`);
 });
 
 test("staré predvolené Codex príkazy sa prepnú na bypass, vlastné ostanú", () => {

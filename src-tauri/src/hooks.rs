@@ -8,6 +8,7 @@ use std::thread;
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::Digest;
 use tauri::{AppHandle, Emitter};
 
 pub const TOKEN_ENV: &str = "PROJECT_DESK_HOOK_TOKEN";
@@ -15,6 +16,8 @@ pub const SESSION_ENV: &str = "PROJECT_DESK_SESSION_ID";
 pub const SETTINGS_ENV: &str = "PROJECT_DESK_HOOK_SETTINGS";
 pub const PORT_ENV: &str = "PROJECT_DESK_HOOK_PORT";
 pub const RELAY_ARG: &str = "--project-desk-session-start";
+pub const CODEX_RELAY_ARG: &str = "--project-desk-codex-hook";
+pub const CODEX_HOOKS_ENV: &str = "PROJECT_DESK_CODEX_HOOKS";
 
 pub const EVENTS: [&str; 9] = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"];
 const MAX_BODY: u64 = 1024 * 1024;
@@ -36,6 +39,8 @@ pub struct HookServer {
     pub port: u16,
     pub token: String,
     pub settings_path: PathBuf,
+    /// `-c` value for Codex, see [`codex_hooks_override`].
+    pub codex_override: String,
 }
 
 /// Z tela hooku vytiahne len to, čo potrebujeme na stav relácie.
@@ -44,7 +49,7 @@ pub fn parse_event(desk_session_id: &str, body: &str) -> Option<AgentEvent> {
     let event = v.get("hook_event_name")?.as_str()?.to_owned();
     let str_field = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
     let provider = v.get("provider").and_then(Value::as_str).unwrap_or("claude");
-    if !matches!(provider, "claude" | "antigravity") { return None; }
+    if !matches!(provider, "claude" | "antigravity" | "codex") { return None; }
     Some(AgentEvent {
         provider: provider.to_owned(),
         tool_name: str_field("tool_name"),
@@ -78,6 +83,32 @@ pub fn settings_json(port: u16, executable: &Path) -> Value {
         hooks.insert(e.to_owned(), json!([{ "hooks": [h] }]));
     }
     json!({ "hooks": hooks })
+}
+
+const CODEX_MATCHER: &str = "startup|resume|clear";
+const CODEX_TIMEOUT: u64 = 5;
+/// Codex keys hooks from `-c` by this synthetic source path (`hooks::hook_key` in Codex).
+const CODEX_SESSION_FLAGS_KEY: &str = "/<session-flags>/config.toml:session_start:0:0";
+
+/// Codex config override (`codex -c <value>`) adding one SessionStart hook for this launch
+/// only, so Desk learns the conversation ID, including after `/resume` and `/clear`, from
+/// its own Codex process. The user's config.toml stays untouched. Codex runs hooks only
+/// with a trusted hash, which is a SHA-256 of its normalized hook declaration; if a future
+/// Codex hashes differently, the hook is skipped and session-file discovery still applies.
+pub fn codex_hooks_override(executable: &Path) -> String {
+    // Codex runs command hooks through `$SHELL -lc`; quote the path for POSIX shells.
+    let path = executable.to_string_lossy().replace('\'', "'\\''");
+    let command = format!("'{path}' {CODEX_RELAY_ARG}");
+    // JSON strings are valid TOML basic strings.
+    let quoted = serde_json::to_string(&command).unwrap_or_default();
+    // Keys sorted like serde_json's default map, matching Codex's `version_for_toml`.
+    let identity = format!(
+        r#"{{"event_name":"session_start","hooks":[{{"async":false,"command":{quoted},"timeout":{CODEX_TIMEOUT},"type":"command"}}],"matcher":"{CODEX_MATCHER}"}}"#
+    );
+    let hash: String = sha2::Sha256::digest(identity.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        r#"hooks={{SessionStart=[{{matcher="{CODEX_MATCHER}",hooks=[{{type="command",command={quoted},timeout={CODEX_TIMEOUT}}}]}}],state={{"{CODEX_SESSION_FLAGS_KEY}"={{trusted_hash="sha256:{hash}"}}}}}}"#
+    )
 }
 
 fn header<'a>(req: &'a tiny_http::Request, name: &'static str) -> Option<&'a str> {
@@ -125,7 +156,7 @@ pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
         }
     });
 
-    Ok(HookServer { token, settings_path, port })
+    Ok(HookServer { token, settings_path, port, codex_override: codex_hooks_override(&executable) })
 }
 
 #[cfg(test)]
@@ -140,6 +171,17 @@ mod tests {
         assert_eq!(e.agent_session_id.as_deref(), Some("abc"));
         assert_eq!(e.notification_type.as_deref(), Some("permission_prompt"));
         assert!(!serde_json::to_string(&e).unwrap().contains("tajné"));
+    }
+
+    #[test]
+    fn codex_override_trusts_exactly_its_own_hook() {
+        // Codex 0.164 `app-server` hooks/list reports this override as trusted.
+        let value = codex_hooks_override(Path::new("/Apps/Project Desk.app/it's/desk"));
+        let command = r#""'/Apps/Project Desk.app/it'\\''s/desk' --project-desk-codex-hook""#;
+        assert!(value.contains(&format!("command={command}")), "{value}");
+        assert!(value.starts_with(r#"hooks={SessionStart=[{matcher="startup|resume|clear",hooks=[{type="command","#));
+        assert!(value.contains(r#"state={"/<session-flags>/config.toml:session_start:0:0"={trusted_hash="sha256:"#));
+        assert!(value.ends_with(r#"trusted_hash="sha256:c55fe235b62370a5a892596324c97fef0597a09de181048e922fe625841ecb8a"}}}"#), "{value}");
     }
 
     #[test]

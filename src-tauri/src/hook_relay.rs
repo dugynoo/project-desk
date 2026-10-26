@@ -18,6 +18,19 @@ fn payload(input: &str) -> Option<String> {
     Some(out.to_string())
 }
 
+/// Codex SessionStart: forward only the conversation ID and its source, never the prompt context.
+fn codex_payload(input: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(input).ok()?;
+    if v["hook_event_name"] != "SessionStart" { return None; }
+    let id = v["session_id"].as_str()?;
+    uuid::Uuid::parse_str(id).ok()?;
+    let mut out = json!({"hook_event_name": "SessionStart", "session_id": id, "provider": "codex"});
+    if let Some(source) = v["source"].as_str().filter(|s| matches!(*s, "startup" | "resume" | "clear" | "compact" | "fork")) {
+        out["source"] = json!(source);
+    }
+    Some(out.to_string())
+}
+
 fn background_payload(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     uuid::Uuid::parse_str(v["session_id"].as_str()?).ok()?;
@@ -30,7 +43,8 @@ fn background_payload(input: &str) -> Option<String> {
     Some(Value::Object(out).to_string())
 }
 
-fn relay(background: bool) -> Option<()> {
+fn relay(arg: &str) -> Option<()> {
+    let background = arg == crate::background::RELAY;
     let (port, token, session) = if background {
         let endpoint = std::env::args_os().nth(2)?;
         let v: Value = serde_json::from_slice(&std::fs::read(endpoint).ok()?).ok()?;
@@ -44,7 +58,11 @@ fn relay(background: bool) -> Option<()> {
     let mut input = String::new();
     std::io::stdin().take(1_048_577).read_to_string(&mut input).ok()?;
     if input.len() > 1_048_576 { return None; }
-    let body = if background { background_payload(&input)? } else { payload(&input)? };
+    let body = match arg {
+        _ if background => background_payload(&input)?,
+        hooks::CODEX_RELAY_ARG => codex_payload(&input)?,
+        _ => payload(&input)?,
+    };
     let timeout = Duration::from_secs(1);
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
@@ -56,8 +74,8 @@ fn relay(background: bool) -> Option<()> {
 /// Fail quietly: tracking must never block the agent or print context to stdout.
 pub fn run_if_requested() -> bool {
     let arg = std::env::args().nth(1).unwrap_or_default();
-    if arg != hooks::RELAY_ARG && arg != crate::background::RELAY { return false; }
-    let _ = relay(arg == crate::background::RELAY);
+    if arg != hooks::RELAY_ARG && arg != hooks::CODEX_RELAY_ARG && arg != crate::background::RELAY { return false; }
+    let _ = relay(&arg);
     true
 }
 
@@ -92,6 +110,17 @@ mod tests {
         assert!(payload(&json!({"hook_event_name":"Stop", "session_id":id}).to_string()).is_none());
         assert!(payload(r#"{"hook_event_name":"SessionStart","session_id":"invalid"}"#).is_none());
     }
+    #[test]
+    fn codex_forwards_only_start_id_and_source() {
+        let id = "01a17834-af49-7481-89d7-11fbccfcb6bc";
+        let input = json!({"hook_event_name":"SessionStart", "session_id":id, "source":"resume",
+            "cwd":"private", "transcript_path":"private", "model":"private", "permission_mode":"default"});
+        let out: Value = serde_json::from_str(&codex_payload(&input.to_string()).unwrap()).unwrap();
+        assert_eq!(out, json!({"hook_event_name":"SessionStart", "session_id":id, "source":"resume", "provider":"codex"}));
+        assert!(codex_payload(&json!({"hook_event_name":"Stop", "session_id":id}).to_string()).is_none());
+        assert!(codex_payload(r#"{"hook_event_name":"SessionStart","session_id":"bad"}"#).is_none());
+    }
+
     #[test]
     fn background_forwards_failure_and_permission_metadata_only() {
         for event in ["PermissionRequest", "PostToolUseFailure", "StopFailure"] {

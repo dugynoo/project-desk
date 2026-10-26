@@ -124,6 +124,7 @@ async fn pty_spawn(
         env.push((hooks::TOKEN_ENV.to_owned(), h.token.clone()));
         env.push((hooks::PORT_ENV.to_owned(), h.port.to_string()));
         env.push((hooks::SETTINGS_ENV.to_owned(), h.settings_path.to_string_lossy().into_owned()));
+        env.push((hooks::CODEX_HOOKS_ENV.to_owned(), h.codex_override.clone()));
     }
     let prepared = if args.background {
         if args.provider.as_deref() != Some("claude") || state.hooks.is_none() { return Err("background.unsupportedCommand".into()); }

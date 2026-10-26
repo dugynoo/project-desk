@@ -83,6 +83,10 @@ when available. Report checks run and any platform or manual checks not performe
   text scraping. Keep integrations local; do not modify global agent settings except for the owned
   Project Desk AGY plugin in ~/.gemini/config/plugins/project-desk. Preserve other
   plugins/settings and only migrate exact copies of our legacy workspace hooks.
+  Codex learns its conversation ID from a SessionStart hook passed per launch with
+  `-c` (`hooks::codex_hooks_override`, trusted by its declaration hash); never write
+  Codex hooks or trust into ~/.codex/config.toml and never use
+  `--dangerously-bypass-hook-trust`, which would also run untrusted repository hooks.
 - Session-file watchers and hook payloads expose only required metadata, events,
   and usage statistics. Do not persist or forward conversation text through them.
 - Never interpolate project/session names, paths, or pasted text into shell
