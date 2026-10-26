@@ -1,3 +1,1 @@
-- Add editor preferences for file links, font size and line wrapping.
-- Improve Claude status reporting and prevent stale Codex statuses after resume.
-- Refactor terminal/sidebar code and add desktop restart and crash-recovery checks.
+- Add Pause for Claude, Codex and AGY sessions: it stops the agent and its child processes, such as MCP servers, to free memory, and Start again resumes the same conversation.
