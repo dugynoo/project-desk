@@ -1,2 +1,2 @@
-- Fix: the app no longer freezes when a closed session cannot exit. Typing into such a session used to block the whole window.
-- Fix: closing a session on macOS and Linux now also ends the agent running in it.
+- Fix: resumed Codex conversations on Windows now link automatically for status tracking.
+- Tests: expanded Linux and macOS coverage for the editor, file conflicts and session recovery.

@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "project-desk"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "base64 0.22.1",
  "gdk",
