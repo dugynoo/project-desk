@@ -118,7 +118,10 @@ a debug binary with the explicit `desktop-smoke` Cargo feature and communicates
 with the embedded `tauri-plugin-wdio-webdriver` 1.5.1 over standard WebDriver HTTP.
 This is the macOS route described in [Tauri's testing guide](https://v2.tauri.app/develop/tests/webdriver/)
 and [the plugin setup documentation](https://webdriver.io/docs/desktop-testing/tauri/plugin-setup).
-Only basic WebDriver operations are used; there is no WDIO JavaScript service,
+User actions use WebDriver; DOM reads/focus use the plugin's `/wdio/eval` channel,
+which includes the macOS cold-WebView handling described in [upstream issue #540](https://github.com/webdriverio/desktop-mobile/issues/540).
+The HTTP deadline exceeds the driver's script timeout so its diagnostics can arrive.
+There is no WDIO JavaScript service,
 mocking plugin, fake backend, paid driver or browser download.
 
 The plugin is an optional macOS dependency, registered only with the feature AND
