@@ -156,7 +156,7 @@ const terminalLifecycle = createTerminalLifecycle({
   save, flush: () => saves.flush(), statusOf, setStatus, isWatched, layout, renderSidebar, renderPaneHeads, toast,
   confirmBox: (...args) => confirmBox(...args),
 });
-const { start, onExit, closeSession, forgetRuntime } = terminalLifecycle;
+const { start, onExit, closeSession, pauseSession, canPause, forgetRuntime } = terminalLifecycle;
 
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
@@ -249,6 +249,7 @@ function renderPaneHeads() {
       }));
     }
     if (state.ui.grid) rt.head.append(iconButton(zoomedId === id ? "⊟" : "⤢", t(zoomedId === id ? "panes.restore" : "panes.maximize"), () => togglePaneZoom(id)));
+    if (canPause(s)) rt.head.append(iconButton("⏸", t("session.pause"), () => void pauseSession(s)));
     if (!rt.running) rt.head.append(iconButton("↻", t("session.restart"), () => void start(s)));
     rt.head.classList.toggle("stopped", s.stopped === true);
   }
@@ -710,7 +711,7 @@ const sidebar = createSidebar({
   getState: () => state, runtimes, unread, providerIcons: PROVIDER_ICON,
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
-  start, closeSession, removeProject, openEditor, showImport, showInfo, jumpAttention,
+  start, closeSession, pauseSession, canPause, removeProject, openEditor, showImport, showInfo, jumpAttention,
   showClosedSessions, showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
