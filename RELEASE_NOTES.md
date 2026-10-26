@@ -1,2 +1,2 @@
-- Fix: resumed Codex conversations on Windows now link automatically for status tracking.
-- Tests: expanded Linux and macOS coverage for the editor, file conflicts and session recovery.
+- Fix: cap pending terminal input and show an error when a paste cannot be accepted.
+- Release: publish updates only after full CI and all platform builds pass.
