@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "project-desk"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "gdk",
  "gio",

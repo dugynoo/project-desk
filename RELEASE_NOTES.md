@@ -1,3 +1,2 @@
-- Drag sessions to reorder them within their project. Ctrl+1–9 follow the new order.
-- Hide a session from its ⋯ menu to keep it running without taking space in the sidebar. **Hidden: N** under the project shows hidden sessions again, and a hidden session comes back on its own when it needs your confirmation.
-- Fix: on macOS and Linux, a Codex conversation opened with /resume in a new session now shows its status again and is the one resumed after a restart. Project Desk passes Codex a hook for that launch only; your Codex configuration is not changed. The session is linked once you send the first message.
+- Fix: the app no longer freezes when a closed session cannot exit. Typing into such a session used to block the whole window.
+- Fix: closing a session on macOS and Linux now also ends the agent running in it.
