@@ -82,12 +82,22 @@ const optionalFile = name => readFile(join(fixture, name), 'utf8').catch(error =
 async function element(selector) {
   return (await command('POST', '/element', { using: 'css selector', value: selector }))['element-6066-11e4-a52e-4f735466cecf'];
 }
-async function click(selector) { await command('POST', `/element/${await element(selector)}/click`, {}); }
+async function elementAction(selector, action, data = {}) {
+  // Status/branch updates can rebuild sidebar inputs between lookup and action.
+  // Retry only stale references, never assertions, timeouts or other driver errors.
+  for (let attempt = 0; ; attempt++) {
+    try { return await command('POST', `/element/${await element(selector)}/${action}`, data); }
+    catch (error) {
+      if (attempt >= 2 || !error.message.includes('"error":"stale element reference"')) throw error;
+    }
+  }
+}
+async function click(selector) { await elementAction(selector, 'click'); }
 async function type(selector, text, replace = false) {
   // This embedded driver's clear keeps focus (unlike native WebKitWebDriver).
   // Re-resolve after clear in case a UI update replaced the input.
-  if (replace) await command('POST', `/element/${await element(selector)}/clear`, {});
-  await command('POST', `/element/${await element(selector)}/value`, { text });
+  if (replace) await elementAction(selector, 'clear');
+  await elementAction(selector, 'value', { text });
 }
 async function shell(index, text) {
   // Mark the actual xterm textarea; avoid child indices of the stage (dividers).
