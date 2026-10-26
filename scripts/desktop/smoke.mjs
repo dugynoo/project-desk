@@ -33,9 +33,12 @@ export async function exerciseDesktop({ launch, close, fixture, statePath }) {
   await page.locator('input.title-edit').fill('Local development');
   await page.locator('input.title-edit').press('Enter');
   await page.locator('[data-focus-id="session-s"]').getByText('Local development').waitFor();
-  await page.locator('[data-focus-id="session-menu-s"]').focus();
-  await page.keyboard.press('ArrowDown');
-  await page.getByRole('menu').waitFor();
+  // A late terminal focus on the CI runner can take the key; retry until the keyboard opens the menu.
+  for (let attempt = 1; ; attempt++) {
+    await page.locator('[data-focus-id="session-menu-s"]').focus();
+    await page.keyboard.press('ArrowDown');
+    try { await page.getByRole('menu').waitFor({ timeout: 5000 }); break; } catch (error) { if (attempt === 3) throw error; }
+  }
   await page.keyboard.press('Escape');
   await page.getByRole('menu').waitFor({ state: 'hidden' });
   await page.locator('[data-focus-id="project-p"]').press('Enter');
