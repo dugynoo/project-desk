@@ -1,1 +1,3 @@
-- Copying from a terminal (Ctrl+C / Cmd+C) no longer includes the indentation Claude Code puts at the start of each line or trailing spaces; indentation inside the selection, such as code blocks and list continuations, is kept.
+- Copying from an agent session (Ctrl+C / Cmd+C) now rejoins sentences the agent wrapped at the terminal width, so pasted text is not cut mid-sentence. Blank lines, list items and tables keep their line breaks; shell sessions are copied as is.
+- Hovering a truncated session name in the sidebar shows the full name.
+- Fix: a Claude conversation switched with /resume inside a session is now resumed after a restart instead of starting empty.
