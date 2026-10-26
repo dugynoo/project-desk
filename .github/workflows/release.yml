@@ -1,6 +1,6 @@
-# Vydanie: npm version 0.2.0 (zvýši verziu, commitne a vytvorí tag v0.2.0), potom git push --follow-tags.
-# Workflow zbuilduje appku pre Windows, macOS a Linux a vytvorí koncept vydania (draft).
-# Appky si aktualizáciu nájdu, až keď koncept na GitHube zverejníš.
+# Vydanie: npm run release (verzia podľa commitov, commit, tag a push; pozri scripts/release.mjs).
+# Workflow zbuilduje appku pre Windows, macOS a Linux do konceptu vydania (draft) a po úspechu
+# všetkých buildov ho zverejní; až potom si appky aktualizáciu nájdu.
 name: Release
 
 on:
@@ -112,3 +112,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber
+
+  # Publish only after every platform succeeded, so the updater never sees a partial release.
+  # Manual rebuilds of an older tag must not become the latest release.
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Updater manifest covers every platform
+        run: |
+          gh release download "$RELEASE_TAG" --pattern latest.json --dir "$RUNNER_TEMP"
+          for platform in windows-x86_64 darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            jq -e --arg p "$platform" '.platforms[$p].url' "$RUNNER_TEMP/latest.json" > /dev/null \
+              || { echo "::error::latest.json is missing $platform"; exit 1; }
+          done
+          test "$(jq -r .version "$RUNNER_TEMP/latest.json")" = "${RELEASE_TAG#v}"
+      - name: Publish release
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
