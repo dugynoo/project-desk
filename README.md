@@ -299,15 +299,17 @@ The release pipeline runs `scripts/build-arch.sh` after the Linux build. It gene
 RPM releases are checked by `scripts/verify-rpm.sh` in Fedora and openSUSE Tumbleweed containers for dependency resolution, installed files, shared libraries and desktop entries. This does not substitute for interactive desktop testing on those distributions. See [Tauri RPM guidance](https://v2.tauri.app/distribute/rpm/) and [Arch packaging guidance](https://v2.tauri.app/distribute/aur/).
 
 ### Releases
-```powershell
-npm version 0.2.0        # bumps the version, commits and tags v0.2.0
-git push --follow-tags
+Write `RELEASE_NOTES.md` first: 3–5 short, user-facing bullets for the upcoming release. Mention new features, fixes and any essential upgrade instruction; avoid commit lists and implementation details. The workflow reads this file from the release tag, so rebuilds use the same summary. Then run:
+
+```sh
+npm run release -- --dry-run   # shows the next version and the notes, changes nothing
+npm run release                # bumps, commits, tags and pushes
+npm run release -- major       # explicit bump (major, minor or patch)
 ```
-`npm version` also writes the version to `src-tauri/Cargo.toml` and `Cargo.lock` (`scripts/sync-version.mjs`).
 
-Before running `npm version`, update `RELEASE_NOTES.md` with 3–5 short, user-facing bullets for the upcoming release. Mention new features, fixes and any essential upgrade instruction; avoid commit lists and implementation details. Commit the notes with the changes they describe. The workflow reads this file from the release tag, so rebuilds use the same summary.
+The version follows [Conventional Commits](https://www.conventionalcommits.org/) since the last tag: any `feat` bumps minor, otherwise `fix` or `perf` bumps patch. Major is never inferred, not even from `feat!` or `BREAKING CHANGE`; pass it explicitly. With no `feat`/`fix`/`perf` commits the script stops unless a bump is given. It requires a clean `master` equal to `origin/master` (only `RELEASE_NOTES.md` may be uncommitted) and notes that differ from the last release. It writes the version to `package.json`, `package-lock.json`, `src-tauri/Cargo.toml` and `Cargo.lock` (`scripts/sync-version.mjs`), commits `chore: release X.Y.Z` with the notes, creates the annotated tag and pushes both atomically.
 
-The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb, rpm, Arch Linux x86_64 .pkg.tar.zst) and creates a draft release using `RELEASE_NOTES.md`. The app displays the complete notes as plain text when it offers the update. All supported installations discover the new release after publication. Windows, macOS and Linux AppImage use the built-in updater; Debian, RPM and Arch packages are upgraded through the package manager.
+The tag starts the Release workflow. It builds Windows (NSIS), macOS (Apple Silicon and Intel) and Linux (AppImage, deb, rpm, Arch Linux x86_64 .pkg.tar.zst) into a draft release using `RELEASE_NOTES.md`, then publishes it once every platform succeeded and `latest.json` lists all of them. A failed build leaves the draft unpublished; fix it and rerun the failed jobs, or delete the draft and tag. The app displays the complete notes as plain text when it offers the update. All supported installations discover the new release after publication. Windows, macOS and Linux AppImage use the built-in updater; Debian, RPM and Arch packages are upgraded through the package manager.
 
 The workflow signs updates with the `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets. The public key is in `tauri.conf.json`. If the private key is lost, installed apps cannot be updated anymore and have to be reinstalled by hand. Local builds do not create update files; `--config src-tauri/tauri.release.json` turns them on.
 
