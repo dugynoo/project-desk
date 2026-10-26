@@ -17,7 +17,31 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+      - name: Pin release source
+        id: source
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  checks:
+    needs: source
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      revision: ${{ needs.source.outputs.commit }}
+
   build:
+    needs: source
     permissions:
       contents: write
     strategy:
@@ -37,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.source.outputs.commit }}
 
       - name: Tag matches app version
         shell: bash
@@ -113,10 +137,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber
 
-  # Publish only after every platform succeeded, so the updater never sees a partial release.
+  # Builds and full CI test the same pinned commit, in parallel. A failed,
+  # skipped or cancelled prerequisite prevents publishing (default success()).
   # Manual rebuilds of an older tag must not become the latest release.
   publish:
-    needs: build
+    needs: [checks, build]
     if: github.event_name == 'push'
     permissions:
       contents: write

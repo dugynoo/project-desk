@@ -57,7 +57,7 @@ function main(args) {
   git("commit", "--quiet", "-m", `chore: release ${version}`);
   git("tag", "-a", `v${version}`, "-m", version);
   execFileSync("git", ["push", "--atomic", "origin", "master", `v${version}`], { stdio: "inherit" });
-  console.log(`\nPushed v${version}. The Release workflow builds it and publishes it when every platform succeeds.`);
+  console.log(`\nPushed v${version}. The Release workflow publishes it only after full CI and every platform build succeed.`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main(process.argv.slice(2));
