@@ -1,1 +1,3 @@
-- Add Pause for Claude, Codex and AGY sessions: it stops the agent and its child processes, such as MCP servers, to free memory, and Start again resumes the same conversation.
+- Closing the window or quitting while an agent is working or waiting for you now asks for confirmation, because quitting interrupts its current step.
+- Sessions interrupted by closing the app or by an update are marked "interrupted" in the sidebar after restart, so you know which agents to tell to continue.
+- Linux: fix a blank window on the NVIDIA proprietary driver ("Failed to create GBM buffer"). The WebKitGTK workaround is now applied automatically only where WebKit renders on NVIDIA; a WEBKIT_DISABLE_DMABUF_RENDERER value you set yourself still wins.
