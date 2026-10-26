@@ -29,6 +29,7 @@ pub struct AgentEvent {
     pub agent_session_id: Option<String>,
     pub event: String,
     pub notification_type: Option<String>,
+    pub source: Option<String>,
 }
 
 pub struct HookServer {
@@ -52,6 +53,7 @@ pub fn parse_event(desk_session_id: &str, body: &str) -> Option<AgentEvent> {
         agent_session_id: str_field("session_id"),
         event,
         notification_type: str_field("notification_type"),
+        source: str_field("source"),
     })
 }
 

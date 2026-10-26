@@ -115,7 +115,8 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     if (isUuid(ev.agentSessionId) && ev.agentSessionId !== s.agentSessionId) {
       runtimes.get(s.id)!.observation = undefined;
       s.agentSessionId = ev.agentSessionId;
-      s.hasConversation = ev.event !== "SessionStart";
+      // /resume switches to an existing conversation; a new or cleared one has nothing to resume yet.
+      s.hasConversation = ev.event !== "SessionStart" || ev.source === "resume";
       changed = true;
     }
     if ((ev.event === "UserPromptSubmit" || ev.event === "PreInvocation" || ev.event === "Stop") && !s.hasConversation) {
