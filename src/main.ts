@@ -156,6 +156,7 @@ const notify = createSystemNotifications({
 });
 
 const createRuntime = createTerminalFactory({
+  toast,
   getState: () => state, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
   isWatched, unread, renderSidebar, notify, select,
 });
@@ -1015,7 +1016,9 @@ function insertTemplate(tpl: PromptTemplate) {
   if (!id || !rt?.running) return toast(t("tpl.needSession"));
   void invoke("pty_write", { id, data: pasteSequence(tpl.text) })
     .then(() => {
-      if (tpl.send) window.setTimeout(() => void invoke("pty_write", { id, data: "\r" }), 150);
+      if (tpl.send) window.setTimeout(() => {
+        void invoke("pty_write", { id, data: "\r" }).catch((e) => toast(errorText(e)));
+      }, 150);
     })
     .catch((e) => toast(errorText(e)));
   rt.term.focus();

@@ -395,6 +395,8 @@ const en = {
   "err.antigravity.setupFailed": "Could not prepare the Project Desk AGY plugin. Existing custom settings were preserved: {detail}",
   "err.pty.shellFailed": "Could not start the shell: {detail}",
   "err.pty.notRunning": "The terminal is not running.",
+  "err.pty.inputFull": "Terminal input is full. This input was not sent; wait and try again.",
+  "err.pty.inputTooLarge": "This input was not sent: it exceeds the 1 MiB terminal input limit. Paste a smaller part or use a file.",
 };
 
 export type Key = keyof typeof en;
@@ -782,6 +784,8 @@ const sk: Record<Key, string> = {
   "err.antigravity.setupFailed": "Nepodarilo sa pripraviť AGY plugin Project Desk. Existujúce vlastné nastavenia zostali zachované: {detail}",
   "err.pty.shellFailed": "Nepodarilo sa spustiť shell: {detail}",
   "err.pty.notRunning": "Terminál nebeží.",
+  "err.pty.inputFull": "Vstup terminálu je plný. Tento vstup sa neodoslal; počkaj a skús znova.",
+  "err.pty.inputTooLarge": "Tento vstup sa neodoslal: prekračuje limit 1 MiB. Vlož menšiu časť alebo použi súbor.",
 };
 
 const cs: Record<Key, string> = {
@@ -1166,6 +1170,8 @@ const cs: Record<Key, string> = {
   "err.antigravity.setupFailed": "Nepodařilo se připravit AGY plugin Project Desk. Existující vlastní nastavení zůstala zachována: {detail}",
   "err.pty.shellFailed": "Nepodařilo se spustit shell: {detail}",
   "err.pty.notRunning": "Terminál neběží.",
+  "err.pty.inputFull": "Vstup terminálu je plný. Tento vstup se neodeslal; počkej a zkus znovu.",
+  "err.pty.inputTooLarge": "Tento vstup se neodeslal: překračuje limit 1 MiB. Vlož menší část nebo použij soubor.",
 };
 
 const DICTS: Record<Lang, Record<Key, string>> = { en, sk, cs };

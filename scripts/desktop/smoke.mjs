@@ -28,6 +28,15 @@ export async function exerciseDesktop({ launch, close, fixture, statePath }) {
   await search.locator('input').press('Escape');
   await search.waitFor({ state: 'hidden' });
   assert.equal(await panes().first().locator('textarea').evaluate(el => el === document.activeElement), true);
+  console.log('Smoke: oversized terminal paste reports an error and leaves the UI usable');
+  // Exercise xterm's paste listener and the real native input queue, without
+  // changing the user's clipboard or adding application-only test APIs.
+  await panes().first().locator('textarea').evaluate(input => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', 'x'.repeat(1024 * 1024 + 1));
+    input.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await page.locator('.toast').filter({ hasText: 'exceeds the 1 MiB terminal input limit' }).waitFor();
   console.log('Smoke: sidebar rename, keyboard menu, collapse and attention filter');
   await page.locator('[data-focus-id="session-s"]').dblclick();
   await page.locator('input.title-edit').fill('Local development');

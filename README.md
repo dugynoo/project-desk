@@ -193,6 +193,12 @@ their existing behavior.
 
 ### Terminal
 
+Terminal input is limited to 1 MiB of pending UTF-8 data per session, including
+the write in progress, and 1,024 queued messages. A full queue or oversized paste
+is rejected as a whole with a visible error; retry after the process catches up,
+or use a file for large text. Input never waits for queue space on the UI thread.
+This does not limit conversation history or terminal output.
+
 Terminal output uses bounded flow control: the PTY reader waits when unprocessed
 output reaches 256 KiB per terminal (plus at most one decoded read chunk).
 The frontend acknowledges roughly every 64 KiB after xterm has parsed it.

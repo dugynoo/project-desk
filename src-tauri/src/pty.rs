@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
@@ -15,6 +15,54 @@ use tauri::{AppHandle, Emitter};
 // Limits count UTF-8 bytes on the backend; the frontend echoes offsets unchanged.
 const OUTPUT_HIGH: u64 = 256 * 1024;
 const OUTPUT_ACK_BATCH: u64 = 64 * 1024;
+
+// Includes the write currently blocked in the OS. Bound message overhead too.
+const INPUT_BYTES: usize = 1024 * 1024;
+const INPUT_MESSAGES: usize = 1024;
+
+struct InputChunk {
+    data: Vec<u8>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl Drop for InputChunk {
+    fn drop(&mut self) {
+        self.pending.fetch_sub(self.data.len(), Ordering::Relaxed);
+    }
+}
+
+struct InputQueue {
+    sender: mpsc::SyncSender<InputChunk>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl InputQueue {
+    fn new() -> (Self, mpsc::Receiver<InputChunk>) {
+        let (sender, receiver) = mpsc::sync_channel(INPUT_MESSAGES);
+        (Self { sender, pending: Arc::new(AtomicUsize::new(0)) }, receiver)
+    }
+
+    fn send(&self, data: &[u8]) -> Result<(), String> {
+        if data.len() > INPUT_BYTES { return Err("pty.inputTooLarge".into()); }
+        if data.is_empty() { return Ok(()); }
+        self.pending.try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+            (data.len() <= INPUT_BYTES - used).then_some(used + data.len())
+        }).map_err(|_| "pty.inputFull".to_string())?;
+        // Reserve before allocating; a rejected paste is never partially enqueued.
+        let chunk = InputChunk { data: data.to_vec(), pending: self.pending.clone() };
+        self.sender.try_send(chunk).map_err(|error| match error {
+            mpsc::TrySendError::Full(_) => "pty.inputFull".into(),
+            mpsc::TrySendError::Disconnected(_) => "pty.notRunning".into(),
+        })
+    }
+}
+
+fn pump_input(mut writer: impl Write, receiver: mpsc::Receiver<InputChunk>) {
+    for chunk in receiver {
+        if writer.write_all(&chunk.data).and_then(|_| writer.flush()).is_err() { break; }
+        // Drop releases credit only after write AND flush (or on failure).
+    }
+}
 
 #[derive(Default)]
 struct OutputState {
@@ -75,7 +123,7 @@ struct PtySession {
     output: Arc<OutputFlow>,
     master: Box<dyn MasterPty + Send>,
     /// Input goes through a writer thread: a child that stops reading must not block the caller.
-    input: mpsc::Sender<Vec<u8>>,
+    input: InputQueue,
     killer: Box<dyn ChildKiller + Send + Sync>,
     #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     pid: Option<u32>,
@@ -257,7 +305,7 @@ impl PtyManager {
         drop(pair.slave);
 
         let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let killer = child.clone_killer();
         let pid = child.process_id();
 
@@ -271,12 +319,10 @@ impl PtyManager {
             if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
         });
 
-        let (input, input_rx) = mpsc::channel::<Vec<u8>>();
+        let (input, input_rx) = InputQueue::new();
         thread::spawn(move || {
             // Ends when the session drops its sender or the PTY rejects the write; dropping the writer sends EOF.
-            for data in input_rx {
-                if writer.write_all(&data).and_then(|_| writer.flush()).is_err() { break; }
-            }
+            pump_input(writer, input_rx);
         });
 
         let id = req.id.clone();
@@ -317,7 +363,7 @@ impl PtyManager {
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let s = sessions.get(id).ok_or("pty.notRunning")?;
-        s.input.send(data.as_bytes().to_vec()).map_err(|_| "pty.notRunning".to_string())
+        s.input.send(data.as_bytes())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
@@ -357,6 +403,75 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[test]
+    fn input_limits_include_in_flight_bytes_and_reject_whole_pastes() {
+        use super::{InputQueue, INPUT_BYTES};
+        let (queue, rx) = InputQueue::new();
+        assert_eq!(queue.send(&vec![b'x'; INPUT_BYTES + 1]), Err("pty.inputTooLarge".into()));
+        assert!(rx.try_recv().is_err());
+        queue.send(&vec![b'x'; INPUT_BYTES - 1]).unwrap();
+        let in_flight = rx.recv().unwrap();
+        // UTF-8 bytes, not characters; receiving does not release the credit.
+        assert_eq!(queue.send("á".as_bytes()), Err("pty.inputFull".into()));
+        assert!(rx.try_recv().is_err());
+        queue.send(b"z").unwrap();
+        assert_eq!(queue.send(b"!"), Err("pty.inputFull".into()));
+        drop(in_flight);
+        let paste = b"\x1b[200~hello\x1b[201~";
+        queue.send(paste).unwrap();
+        assert_eq!(rx.recv().unwrap().data, b"z");
+        assert_eq!(rx.recv().unwrap().data, paste);
+        assert_eq!(queue.pending.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn input_message_limit_and_disconnect_return_credit() {
+        use super::{InputQueue, INPUT_MESSAGES};
+        use std::sync::atomic::Ordering;
+        let (queue, rx) = InputQueue::new();
+        for _ in 0..INPUT_MESSAGES { queue.send(b"x").unwrap(); }
+        assert_eq!(queue.send(b"y"), Err("pty.inputFull".into()));
+        assert_eq!(queue.pending.load(Ordering::Relaxed), INPUT_MESSAGES);
+        drop(rx.recv().unwrap());
+        queue.send(b"z").unwrap();
+        drop(rx);
+        assert_eq!(queue.pending.load(Ordering::Relaxed), 0);
+        assert_eq!(queue.send(b"a"), Err("pty.notRunning".into()));
+        assert_eq!(queue.pending.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn stalled_writer_does_not_block_input_and_failure_releases_backlog() {
+        use super::{InputQueue, INPUT_BYTES, pump_input};
+        use std::io::{self, Write};
+        use std::sync::{mpsc, atomic::Ordering};
+        use std::time::Duration;
+        struct StalledWriter { entered: mpsc::Sender<()>, release: mpsc::Receiver<()> }
+        impl Write for StalledWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(5)).unwrap();
+                Err(io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        }
+        let (queue, rx) = InputQueue::new();
+        let (entered, started) = mpsc::channel();
+        let (release, resumed) = mpsc::channel();
+        let worker = std::thread::spawn(move || pump_input(StalledWriter { entered, release: resumed }, rx));
+        queue.send(&vec![b'x'; INPUT_BYTES - 1]).unwrap();
+        started.recv_timeout(Duration::from_secs(2)).unwrap();
+        queue.send(b"z").unwrap();
+        assert_eq!(queue.send(b"!"), Err("pty.inputFull".into()));
+        // An independent terminal can still accept input.
+        let (other, _rx) = InputQueue::new();
+        other.send(b"ok").unwrap();
+        release.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(queue.pending.load(Ordering::Relaxed), 0);
+        assert_eq!(queue.send(b"a"), Err("pty.notRunning".into()));
+    }
 
     #[test]
     fn output_window_blocks_until_valid_ack_and_cancel_wakes_reader() {

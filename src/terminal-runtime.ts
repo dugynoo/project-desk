@@ -6,6 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
+import { errorText } from "./i18n.ts";
 import { copiedText, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
@@ -37,6 +38,7 @@ export function attachWebgl(rt: Runtime) {
 }
 
 interface Dependencies {
+  toast: (message: string) => void;
   getState: () => PersistedState;
   runtimes: Map<string, Runtime>;
   setupLinks: (rt: Runtime, session: Session) => void;
@@ -50,7 +52,7 @@ interface Dependencies {
 }
 
 /** Owns xterm construction and input events; process lifetime is managed separately. */
-export function createTerminalFactory({ getState, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
+export function createTerminalFactory({ toast, getState, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
   isWatched, unread, renderSidebar, notify, select }: Dependencies) {
   return function createRuntime(s: Session): Runtime {
     const pane = el("div", "pane");
@@ -78,6 +80,20 @@ export function createTerminalFactory({ getState, runtimes, setupLinks, isAppSho
     const rt: Runtime = { term, fit, search, searchBar, pane, host, head, running: false, closing: false };
     setupLinks(rt, s);
 
+    let lastInputError = -Infinity;
+    const writeInput = (data: string) => {
+      if (!rt.running) return;
+      void invoke("pty_write", { id: s.id, data }).catch((error: unknown) => {
+        if (!rt.running || rt.closing) return;
+        // Holding a key against a stalled process must not flood the UI.
+        const now = performance.now();
+        if (now - lastInputError >= 3000) {
+          lastInputError = now;
+          toast(errorText(error));
+        }
+      });
+    };
+
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       const mod = e.ctrlKey || e.metaKey;
@@ -95,7 +111,7 @@ export function createTerminalFactory({ getState, runtimes, setupLinks, isAppSho
       if (mod && e.key.toLowerCase() === "v") return false;
       // Shift+Enter = nový riadok v Claude Code (rovnako ako Alt+Enter).
       if (e.key === "Enter" && e.shiftKey && !mod) {
-        void invoke("pty_write", { id: s.id, data: "\x1b\r" });
+        writeInput("\x1b\r");
         e.preventDefault();
         return false;
       }
@@ -103,7 +119,7 @@ export function createTerminalFactory({ getState, runtimes, setupLinks, isAppSho
     });
 
     term.onData((data) => {
-      if (rt.running) void invoke("pty_write", { id: s.id, data }).catch(() => {});
+      writeInput(data);
     });
     term.onResize(({ cols, rows }) => {
       if (rt.running) void invoke("pty_resize", { id: s.id, cols, rows }).catch(() => {});
