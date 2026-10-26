@@ -1,3 +1,3 @@
-- Copying from an agent session (Ctrl+C / Cmd+C) now rejoins sentences the agent wrapped at the terminal width, so pasted text is not cut mid-sentence. Blank lines, list items and tables keep their line breaks; shell sessions are copied as is.
-- Hovering a truncated session name in the sidebar shows the full name.
-- Fix: a Claude conversation switched with /resume inside a session is now resumed after a restart instead of starting empty.
+- Drag sessions to reorder them within their project. Ctrl+1–9 follow the new order.
+- Hide a session from its ⋯ menu to keep it running without taking space in the sidebar. **Hidden: N** under the project shows hidden sessions again, and a hidden session comes back on its own when it needs your confirmation.
+- Fix: on macOS and Linux, a Codex conversation opened with /resume in a new session now shows its status again and is the one resumed after a restart. Project Desk passes Codex a hook for that launch only; your Codex configuration is not changed. The session is linked once you send the first message.
