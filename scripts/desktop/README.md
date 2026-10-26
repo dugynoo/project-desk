@@ -110,7 +110,11 @@ the platform save shortcut write a real fixture file. Cancel retains dirty edits
 an external file write makes Save report a conflict without overwriting either
 version. Reload asks before discarding edits and reads the external version;
 closing with Discard restores the original two pane headers/order. All actions
-use WebDriver, not application IPC or direct changes to CodeMirror's state.
+use the test drivers, not application IPC or direct changes to CodeMirror's state.
+On macOS, driver 1.5.1 omits keyboard modifiers from pointer events. A small DOM
+mouse-event adapter supplies `metaKey` for the terminal-link click through the
+driver's evaluation channel. It tests xterm link activation, not native Command-click
+delivery. Linux uses standard WebDriver pointer and keyboard actions throughout.
 
 This Linux suite does not cover real agents, detached
 or SIGHUP-ignoring descendants, Wayland, or all Linux distributions. A foreground
@@ -126,7 +130,8 @@ a debug binary with the explicit `desktop-smoke` Cargo feature and communicates
 with the embedded `tauri-plugin-wdio-webdriver` 1.5.1 over standard WebDriver HTTP.
 This is the macOS route described in [Tauri's testing guide](https://v2.tauri.app/develop/tests/webdriver/)
 and [the plugin setup documentation](https://webdriver.io/docs/desktop-testing/tauri/plugin-setup).
-User actions use WebDriver; DOM reads/focus use the plugin's `/wdio/eval` channel,
+User actions use WebDriver, with the modifier-click adapter described above;
+DOM reads/focus and that adapter use the plugin's `/wdio/eval` channel,
 which includes the macOS cold-WebView handling described in [upstream issue #540](https://github.com/webdriverio/desktop-mobile/issues/540).
 The HTTP deadline exceeds the driver's script timeout so its diagnostics can arrive.
 There is no WDIO JavaScript service,

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-// Shared real-WebView scenario. Adapters send WebDriver input; DOM evaluation
-// only reads geometry/state. Never invoke app IPC or mutate CodeMirror internals.
-export async function exerciseEditor({ fixture, platform, command, evaluate, wait, until, shell, click, type }) {
+// Shared real-WebView scenario. Never invoke app IPC or mutate CodeMirror internals.
+// macOS supplies a modifier-click adapter for its driver's missing pointer flags.
+export async function exerciseEditor({ fixture, platform, command, evaluate, wait, until, shell, click, type, modifiedClick }) {
   console.log(`${platform}: terminal link, editor save/dirty/conflict and grid restoration`);
   const file = join(fixture, 'editor-smoke.md');
   await writeFile(file, '# Smoke editor\n');
@@ -26,14 +26,18 @@ export async function exerciseEditor({ fixture, platform, command, evaluate, wai
     await move(point.x, point.y);
     return evaluate('return document.querySelector(".pane.visible .term").title');
   }, Boolean, 'terminal file link resolved');
-  await keys([{ type: 'keyDown', value: mod }]);
-  try {
-    await command('POST', '/actions', { actions: [{ type: 'pointer', id: 'editor-mouse',
-      parameters: { pointerType: 'mouse' }, actions: [
-        { type: 'pointerMove', origin: 'viewport', duration: 0, ...point },
-        { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 },
-      ] }] });
-  } finally { await keys([{ type: 'keyUp', value: mod }]); }
+  if (modifiedClick) {
+    await modifiedClick(point);
+  } else {
+    await keys([{ type: 'keyDown', value: mod }]);
+    try {
+      await command('POST', '/actions', { actions: [{ type: 'pointer', id: 'editor-mouse',
+        parameters: { pointerType: 'mouse' }, actions: [
+          { type: 'pointerMove', origin: 'viewport', duration: 0, ...point },
+          { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 },
+        ] }] });
+    } finally { await keys([{ type: 'keyUp', value: mod }]); }
+  }
   await wait('return !!document.querySelector(".text-editor:not([hidden]) .cm-content")', 'editor opens from terminal link');
   assert.equal(await evaluate('return document.querySelectorAll(".pane.visible").length'), 1);
   assert.equal(await evaluate('return document.querySelector(".text-editor-title").textContent'), 'editor-smoke.md');

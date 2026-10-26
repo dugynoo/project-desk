@@ -77,7 +77,8 @@ async function request(method, path, data) {
   return result.value;
 }
 const command = (method, path, data) => request(method, `/session/${sessionId}${path}`, data);
-// Use the plugin's macOS-hardened evaluation channel for DOM reads/focus only.
+// Use the plugin's macOS-hardened evaluation channel for DOM reads/focus and
+// the narrowly scoped modifier-click compatibility adapter below.
 // It handles WebKit reclaiming completion callbacks on cold CI webviews (#540).
 // User actions still go through WebDriver; no application IPC is mocked/invoked.
 const evaluate = (script, ...args) => request('POST', '/wdio/eval', {
@@ -106,6 +107,19 @@ async function elementAction(selector, action, data = {}) {
   }
 }
 async function click(selector) { await elementAction(selector, 'click'); }
+async function modifiedClick({ x, y }) {
+  // Driver 1.5.1's pointer_input.rs omits ctrlKey/metaKey from mouse events.
+  // Match its DOM dispatch with the missing modifier; still exercise xterm's
+  // link activation and the real UI/native file path, never private app IPC.
+  await evaluate(`const [x, y] = arguments;
+    const target = document.elementFromPoint(x, y);
+    if (!target) throw Error('No target for modifier click');
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true,
+        composed: true, view: window, detail: 1, clientX: x, clientY: y,
+        button: 0, buttons: type === 'mousedown' ? 1 : 0, metaKey: true }));
+    }`, x, y);
+}
 async function type(selector, text, replace = false) {
   // This embedded driver's clear keeps focus (unlike native WebKitWebDriver).
   // Re-resolve after clear in case a UI update replaced the input.
@@ -168,7 +182,7 @@ try {
   await wait('return !!document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head.stopped")', 'shell stopped');
   await click('[data-focus-id="restart-s2"]');
   await wait('return document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head").textContent.includes("Running")', 'shell restarted');
-  await exerciseEditor({ fixture, platform: 'macOS', command, evaluate, wait, until, shell, click, type });
+  await exerciseEditor({ fixture, platform: 'macOS', command, evaluate, wait, until, shell, click, type, modifiedClick });
   await click('[data-focus-id="session-menu-s"]');
   await click('[role="menuitem"]');
   await type('input.title-edit', 'macOS saved session\uE007', true);
