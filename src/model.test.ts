@@ -36,6 +36,7 @@ import {
   orderedProjects,
   relativePath,
   pasteSequence,
+  copiedText,
   templatesFor,
   DEFAULT_SETTINGS,
   folderName,
@@ -477,6 +478,18 @@ test("šablóny: projektové pred spoločnými, cudzí projekt nie", () => {
 test("vloženie šablóny je jeden paste a nedá sa z neho utiecť", () => {
   assert.equal(pasteSequence("a\nb"), "\x1b[200~a\rb\x1b[201~");
   assert.equal(pasteSequence("x\x1b[201~; calc"), "\x1b[200~x; calc\x1b[201~");
+});
+
+test("kopírovanie z terminálu odstráni spoločné odsadenie a medzery na konci, štruktúru nechá", () => {
+  // Výber začína za „⏺ “ v odpovedi Claude Code, ďalšie riadky majú jeho dve medzery odsadenia.
+  assert.equal(copiedText("Čau Kubo,   \n  druhý riadok\n\n  1. krok\n     pokračovanie", 2),
+    "Čau Kubo,\ndruhý riadok\n\n1. krok\n   pokračovanie");
+  // Celé riadky bloku kódu: vnútorné odsadenie zostane.
+  assert.equal(copiedText("    def f():\n        return 1"), "def f():\n    return 1");
+  // Riadok s menším odsadením než prvý nesmie prísť o text.
+  assert.equal(copiedText("  ⏺ odpoveď\n    pokračuje"), "⏺ odpoveď\n  pokračuje");
+  assert.equal(copiedText("a\n   \nb"), "a\n\nb");
+  assert.equal(copiedText("   "), "");
 });
 
 test("cesty k súborom v texte terminálu", () => {
