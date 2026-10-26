@@ -10,7 +10,12 @@ fn payload(input: &str) -> Option<String> {
     if v["hook_event_name"] != "SessionStart" { return None; }
     let id = v["session_id"].as_str()?;
     uuid::Uuid::parse_str(id).ok()?;
-    Some(json!({"hook_event_name": "SessionStart", "session_id": id}).to_string())
+    let mut out = json!({"hook_event_name": "SessionStart", "session_id": id});
+    // Only Claude's known start sources; a resumed conversation must reopen with --resume.
+    if let Some(source) = v["source"].as_str().filter(|s| matches!(*s, "startup" | "resume" | "clear" | "compact")) {
+        out["source"] = json!(source);
+    }
+    Some(out.to_string())
 }
 
 fn background_payload(input: &str) -> Option<String> {
@@ -77,6 +82,11 @@ mod tests {
             "prompt":"secret", "transcript_path":"private", "cwd":"private"});
         let out: Value = serde_json::from_str(&payload(&input.to_string()).unwrap()).unwrap();
         assert_eq!(out, json!({"hook_event_name":"SessionStart", "session_id":id}));
+        let resumed = json!({"hook_event_name":"SessionStart", "session_id":id, "source":"resume"});
+        let out: Value = serde_json::from_str(&payload(&resumed.to_string()).unwrap()).unwrap();
+        assert_eq!(out["source"], "resume");
+        let odd = json!({"hook_event_name":"SessionStart", "session_id":id, "source":"private"});
+        assert!(!payload(&odd.to_string()).unwrap().contains("private"));
         assert!(payload("{}").is_none());
         assert!(payload("bad json").is_none());
         assert!(payload(&json!({"hook_event_name":"Stop", "session_id":id}).to_string()).is_none());

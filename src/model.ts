@@ -439,6 +439,8 @@ export interface AgentEvent {
   provider?: "claude" | "antigravity";
   toolName?: string | null;
   fullyIdle?: boolean | null;
+  /** SessionStart only: startup, resume, clear or compact. */
+  source?: string | null;
 }
 
 export interface SessionObservation {
