@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { emptyState } from '../src/model.ts';
+import { exerciseLinuxCrash } from './desktop/linux-crash.mjs';
 
 if (process.platform !== 'linux') throw Error('This suite requires Linux, WebKitWebDriver and tauri-driver.');
 const run = promisify(execFile);
@@ -125,6 +126,9 @@ async function close() {
   await run('wmctrl', ['-F', '-c', identifier], { timeout: 5000 });
   await until(async () => (await run('wmctrl', ['-l'], { timeout: 5000 })).stdout,
     windows => !windows.includes(identifier), 'native window closes');
+  await releaseSession();
+}
+async function releaseSession() {
   await request('DELETE', `/session/${sessionId}`).catch(error => console.log(`Session already closed: ${error.message}`));
   sessionId = undefined;
 }
@@ -188,7 +192,9 @@ try {
   assert.deepEqual(recovered.settings, checkpoint.settings);
   assert.deepEqual(recovered.closedSessions, checkpoint.closedSessions);
   assert.deepEqual(recovered.sessions.map(s => [s.id, s.title, s.stopped]), checkpoint.sessions.map(s => [s.id, s.title, s.stopped]));
-  await writeFile(join(artifacts, 'result.txt'), 'PASS: Linux native PTYs, sidebar, settings and session recovery\n');
+  await exerciseLinuxCrash({ launch, close, shell, click, type, wait, until,
+    saved, releaseSession, fixture, executable, artifacts });
+  await writeFile(join(artifacts, 'result.txt'), 'PASS: Linux native PTYs, sidebar, settings, normal and crash recovery\n');
   console.log('PASS: Linux desktop smoke');
 } catch (error) {
   if (sessionId) {

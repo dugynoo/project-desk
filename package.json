@@ -8,13 +8,14 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "lint": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\" \"scripts/desktop/*.test.mjs\"",
     "tauri": "tauri",
     "app:dev": "tauri dev --config src-tauri/tauri.dev.json",
     "release": "node scripts/release.mjs",
     "version": "node scripts/sync-version.mjs && git add src-tauri/Cargo.toml src-tauri/Cargo.lock",
     "test:desktop": "node --experimental-strip-types scripts/desktop-smoke.mjs",
-    "test:desktop:linux": "node --experimental-strip-types scripts/desktop-linux.mjs"
+    "test:desktop:linux": "node --experimental-strip-types scripts/desktop-linux.mjs",
+    "test:desktop:macos": "node --experimental-strip-types scripts/desktop-macos.mjs"
   },
   "dependencies": {
     "@codemirror/language": "^6.13.1",
