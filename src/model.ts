@@ -61,6 +61,8 @@ export interface Session {
   stopped?: boolean;
   /** Windows ended the process during shutdown; eligible for configured auto-resume. */
   resumeAfterShutdown?: boolean;
+  /** The agent was working when the app closed; cleared once it works again. */
+  interrupted?: boolean;
   exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
@@ -225,6 +227,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         started: s.started === true,
         stopped: s.stopped === true,
         resumeAfterShutdown: s.stopped === true && s.resumeAfterShutdown === true,
+        interrupted: s.interrupted === true,
         exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),
@@ -688,7 +691,7 @@ export function relativePath(root: string, file: string): string | undefined {
 export function archiveSession(state: PersistedState, id: string): void {
   const s = state.sessions.find((s) => s.id === id);
   if (!s) return;
-  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
+  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false, interrupted: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
   state.sessions = state.sessions.filter((s) => s.id !== id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
   state.ui.paneSlots = state.ui.paneSlots.map(value => value === id ? null : value);
@@ -707,6 +710,12 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
   if (closing) { archiveSession(state, id); return; }
   const s = state.sessions.find((s) => s.id === id);
   if (s) { s.stopped = true; s.exitCode = code; s.resumeAfterShutdown = systemShutdown; }
+}
+
+/** Agents whose current step closing the app would interrupt; detached workers keep running. */
+export function busyAgents(sessions: Session[], statusOf: (id: string) => Status, running: (id: string) => boolean): Session[] {
+  return sessions.filter(s => s.provider !== "shell" && !s.background && running(s.id)
+    && (statusOf(s.id) === "working" || statusOf(s.id) === "needs-you"));
 }
 
 export function shouldAutoResume(s: Session, enabled: boolean): boolean {

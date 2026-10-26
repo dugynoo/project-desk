@@ -20,6 +20,7 @@ import {
   sessionDiagnostics,
   agentCommand,
   archiveSession,
+  busyAgents,
   restoreSession,
   recordSessionExit,
   shouldAutoResume,
@@ -90,6 +91,19 @@ test("confirmed OS shutdown preserves resume eligibility without disguising stop
   recordSessionExit(state, s.id, 0, true, true);
   assert.equal(state.sessions.length, 0);
   assert.equal(shouldAutoResume(state.closedSessions[0], true), false, "explicit close wins over shutdown");
+});
+test("closing the app interrupts only running agents mid-step and the mark survives restart", () => {
+  const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
+    sessions: ["work", "ask", "done", "shell", "stopped", "worker"].map(id => ({ id, projectId: "p", title: id,
+      provider: id === "shell" ? "shell" : "claude", background: id === "worker" })) })).state;
+  const status: Record<string, string> = { work: "working", ask: "needs-you", done: "done", shell: "working", stopped: "working", worker: "working" };
+  const busy = busyAgents(state.sessions, id => status[id] as never, id => id !== "stopped");
+  assert.deepEqual(busy.map(s => s.id), ["work", "ask"]);
+  for (const s of busy) s.interrupted = true;
+  const restored = parseState(JSON.stringify(state)).state;
+  assert.deepEqual(restored.sessions.filter(s => s.interrupted).map(s => s.id), ["work", "ask"]);
+  archiveSession(restored, "work");
+  assert.equal(restored.closedSessions[0].interrupted, false, "explicit close discards the mark");
 });
 test("saved layouts are independent snapshots and switching never changes session lifecycle", () => {
   const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],

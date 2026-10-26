@@ -24,10 +24,13 @@ pub enum Reason {
 pub struct Coordinator {
     pending: Mutex<Vec<(String, Reason)>>,
     active: Mutex<Vec<Reason>>,
+    /// Quits the user is confirming in the UI; the webview answered, so no watchdog.
+    deferred: Mutex<Vec<String>>,
 }
 
 impl Coordinator {
     fn take(&self, id: &str) -> Option<Reason> {
+        self.deferred.lock().unwrap().retain(|current| current != id);
         let mut pending = self.pending.lock().unwrap();
         pending.iter().position(|(current, _)| current == id).map(|index| pending.remove(index).1)
     }
@@ -56,12 +59,26 @@ pub fn request(app: &AppHandle, reason: Reason) {
     let handle = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3));
+        if handle.state::<Coordinator>().deferred.lock().unwrap().contains(&id) { return; }
         complete(&handle, &id, false);
     });
 }
 
 pub fn pending(app: &AppHandle) -> Vec<String> {
     app.state::<Coordinator>().pending.lock().unwrap().iter().map(|(id, _)| id.clone()).collect()
+}
+
+/// Only a user-initiated quit may wait for confirmation; system shutdown never does.
+pub fn defer(app: &AppHandle, id: &str) -> bool {
+    let coordinator = app.state::<Coordinator>();
+    let pending = coordinator.pending.lock().unwrap();
+    let Some((_, reason)) = pending.iter().find(|(current, _)| current == id) else { return false; };
+    #[cfg(target_os = "macos")]
+    let confirmable = matches!(reason, Reason::Quit | Reason::NativeQuit);
+    #[cfg(not(target_os = "macos"))]
+    let confirmable = *reason == Reason::Quit;
+    if confirmable { coordinator.deferred.lock().unwrap().push(id.to_owned()); }
+    confirmable
 }
 
 pub fn complete(app: &AppHandle, id: &str, saved: bool) {
@@ -111,6 +128,15 @@ mod tests {
         assert!(coordinator.take("old").is_none());
         assert!(coordinator.take("new") == Some(Reason::Quit));
         assert!(coordinator.take("new").is_none());
+    }
+
+    #[test]
+    fn acknowledgement_clears_deferred_confirmation() {
+        let coordinator = Coordinator::default();
+        coordinator.pending.lock().unwrap().push(("quit".into(), Reason::Quit));
+        coordinator.deferred.lock().unwrap().push("quit".into());
+        assert!(coordinator.take("quit") == Some(Reason::Quit));
+        assert!(coordinator.deferred.lock().unwrap().is_empty());
     }
 
     #[cfg(target_os = "linux")]

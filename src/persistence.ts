@@ -17,17 +17,20 @@ export function createSaveQueue(snapshot: () => string, write: (json: string) =>
   return { schedule, flush };
 }
 
-/** Acknowledge native shutdown only after the serialized disk write completes. */
+/** Acknowledge native shutdown only after the serialized disk write completes. A declined quit is acknowledged unsaved. */
 export function createShutdownHandler(flush: () => Promise<void>, acknowledge: (id: string, saved: boolean) => Promise<void>,
-  preparing: () => void, onError: (error: unknown) => void) {
+  preparing: () => void, onError: (error: unknown) => void, mayQuit: (id: string) => Promise<boolean> = async () => true) {
   const pending = new Set<string>();
   return async (id: string) => {
     if (pending.has(id)) return;
     pending.add(id);
-    preparing();
     let saved = false;
-    try { await flush(); saved = true; }
-    catch (error) { onError(error); }
+    try {
+      if (await mayQuit(id)) {
+        preparing();
+        await flush(); saved = true;
+      }
+    } catch (error) { onError(error); }
     try { await acknowledge(id, saved); }
     catch (error) { onError(error); }
     finally { pending.delete(id); }
