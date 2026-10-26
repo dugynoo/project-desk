@@ -585,14 +585,33 @@ export function pasteSequence(text: string): string {
 
 /** Text z terminálu na skopírovanie: bez medzier na konci riadkov a bez spoločného odsadenia.
  * `startColumn` je stĺpec, kde výber začína; prvý riadok sa počíta, akoby mal pred sebou toľko medzier.
+ * S `columns` spojí riadky, ktoré agent zalomil len preto, že ďalšie slovo by sa do šírky terminálu nezmestilo.
  */
-export function copiedText(text: string, startColumn = 0): string {
+export function copiedText(text: string, startColumn = 0, columns = Infinity): string {
   const lines = text.split("\n").map(line => line.trimEnd());
-  const indents = lines.map((line, i) => line.length - line.trimStart().length + (i === 0 ? startColumn : 0));
+  const offset = (i: number) => i === 0 ? startColumn : 0;
+  const indents = lines.map((line, i) => line.length - line.trimStart().length + offset(i));
   const indent = Math.min(...lines.flatMap((line, i) => line ? [indents[i]] : []));
   if (!Number.isFinite(indent)) return lines.join("\n");
-  return lines.map((line, i) => line.slice(Math.max(0, indent - (i === 0 ? startColumn : 0)))).join("\n");
+  const wrapped = (i: number) => {
+    const [previous, next] = [lines[i - 1], lines[i].trimStart()];
+    if (!previous || !next || LIST_ITEM.test(next) || !/^[\p{L}\p{N}("'„“]/u.test(next)) return false;
+    // Pokračovanie odrážky začína pod textom, nie pod značkou.
+    const continuation = indents[i - 1] + (previous.trimStart().match(LIST_ITEM)?.[0].length ?? 0);
+    const width = [...previous].length + offset(i - 1);
+    return indents[i] === continuation && width + 1 + [...next.split(" ")[0]].length > columns - WRAP_SLACK;
+  };
+  const result: string[] = [];
+  lines.forEach((line, i) => {
+    const rest = line.slice(Math.max(0, indent - offset(i)));
+    if (i > 0 && wrapped(i)) result[result.length - 1] += " " + rest.trimStart();
+    else result.push(rest);
+  });
+  return result.join("\n");
 }
+const LIST_ITEM = /^(?:[-*+•⏺]|\d+[.)])\s+/;
+/** Agenti nechávajú pri pravom okraji pár voľných stĺpcov. */
+const WRAP_SLACK = 4;
 
 /** Literal file references for a single paste, never an Enter or a command.
  * Quote for the default shells (PowerShell on Windows, POSIX elsewhere).

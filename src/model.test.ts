@@ -492,6 +492,33 @@ test("kopírovanie z terminálu odstráni spoločné odsadenie a medzery na konc
   assert.equal(copiedText("   "), "");
 });
 
+test("kopírovanie spojí riadky zalomené na šírku terminálu, zámerné konce riadkov nechá", () => {
+  const cols = 40;
+  // Šírka 40, výber začína za „⏺ “: „which“ by sa do prvého riadku už nezmestilo.
+  const reply = [
+    "This paragraph is long enough that the",
+    "  agent wraps it at the terminal width,",
+    "  which is forty columns here.",
+    "",
+    "  Short line.",
+    "  Another short line.",
+  ].join("\n");
+  assert.equal(copiedText(reply, 2, cols),
+    "This paragraph is long enough that the agent wraps it at the terminal width, which is forty columns here.\n\nShort line.\nAnother short line.");
+  // Odrážky: pokračovanie pod textom sa spojí, ďalšia odrážka zostane na novom riadku.
+  const list = [
+    "  1. Download the package from the release",
+    "     page and keep it in Downloads.",
+    "  2. Install it with pacman and start the",
+    "  app without the variable.",
+  ].join("\n");
+  assert.equal(copiedText(list, 0, 44),
+    "1. Download the package from the release page and keep it in Downloads.\n2. Install it with pacman and start the\napp without the variable.");
+  // Riadky tabuľky ani kód začínajúci symbolom sa nespájajú; bez šírky sa nespája nič.
+  assert.equal(copiedText("│ a long table cell that reaches the edge │\n│ next │", 0, 44), "│ a long table cell that reaches the edge │\n│ next │");
+  assert.equal(copiedText("This paragraph is long enough that the\nagent wraps it.", 0), "This paragraph is long enough that the\nagent wraps it.");
+});
+
 test("cesty k súborom v texte terminálu", () => {
   const refs = (s: string) => findFileRefs(s).map((r) => [r.path, r.line ?? null, s.slice(r.index, r.index + r.length)]);
   assert.deepEqual(refs("Upravil som src/main.ts:120 a README.md."), [

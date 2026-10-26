@@ -84,7 +84,9 @@ export function createTerminalFactory({ getState, runtimes, setupLinks, isAppSho
       if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
       // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
       if (mod && e.key.toLowerCase() === "c" && term.hasSelection()) {
-        void navigator.clipboard.writeText(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x));
+        // Agenti lámu dlhé vety sami; v shelli môžu byť riadky zarovnané zámerne (stĺpce, tabuľky).
+        const columns = s.provider === "shell" ? undefined : term.cols;
+        void navigator.clipboard.writeText(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x, columns));
         term.clearSelection();
         e.preventDefault();
         return false;
