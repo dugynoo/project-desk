@@ -17,6 +17,8 @@ mod shutdown;
 mod updates;
 mod instance;
 mod file_drop;
+#[cfg(target_os = "linux")]
+mod webkit_nvidia;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -301,6 +303,8 @@ async fn find_codex_session(cwd: String, since_ms: u64, exclude: Vec<String>) ->
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    webkit_nvidia::configure();
     if let Err(e) = job::kill_children_on_exit() {
         eprintln!("Orphan guard is off, terminals may outlive a crash: {e}");
     }
