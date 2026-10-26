@@ -30,9 +30,9 @@ Coverage:
 Failures save a screenshot, error and synthetic state under `test-results/desktop`;
 Windows CI uploads these artifacts. `fixture.json` identifies temporary files/state
 retained for diagnosis (including on success). They contain no real conversations.
-Windows and Linux desktop suites run in CI; domain/Rust checks run on all
+Windows, Linux and macOS desktop suites are configured in CI; domain/Rust checks run on all
 three systems. These tests do not yet verify agent-provider behavior, background
-Claude workers, native file pickers, or macOS desktop UI. Forced termination
+Claude workers or native file pickers. Forced termination
 tests the last completed save, not power loss, a crash during atomic replacement,
 or preservation of unsaved editor text/debounced state changes.
 
@@ -43,7 +43,7 @@ describes WebDriver/WDIO for broader platform coverage. For this first Windows s
 the existing local smoke scripts already exercised real WebView2, so we use
 [Playwright's documented WebView2 connection](https://playwright.dev/docs/webview2)
 with its standard locators, input, timeouts and screenshots. Only `playwright-core`
-is a development dependency. No test plugin, application test IPC, background process
+is a development dependency. On Windows/Linux no test plugin, application test IPC, background process
 or polling is added to the shipped application. The debug port is set only in the generated temporary Tauri test configuration.
 [Elevated hosts ignore environment-provided browser flags](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/webview-features-flags),
 so configuring the test build directly also supports Windows CI. Production
@@ -92,7 +92,56 @@ the test does not invoke private application IPC or replace persisted state to
 simulate a successful save. Failures retain screenshot, DOM, state and driver log
 under `test-results/desktop-linux` for CI artifacts.
 
-This first Linux suite does not cover editor file interactions, real agents,
-forced termination, Wayland, or all Linux distributions. Windows keeps the broader
-editor and crash scenarios. Docker is not required. No Linux build or virtual disk
+The Linux crash scenario saves a rename through the normal debounce, starts a
+finite foreground child in the real Bash PTY, and sends `SIGKILL` only to the
+application. It obtains the app PID from the shell's parent and verifies that
+`/proc/PID/exe` is the unique fixture executable before signalling it. Both shell
+and child must be alive beforehand and exit before WebDriver cleanup is allowed.
+Identity checks use PID plus [start time from `/proc/PID/stat`](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html),
+so PID reuse does not count as a surviving process. Zombies count as exited, not
+running orphans; this does not assert immediate reaping by the OS. Relaunch verifies
+lock release, saved grid/settings/title, no unexpected archiving, an executable
+restored shell and preservation of the deliberately stopped session.
+`crash-processes.json` records synthetic process identities for failure diagnosis.
+
+This Linux suite does not cover editor file interactions, real agents, detached
+or SIGHUP-ignoring descendants, Wayland, or all Linux distributions. A foreground
+sleep process does not prove that every agent's background workers terminate.
+Windows keeps the broader editor scenarios. Docker is not required. No Linux build or virtual disk
 needs to be installed on a Windows developer's machine to run the CI job.
+
+## macOS desktop suite
+
+On macOS with Node 22+, Xcode command-line tools and the normal Tauri prerequisites,
+run `npm run test:desktop:macos`. The macOS CI job runs the same command. It builds
+a debug binary with the explicit `desktop-smoke` Cargo feature and communicates
+with the embedded `tauri-plugin-wdio-webdriver` 1.5.1 over standard WebDriver HTTP.
+This is the macOS route described in [Tauri's testing guide](https://v2.tauri.app/develop/tests/webdriver/)
+and [the plugin setup documentation](https://webdriver.io/docs/desktop-testing/tauri/plugin-setup).
+Only basic WebDriver operations are used; there is no WDIO JavaScript service,
+mocking plugin, fake backend, paid driver or browser download.
+
+The plugin is an optional macOS dependency, registered only with the feature AND
+debug assertions. Building the application in release mode with this feature is
+rejected. Normal dev/release builds have no automation server or its runtime cost.
+Only the temporary smoke config adds its capability. The plugin listens on loopback
+at a temporary port while the test app runs; it allows automation of that synthetic
+app and must not be used as an everyday build. The runner always builds and copies
+its own executable, and kills only the process it spawned if graceful cleanup fails.
+
+Each run uses a random app identifier and seeds only its own directory under
+`~/Library/Application Support/`. HOME, user settings and production state are left
+intact. Synthetic fixtures are retained and listed in
+`test-results/desktop-macos/fixture.json`; failures retain DOM, screenshot when
+available, state, error and app log. The CI job uploads those diagnostics.
+
+Coverage: two real Bash PTYs, actual command execution, stop/restart, sidebar rename
+and collapse/expand, editor settings, a native close/save request, and relaunch with
+saved layout/settings and a usable shell while intentionally stopped sessions stay
+stopped. A second scenario saves through the ordinary debounce, kills only the owned
+app with SIGKILL, then relaunches the same fixture to check lock release and recovery.
+Input comes through the embedded driver's DOM event implementation; this is not a
+test of macOS physical keyboard delivery, accessibility permissions, or IME handling.
+The suite does not yet assert descendant-process cleanup on macOS, native Quit/logout,
+editor file interactions, or authenticated agent/subagent recovery. It requires a
+successful macOS CI run before these scenarios can be called platform-validated.

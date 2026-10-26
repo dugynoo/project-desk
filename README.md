@@ -330,8 +330,11 @@ relaunch, grid/editor interaction, saving, dirty-file protection and editor sett
 It also forcefully terminates the test app, checks shell/child-process cleanup and
 verifies recovery from the last saved state without reviving stopped sessions.
 Linux CI additionally runs a native WebKit/WebDriver suite for shell input,
-stop/restart, sidebar actions, settings and recovery after a normal window close.
-It runs under Xvfb and does not require Docker. See [the desktop test guide](scripts/desktop/README.md)
+stop/restart, sidebar actions, settings and normal/crash recovery.
+It runs under Xvfb and does not require Docker. macOS CI runs `npm run test:desktop:macos`
+against real WKWebView and PTYs with an opt-in test-only WebDriver plugin, covering
+shell restart, sidebar/settings and normal/crash recovery. Shipped builds do not include it.
+See [the desktop test guide](scripts/desktop/README.md)
 for prerequisites, diagnostic artifacts and current platform limitations.
 
 ### Translations
