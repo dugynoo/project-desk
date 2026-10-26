@@ -1,7 +1,7 @@
 import { $, el, iconButton, onNextFrame } from "./dom.ts";
 import { createBranches } from "./branches.ts";
 import { openSessionMenu, openActionMenu, type MenuAction } from "./session-menu.ts";
-import { ATTENTION, moveProject, orderedProjects, sessionsOf, PROVIDER_LABEL,
+import { ATTENTION, moveProject, moveSession, orderedProjects, sessionsOf, PROVIDER_LABEL,
   type PersistedState, type Project, type Provider, type Session, type Status } from "./model.ts";
 import { t } from "./i18n.ts";
 
@@ -20,6 +20,8 @@ interface SidebarDependencies {
   createSession(project: Project, provider: Provider): void;
   start(session: Session): Promise<unknown>;
   closeSession(session: Session): Promise<unknown>;
+  pauseSession(session: Session): Promise<unknown>;
+  canPause(session: Session): boolean;
   removeProject(project: Project): Promise<unknown>;
   openEditor(path: string): void;
   showImport(project: Project): void;
@@ -33,11 +35,13 @@ interface SidebarDependencies {
 /** Owns sidebar DOM and transient interaction state; application state stays with the caller. */
 export function createSidebar(deps: SidebarDependencies) {
   const { getState, runtimes, unread, statusOf, statusLabel, contextLabel, save,
-    renderPaneHeads, select, createSession, start, closeSession, removeProject,
+    renderPaneHeads, select, createSession, start, closeSession, pauseSession, canPause, removeProject,
     openEditor, showImport, showInfo, jumpAttention, showClosedSessions } = deps;
   const PROVIDER_ICON = deps.providerIcons;
   const session = (id: string) => getState().sessions.find(s => s.id === id);
   let attentionOnly = false;
+  /** Projekty, v ktorých sú skryté relácie práve rozbalené (len do reštartu). */
+  const showHidden = new Set<string>();
   // Premenovanie priamo v zozname. Sidebar sa prekresľuje aj pri zmene stavu,
   // preto si rozpísaný text držíme mimo DOM.
   let editing: { id: string; draft: string; selectAll: boolean } | undefined;
@@ -71,8 +75,7 @@ export function createSidebar(deps: SidebarDependencies) {
       if (editing) editing.draft = input.value;
     });
     input.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter") finishRename(true);
+        if (e.key === "Enter") finishRename(true);
       else if (e.key === "Escape") finishRename(false);
     });
     input.addEventListener("blur", () => {
@@ -109,24 +112,26 @@ export function createSidebar(deps: SidebarDependencies) {
   }
 
 
-  // Presúvanie projektov ťahaním. Počas ťahania sa zoznam neprekresľuje, inak by zmizol cieľ.
-  let projectDrag: { id: string; moved: boolean } | undefined;
+  // Presúvanie projektov a relácií ťahaním. Počas ťahania sa zoznam neprekresľuje, inak by zmizol cieľ.
+  let drag: { moved: boolean } | undefined;
 
-  function startProjectDrag(e: PointerEvent, p: Project, box: HTMLElement) {
+  /** `targets` sú selektor povolených cieľov (s `data-id`), `drop` dostane cieľ a stranu. */
+  function startDrag(e: PointerEvent, box: HTMLElement, targets: string, drop: (toId: string, after: boolean) => void) {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button, input")) return;
+    e.stopPropagation();
     const startY = e.clientY;
-    projectDrag = { id: p.id, moved: false };
+    drag = { moved: false };
     let target: { id: string; after: boolean } | undefined;
-    const clearMarks = () => document.querySelectorAll(".project.drop-before, .project.drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
+    const clearMarks = () => document.querySelectorAll(".drop-before, .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
     const move = (ev: PointerEvent) => {
-      if (!projectDrag) return;
-      if (!projectDrag.moved && Math.abs(ev.clientY - startY) < 5) return;
-      projectDrag.moved = true;
+      if (!drag) return;
+      if (!drag.moved && Math.abs(ev.clientY - startY) < 5) return;
+      drag.moved = true;
       box.classList.add("dragging");
       clearMarks();
-      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(".project");
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(targets);
       target = undefined;
-      if (over?.dataset.id && over.dataset.id !== p.id) {
+      if (over?.dataset.id && over !== box) {
         const r = over.getBoundingClientRect();
         target = { id: over.dataset.id, after: ev.clientY > r.top + r.height / 2 };
         over.classList.add(target.after ? "drop-after" : "drop-before");
@@ -137,17 +142,17 @@ export function createSidebar(deps: SidebarDependencies) {
       window.removeEventListener("pointerup", up);
       clearMarks();
       box.classList.remove("dragging");
-      if (!projectDrag?.moved) {
-        projectDrag = undefined;
+      if (!drag?.moved) {
+        drag = undefined;
         return;
       }
       if (target) {
-        getState().projects = moveProject(getState().projects, p.id, target.id, target.after);
+        drop(target.id, target.after);
         save();
       }
-      // Click, ktorý príde hneď po pustení, ešte uvidí `moved` a projekt nezbalí.
+      // Click, ktorý príde hneď po pustení, ešte uvidí `moved` a nič neprepne.
       window.setTimeout(() => {
-        projectDrag = undefined;
+        drag = undefined;
         renderSidebar();
       }, 0);
     };
@@ -182,7 +187,7 @@ export function createSidebar(deps: SidebarDependencies) {
   }
   function renderSidebar() {
     refreshBranches();
-    if (projectDrag || sidebarMenuOpen) return;
+    if (drag || sidebarMenuOpen) return;
     closeSessionMenu?.();
     closeSessionMenu = undefined;
     const focused = document.activeElement as HTMLElement;
@@ -247,9 +252,11 @@ export function createSidebar(deps: SidebarDependencies) {
       }
       row.append(disclosure, actions);
       disclosure.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); } };
-      row.addEventListener("pointerdown", (e) => startProjectDrag(e, p, box));
+      row.addEventListener("pointerdown", (e) => startDrag(e, box, ".project", (toId, after) => {
+        getState().projects = moveProject(getState().projects, p.id, toId, after);
+      }));
       row.addEventListener("click", () => {
-        if (projectDrag?.moved) return;
+        if (drag?.moved) return;
         p.collapsed = !p.collapsed;
         if (!p.collapsed) refreshBranches(true, [p.path]);
         save();
@@ -258,15 +265,21 @@ export function createSidebar(deps: SidebarDependencies) {
       box.append(row);
 
       if (!p.collapsed || attentionOnly) {
-        for (const s of sessionsOf(getState(), p.id)) {
+        const all = sessionsOf(getState(), p.id);
+        // Filter pozornosti ukazuje aj skryté; inak sú skryté len po rozbalení, na svojom mieste.
+        const hiddenCount = attentionOnly ? 0 : all.filter((s) => s.hidden).length;
+        for (const s of all) {
           if (attentionOnly && !ATTENTION.has(statusOf(s.id))) continue;
+          if (s.hidden && hiddenCount && !showHidden.has(p.id)) continue;
           const st = statusOf(s.id);
           const item = el("div", "session");
+          item.classList.toggle("is-hidden", s.hidden === true && hiddenCount > 0);
+          item.dataset.id = s.id;
           item.classList.toggle("active", s.id === getState().ui.activeSessionId);
           item.classList.toggle("unread", unread.has(s.id) || getState().notifications.some(n => n.sessionId === s.id && !n.read));
           const body = el("div", "body");
           body.tabIndex = 0; body.setAttribute("role", "button"); body.dataset.focusId = `session-${s.id}`;
-          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}`);
+          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}${s.interrupted ? `, ${t("session.interrupted")}` : ""}`);
           body.setAttribute("aria-pressed", String(s.id === getState().ui.activeSessionId));
           body.onkeydown = e => {
             if (e.target instanceof HTMLInputElement) return;
@@ -279,9 +292,18 @@ export function createSidebar(deps: SidebarDependencies) {
             line.append(document.createTextNode(`${PROVIDER_ICON[s.provider]}  `), editInput);
             body.append(line);
           } else {
-            body.append(el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`));
+            const title = el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`);
+            // Celý názov na hover, len keď je orezaný.
+            title.onmouseenter = () => { title.title = title.scrollWidth > title.clientWidth ? s.title : ""; };
+            body.append(title);
           }
-          body.append(el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`));
+          const sub = el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`);
+          if (s.interrupted) {
+            const mark = el("span", "interrupted", ` · ${t("session.interrupted")}`);
+            mark.title = t("session.interruptedHint");
+            sub.append(mark);
+          }
+          body.append(sub);
           const actions = el("span", "row-actions");
           if (!runtimes.get(s.id)?.running) {
             const restart = iconButton("↻", t("session.restart"), () => void start(s));
@@ -290,18 +312,31 @@ export function createSidebar(deps: SidebarDependencies) {
           const sessionActions = () => [
             { label: t("session.rename"), run: () => startRename(s) },
             { label: t("session.info"), run: () => showInfo(s) },
+            { label: t(s.hidden ? "session.unhide" : "session.hide"), run: () => { s.hidden = !s.hidden; save(); renderSidebar(); } },
+            ...(canPause(s) ? [{ label: t("session.pause"), run: () => void pauseSession(s) }] : []),
             { label: t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"), danger: true, separator: true, run: () => void closeSession(s) },
           ];
           const moreActions = actionsButton(sessionActions, `session-menu-${s.id}`);
           actions.append(moreActions);
           item.append(el("span", `dot ${st}`), body, actions);
-          item.addEventListener("click", () => select(s.id));
+          item.addEventListener("pointerdown", (e) => startDrag(e, item, `.project[data-id="${CSS.escape(p.id)}"] .session`, (toId, after) => {
+            getState().sessions = moveSession(getState().sessions, s.id, toId, after);
+          }));
+          item.addEventListener("click", () => { if (!drag?.moved) select(s.id); });
           item.addEventListener("dblclick", () => startRename(s));
           item.addEventListener("contextmenu", (e) => {
             e.preventDefault();
             moreActions.click();
           });
           box.append(item);
+        }
+        if (hiddenCount) {
+          const open = showHidden.has(p.id);
+          const toggle = el("button", "hidden-toggle", t(open ? "sidebar.collapseHidden" : "sidebar.hiddenCount", { n: hiddenCount }));
+          toggle.dataset.focusId = `hidden-${p.id}`;
+          toggle.setAttribute("aria-expanded", String(open));
+          toggle.onclick = () => { if (open) showHidden.delete(p.id); else showHidden.add(p.id); renderSidebar(); };
+          box.append(toggle);
         }
       }
       root.append(box);

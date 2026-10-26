@@ -31,9 +31,10 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     return entry && entry.agentId === s.agentSessionId ? entry.stats : undefined;
   };
 
-  // Codex si ID konverzácie vytvorí sám (najneskôr pri prvom prompte), preto ho dohľadávame
-  // v jeho session súboroch. Len pri úplne novej relácii: tá, čo sa otvorila cez výber
-  // v `codex resume`, by si inak mohla privlastniť cudziu konverzáciu z toho istého projektu.
+  // Codex si ID konverzácie vytvorí sám (najneskôr pri prvom prompte). Na macOS a Linuxe ho
+  // oznámi SessionStart hook z vlastného procesu, aj po /resume. Inak, alebo keď Codex hook
+  // nespustí, ho dohľadávame v session súboroch. Tam len pri úplne novej relácii: tá, čo sa
+  // otvorila cez výber v `codex resume`, by si inak mohla privlastniť cudziu konverzáciu z toho istého projektu.
   const codexLookup = createDiscovery();
 
   async function lookupCodexSessions() {
@@ -115,8 +116,16 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     if (isUuid(ev.agentSessionId) && ev.agentSessionId !== s.agentSessionId) {
       runtimes.get(s.id)!.observation = undefined;
       s.agentSessionId = ev.agentSessionId;
-      s.hasConversation = ev.event !== "SessionStart";
+      // /resume switches to an existing conversation; a new or cleared one has nothing to resume yet.
+      s.hasConversation = ev.event !== "SessionStart" || ev.source === "resume";
       changed = true;
+    }
+    if (s.provider === "codex") {
+      // The hook only names the conversation (it fires as the first prompt starts);
+      // status keeps coming from the session file, which polling now follows.
+      if (isUuid(s.agentSessionId)) codexLookup.delete(s.id);
+      if (changed) save();
+      return;
     }
     if ((ev.event === "UserPromptSubmit" || ev.event === "PreInvocation" || ev.event === "Stop") && !s.hasConversation) {
       s.hasConversation = true;

@@ -34,6 +34,7 @@ import {
   type PaneLayout,
   restoreSession,
   shouldAutoResume,
+  busyAgents,
   assignPaneSlot,
   importConversation,
   nextAttention,
@@ -125,6 +126,15 @@ function setStatus(id: string, next: Status, silent = false) {
   statuses.set(id, next);
   const kind = attentionEventKind(prev, next, silent);
   const s = session(id);
+  if (next === "working" && s?.interrupted) {
+    s.interrupted = false;
+    save();
+  }
+  // Skrytá relácia, ktorá na teba čaká, sa vráti do zoznamu.
+  if (next === "needs-you" && s?.hidden) {
+    s.hidden = false;
+    save();
+  }
   if (kind && s) {
     recordAttention(state, s, kind, crypto.randomUUID(), Date.now(), isWatched(id));
     save();
@@ -156,7 +166,7 @@ const terminalLifecycle = createTerminalLifecycle({
   save, flush: () => saves.flush(), statusOf, setStatus, isWatched, layout, renderSidebar, renderPaneHeads, toast,
   confirmBox: (...args) => confirmBox(...args),
 });
-const { start, onExit, closeSession, forgetRuntime } = terminalLifecycle;
+const { start, onExit, closeSession, pauseSession, canPause, forgetRuntime } = terminalLifecycle;
 
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
@@ -249,6 +259,7 @@ function renderPaneHeads() {
       }));
     }
     if (state.ui.grid) rt.head.append(iconButton(zoomedId === id ? "⊟" : "⤢", t(zoomedId === id ? "panes.restore" : "panes.maximize"), () => togglePaneZoom(id)));
+    if (canPause(s)) rt.head.append(iconButton("⏸", t("session.pause"), () => void pauseSession(s)));
     if (!rt.running) rt.head.append(iconButton("↻", t("session.restart"), () => void start(s)));
     rt.head.classList.toggle("stopped", s.stopped === true);
   }
@@ -379,8 +390,22 @@ async function openTextEditor(file?: string, line?: number) {
     await textEditor!.open(file, line);
   } catch (e) { toast(errorText(e)); }
 }
+const busy = () => busyAgents(state.sessions, statusOf, id => runtimes.get(id)?.running === true);
+let quitConfirmation: Promise<boolean> | undefined;
+/** Concurrent quit requests (window, menu, AppKit) share one dialog. */
+function confirmQuit(): Promise<boolean> {
+  const sessions = busy();
+  if (!sessions.length) return Promise.resolve(true);
+  return quitConfirmation ??= confirmBox(t("quit.title"), t("quit.body", { titles: sessions.map(s => s.title).join(", ") }), t("quit.ok"))
+    .finally(() => { quitConfirmation = undefined; });
+}
+/** Remember interrupted steps so the restarted sessions can say so. */
+function markInterrupted() {
+  for (const s of busy()) s.interrupted = true;
+}
 async function flushForRestart() {
   if (textEditor?.pending()) throw new Error(t("textEditor.saveFirst"));
+  markInterrupted();
   await saves.flush();
 }
 
@@ -710,7 +735,7 @@ const sidebar = createSidebar({
   getState: () => state, runtimes, unread, providerIcons: PROVIDER_ICON,
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
-  start, closeSession, removeProject, openEditor, showImport, showInfo, jumpAttention,
+  start, closeSession, pauseSession, canPause, removeProject, openEditor, showImport, showInfo, jumpAttention,
   showClosedSessions, showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
@@ -1293,7 +1318,8 @@ async function main() {
   const prepareShutdown = createShutdownHandler(flushForRestart,
     (id, saved) => invoke("shutdown_ready", { id, saved }),
     () => { closingWindow = true; },
-    e => toast(t("app.saveFailed", { detail: String(e) })));
+    e => toast(t("app.saveFailed", { detail: String(e) })),
+    async id => !busy().length || !await invoke<boolean>("shutdown_defer", { id }) || confirmQuit());
   await listen<string>("prepare-shutdown", e => void prepareShutdown(e.payload));
   await listen("shutdown-cancelled", () => { closingWindow = false; });
   const pendingShutdownsAtStartup = await invoke<string[]>("shutdown_pending");
@@ -1305,6 +1331,8 @@ async function main() {
     if (closingWindow) return;
     closingWindow = true;
     if (textEditor && !await textEditor.mayClose()) { closingWindow = false; return; }
+    if (!await confirmQuit()) { closingWindow = false; return; }
+    markInterrupted();
     try { await saves.flush(); await win.destroy(); }
     catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
   });

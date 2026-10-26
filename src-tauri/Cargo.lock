@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "project-desk"
-version = "0.8.4"
+version = "0.9.1"
 dependencies = [
  "gdk",
  "gio",
@@ -2889,6 +2889,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

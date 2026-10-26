@@ -1,3 +1,2 @@
-- Add editor preferences for file links, font size and line wrapping.
-- Improve Claude status reporting and prevent stale Codex statuses after resume.
-- Refactor terminal/sidebar code and add desktop restart and crash-recovery checks.
+- Fix: the app no longer freezes when a closed session cannot exit. Typing into such a session used to block the whole window.
+- Fix: closing a session on macOS and Linux now also ends the agent running in it.

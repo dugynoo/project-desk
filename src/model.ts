@@ -61,6 +61,10 @@ export interface Session {
   stopped?: boolean;
   /** Windows ended the process during shutdown; eligible for configured auto-resume. */
   resumeAfterShutdown?: boolean;
+  /** The agent was working when the app closed; cleared once it works again. */
+  interrupted?: boolean;
+  /** Skrytá v sidebare; proces beží ďalej a vráti sa, keď na teba čaká. */
+  hidden?: boolean;
   exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
@@ -225,6 +229,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         started: s.started === true,
         stopped: s.stopped === true,
         resumeAfterShutdown: s.stopped === true && s.resumeAfterShutdown === true,
+        interrupted: s.interrupted === true,
+        hidden: s.hidden === true,
         exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),
@@ -381,8 +387,11 @@ export function agentCommand(
     return isUuid(s.agentSessionId) ? `${base} --conversation ${s.agentSessionId}` : base;
   }
   if (s.provider === "codex") {
-    if (!s.started) return settings.codexCommand.trim() || "codex";
-    const resume = settings.codexResumeCommand.trim() || "codex resume";
+    // SessionStart hook len pre toto spustenie (`-c`), aby Desk poznal ID aj po /resume.
+    // Windows ho zatiaľ nemá: PowerShell mení úvodzovky v argumentoch natívnych programov.
+    const hooks = hooksEnabled && platform !== "windows" ? ` -c ${envRef(platform, "PROJECT_DESK_CODEX_HOOKS")}` : "";
+    if (!s.started) return (settings.codexCommand.trim() || "codex") + hooks;
+    const resume = (settings.codexResumeCommand.trim() || "codex resume") + hooks;
     // So známym ID sa otvorí presne tá konverzácia, inak Codex ukáže výber.
     return isUuid(s.agentSessionId) ? `${resume} ${s.agentSessionId}` : resume;
   }
@@ -433,9 +442,11 @@ export interface AgentEvent {
   agentSessionId?: string | null;
   event: string;
   notificationType?: string | null;
-  provider?: "claude" | "antigravity";
+  provider?: "claude" | "antigravity" | "codex";
   toolName?: string | null;
   fullyIdle?: boolean | null;
+  /** SessionStart only: startup, resume, clear, compact (Codex also fork). */
+  source?: string | null;
 }
 
 export interface SessionObservation {
@@ -578,6 +589,36 @@ export function pasteSequence(text: string): string {
   return `\x1b[200~${clean}\x1b[201~`;
 }
 
+/** Text z terminálu na skopírovanie: bez medzier na konci riadkov a bez spoločného odsadenia.
+ * `startColumn` je stĺpec, kde výber začína; prvý riadok sa počíta, akoby mal pred sebou toľko medzier.
+ * S `columns` spojí riadky, ktoré agent zalomil len preto, že ďalšie slovo by sa do šírky terminálu nezmestilo.
+ */
+export function copiedText(text: string, startColumn = 0, columns = Infinity): string {
+  const lines = text.split("\n").map(line => line.trimEnd());
+  const offset = (i: number) => i === 0 ? startColumn : 0;
+  const indents = lines.map((line, i) => line.length - line.trimStart().length + offset(i));
+  const indent = Math.min(...lines.flatMap((line, i) => line ? [indents[i]] : []));
+  if (!Number.isFinite(indent)) return lines.join("\n");
+  const wrapped = (i: number) => {
+    const [previous, next] = [lines[i - 1], lines[i].trimStart()];
+    if (!previous || !next || LIST_ITEM.test(next) || !/^[\p{L}\p{N}("'„“]/u.test(next)) return false;
+    // Pokračovanie odrážky začína pod textom, nie pod značkou.
+    const continuation = indents[i - 1] + (previous.trimStart().match(LIST_ITEM)?.[0].length ?? 0);
+    const width = [...previous].length + offset(i - 1);
+    return indents[i] === continuation && width + 1 + [...next.split(" ")[0]].length > columns - WRAP_SLACK;
+  };
+  const result: string[] = [];
+  lines.forEach((line, i) => {
+    const rest = line.slice(Math.max(0, indent - offset(i)));
+    if (i > 0 && wrapped(i)) result[result.length - 1] += " " + rest.trimStart();
+    else result.push(rest);
+  });
+  return result.join("\n");
+}
+const LIST_ITEM = /^(?:[-*+•⏺]|\d+[.)])\s+/;
+/** Agenti nechávajú pri pravom okraji pár voľných stĺpcov. */
+const WRAP_SLACK = 4;
+
 /** Literal file references for a single paste, never an Enter or a command.
  * Quote for the default shells (PowerShell on Windows, POSIX elsewhere).
  * Reject control characters instead of silently changing a filename.
@@ -630,13 +671,24 @@ export function formatTokens(n: number): string {
   return `${v < 10 ? v.toFixed(1).replace(".", ",") : Math.round(v)}${unit}`;
 }
 
+/** Relácie projektu v poradí, ako ich používateľ usporiadal (nové pribúdajú na koniec). */
 export function sessionsOf(state: PersistedState, projectId: string): Session[] {
-  return state.sessions.filter((s) => s.projectId === projectId).sort((a, b) => a.createdAt - b.createdAt);
+  return state.sessions.filter((s) => s.projectId === projectId);
 }
 
-/** Relácia pre Ctrl+1–8 v poradí zoznamu (aj zo zbalených projektov); Ctrl+9 je vždy posledná. */
+/** Presunie reláciu pred alebo za cieľovú v tom istom projekte. */
+export function moveSession(sessions: Session[], fromId: string, toId: string, after: boolean): Session[] {
+  const from = sessions.find((s) => s.id === fromId);
+  const to = sessions.find((s) => s.id === toId);
+  if (!from || !to || from === to || from.projectId !== to.projectId) return sessions;
+  const rest = sessions.filter((s) => s !== from);
+  rest.splice(rest.indexOf(to) + (after ? 1 : 0), 0, from);
+  return rest;
+}
+
+/** Relácia pre Ctrl+1–8 v poradí zoznamu (aj zo zbalených projektov, bez skrytých); Ctrl+9 je vždy posledná. */
 export function sessionByNumber(state: PersistedState, n: number): Session | undefined {
-  const all = orderedProjects(state.projects).flatMap((p) => sessionsOf(state, p.id));
+  const all = orderedProjects(state.projects).flatMap((p) => sessionsOf(state, p.id)).filter((s) => !s.hidden);
   return n === 9 ? all.at(-1) : all[n - 1];
 }
 
@@ -688,7 +740,7 @@ export function relativePath(root: string, file: string): string | undefined {
 export function archiveSession(state: PersistedState, id: string): void {
   const s = state.sessions.find((s) => s.id === id);
   if (!s) return;
-  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
+  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false, interrupted: false, hidden: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
   state.sessions = state.sessions.filter((s) => s.id !== id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
   state.ui.paneSlots = state.ui.paneSlots.map(value => value === id ? null : value);
@@ -707,6 +759,12 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
   if (closing) { archiveSession(state, id); return; }
   const s = state.sessions.find((s) => s.id === id);
   if (s) { s.stopped = true; s.exitCode = code; s.resumeAfterShutdown = systemShutdown; }
+}
+
+/** Agents whose current step closing the app would interrupt; detached workers keep running. */
+export function busyAgents(sessions: Session[], statusOf: (id: string) => Status, running: (id: string) => boolean): Session[] {
+  return sessions.filter(s => s.provider !== "shell" && !s.background && running(s.id)
+    && (statusOf(s.id) === "working" || statusOf(s.id) === "needs-you"));
 }
 
 export function shouldAutoResume(s: Session, enabled: boolean): boolean {

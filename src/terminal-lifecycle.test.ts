@@ -21,7 +21,7 @@ function fixture(query: (command: string) => Promise<unknown> = async () => null
   const channels: { onmessage: (chunk: OutputChunk) => void }[] = [];
   const written: string[] = [], notices: string[] = [];
   const acknowledgements: (() => void)[] = [], timers: (() => void)[] = [];
-  let disposed = 0, removed = 0, flushed = 0;
+  let disposed = 0, removed = 0, flushed = 0, confirmAnswer = true;
   const rt: LifecycleRuntime = {
     running: false, closing: false,
     term: { cols: 80, rows: 24,
@@ -42,10 +42,11 @@ function fixture(query: (command: string) => Promise<unknown> = async () => null
     schedule(callback) { timers.push(callback); }, save() {}, async flush() { flushed++; },
     statusOf: id => statuses.get(id) ?? "sleeping", setStatus: (id, status) => { statuses.set(id, status); },
     isWatched: () => false, layout() {}, renderSidebar() {}, renderPaneHeads() {},
-    toast: message => { notices.push(message); }, confirmBox: async () => true,
+    toast: message => { notices.push(message); }, confirmBox: async () => confirmAnswer,
   });
   return { lifecycle, state, rt, runtimes, statuses, unread, calls, channels, written, acknowledgements, timers, notices,
-    get disposed() { return disposed; }, get removed() { return removed; }, get flushed() { return flushed; } };
+    get disposed() { return disposed; }, get removed() { return removed; }, get flushed() { return flushed; },
+    set confirmAnswer(value: boolean) { confirmAnswer = value; } };
 }
 
 test("one pending spawn, render acknowledgement, and old output rejected after restart/disposal", async () => {
@@ -164,4 +165,39 @@ test("system shutdown persists recovery immediately without archiving", async ()
   assert.equal(f.flushed, 1);
   assert.equal(f.state.sessions.length, 1);
   assert.equal(f.state.closedSessions.length, 0);
+});
+
+test("pause stops an agent but keeps it listed, stopped, and resumable", async () => {
+  const f = fixture();
+  const s = f.state.sessions[0];
+  s.provider = "claude"; s.hasConversation = true; s.agentSessionId = "11111111-1111-4111-8111-111111111111";
+  await f.lifecycle.start(s);
+  assert.equal(f.lifecycle.canPause(s), true);
+  await f.lifecycle.pauseSession(s);
+  assert.equal(f.calls.filter(c => c.command === "pty_kill").length, 1);
+  f.lifecycle.onExit(s.id, 129);
+  assert.equal(s.stopped, true);
+  assert.equal(s.exitCode, undefined);
+  assert.equal(f.state.sessions.length, 1);
+  assert.equal(f.state.closedSessions.length, 0);
+  assert.equal(f.runtimes.has(s.id), true);
+  assert.equal(f.unread.has(s.id), false);
+  assert.equal(f.lifecycle.canPause(s), false);
+  await f.lifecycle.start(s);
+  const spawn = f.calls.filter(c => c.command === "pty_spawn").at(-1)!;
+  assert.match((spawn.args.args as { command: string }).command, /--resume 11111111/);
+});
+
+test("pause is unavailable for shells and background workers, and working agents need confirmation", async () => {
+  const f = fixture();
+  const s = f.state.sessions[0];
+  await f.lifecycle.start(s);
+  assert.equal(f.lifecycle.canPause(s), false);
+  s.provider = "claude"; s.background = true;
+  assert.equal(f.lifecycle.canPause(s), false);
+  s.background = false;
+  f.statuses.set(s.id, "working");
+  f.confirmAnswer = false;
+  await f.lifecycle.pauseSession(s);
+  assert.equal(f.calls.some(c => c.command === "pty_kill"), false);
 });
