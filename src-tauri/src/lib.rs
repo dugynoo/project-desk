@@ -302,6 +302,9 @@ async fn find_codex_session(cwd: String, since_ms: u64, exclude: Vec<String>) ->
     .flatten()
 }
 
+#[cfg(all(feature = "desktop-smoke", not(debug_assertions)))]
+compile_error!("desktop-smoke automation is restricted to debug builds");
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
@@ -309,7 +312,7 @@ pub fn run() {
     if let Err(e) = job::kill_children_on_exit() {
         eprintln!("Orphan guard is off, terminals may outlive a crash: {e}");
     }
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Must run before other plugins and before hooks or state are opened.
         // The bundle identifier keeps development and production independent.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -326,7 +329,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .on_window_event(file_drop::on_event)
+        .on_window_event(file_drop::on_event);
+    // Only explicitly opted-in macOS smoke builds embed an automation server.
+    // Normal development and shipped binaries never register it.
+    #[cfg(all(target_os = "macos", debug_assertions, feature = "desktop-smoke"))]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let app = builder
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             // The plugin can fail open without D-Bus on Linux. The file lock
