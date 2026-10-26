@@ -384,8 +384,11 @@ export function agentCommand(
     return isUuid(s.agentSessionId) ? `${base} --conversation ${s.agentSessionId}` : base;
   }
   if (s.provider === "codex") {
-    if (!s.started) return settings.codexCommand.trim() || "codex";
-    const resume = settings.codexResumeCommand.trim() || "codex resume";
+    // SessionStart hook len pre toto spustenie (`-c`), aby Desk poznal ID aj po /resume.
+    // Windows ho zatiaľ nemá: PowerShell mení úvodzovky v argumentoch natívnych programov.
+    const hooks = hooksEnabled && platform !== "windows" ? ` -c ${envRef(platform, "PROJECT_DESK_CODEX_HOOKS")}` : "";
+    if (!s.started) return (settings.codexCommand.trim() || "codex") + hooks;
+    const resume = (settings.codexResumeCommand.trim() || "codex resume") + hooks;
     // So známym ID sa otvorí presne tá konverzácia, inak Codex ukáže výber.
     return isUuid(s.agentSessionId) ? `${resume} ${s.agentSessionId}` : resume;
   }
@@ -436,10 +439,10 @@ export interface AgentEvent {
   agentSessionId?: string | null;
   event: string;
   notificationType?: string | null;
-  provider?: "claude" | "antigravity";
+  provider?: "claude" | "antigravity" | "codex";
   toolName?: string | null;
   fullyIdle?: boolean | null;
-  /** SessionStart only: startup, resume, clear or compact. */
+  /** SessionStart only: startup, resume, clear, compact (Codex also fork). */
   source?: string | null;
 }
 

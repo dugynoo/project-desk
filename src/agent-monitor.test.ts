@@ -142,3 +142,17 @@ test("/resume to another conversation reopens it with --resume; a cleared one st
   assert.equal(s.agentSessionId, cleared);
   assert.equal(s.hasConversation, false);
 });
+
+test("Codex SessionStart hook names the conversation after /resume without changing status", () => {
+  const f = fixture(async () => null);
+  const s = f.state.sessions[0];
+  s.agentSessionId = undefined;
+  const resumed = "01a177c5-7875-7103-9cdb-9ebb23eebd1f";
+  f.monitor.onAgentEvent({ deskSessionId: "s", provider: "codex", event: "SessionStart", agentSessionId: resumed, source: "resume" });
+  assert.equal(s.agentSessionId, resumed);
+  assert.equal(f.changes.length, 0);
+  assert.equal(f.saves, 1);
+  // A Claude event cannot rename a Codex session.
+  f.monitor.onAgentEvent({ deskSessionId: "s", event: "SessionStart", agentSessionId: agentId });
+  assert.equal(s.agentSessionId, resumed);
+});
