@@ -104,10 +104,18 @@ lock release, saved grid/settings/title, no unexpected archiving, an executable
 restored shell and preservation of the deliberately stopped session.
 `crash-processes.json` records synthetic process identities for failure diagnosis.
 
-This Linux suite does not cover editor file interactions, real agents, detached
+Both Linux and macOS also run `editor.mjs`: a modifier-click on an actual terminal
+file link opens CodeMirror and temporarily focuses one pane. Keyboard input and
+the platform save shortcut write a real fixture file. Cancel retains dirty edits;
+an external file write makes Save report a conflict without overwriting either
+version. Reload asks before discarding edits and reads the external version;
+closing with Discard restores the original two pane headers/order. All actions
+use WebDriver, not application IPC or direct changes to CodeMirror's state.
+
+This Linux suite does not cover real agents, detached
 or SIGHUP-ignoring descendants, Wayland, or all Linux distributions. A foreground
 sleep process does not prove that every agent's background workers terminate.
-Windows keeps the broader editor scenarios. Docker is not required. No Linux build or virtual disk
+Windows additionally covers live editor appearance changes. Docker is not required. No Linux build or virtual disk
 needs to be installed on a Windows developer's machine to run the CI job.
 
 ## macOS desktop suite
@@ -146,5 +154,5 @@ app with SIGKILL, then relaunches the same fixture to check lock release and rec
 Input comes through the embedded driver's DOM event implementation; this is not a
 test of macOS physical keyboard delivery, accessibility permissions, or IME handling.
 The suite does not yet assert descendant-process cleanup on macOS, native Quit/logout,
-editor file interactions, or authenticated agent/subagent recovery. It requires a
+or authenticated agent/subagent recovery. New editor scenarios require a
 successful macOS CI run before these scenarios can be called platform-validated.

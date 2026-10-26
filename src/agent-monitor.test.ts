@@ -156,3 +156,24 @@ test("Codex SessionStart hook names the conversation after /resume without chang
   f.monitor.onAgentEvent({ deskSessionId: "s", event: "SessionStart", agentSessionId: agentId });
   assert.equal(s.agentSessionId, resumed);
 });
+
+test("Codex resume switches polling to the reported ID and discards an old in-flight status", async () => {
+  const pending = deferred<typeof result>();
+  const resumed = "22222222-2222-4222-8222-222222222222";
+  const polled: unknown[] = [];
+  const f = fixture(async (command, args) => {
+    if (command !== "agent_poll") return null;
+    polled.push(args.agentId);
+    return args.agentId === agentId ? pending.promise : result;
+  });
+  const first = f.monitor.pollAgents();
+  f.monitor.onAgentEvent({ deskSessionId: "s", provider: "codex", event: "SessionStart", agentSessionId: resumed, source: "resume" });
+  pending.resolve(result);
+  await first;
+  assert.equal(f.changes.length, 0);
+  assert.equal(f.monitor.statsOf(f.state.sessions[0]), undefined);
+  await f.monitor.pollAgents();
+  assert.deepEqual(polled, [agentId, resumed]);
+  assert.equal(f.state.sessions[0].hasConversation, true);
+  assert.equal(f.changes.at(-1)?.status, "done");
+});

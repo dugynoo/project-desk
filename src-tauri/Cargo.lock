@@ -3058,6 +3058,7 @@ dependencies = [
 name = "project-desk"
 version = "0.9.1"
 dependencies = [
+ "base64 0.22.1",
  "gdk",
  "gio",
  "glib 0.18.5",
@@ -3082,6 +3083,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tempfile",
  "tiny_http",
+ "toml 1.1.8+spec-1.1.0",
  "uuid",
  "windows-sys 0.61.2",
  "winreg 0.56.0",

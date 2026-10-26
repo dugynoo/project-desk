@@ -39,8 +39,7 @@ pub struct HookServer {
     pub port: u16,
     pub token: String,
     pub settings_path: PathBuf,
-    /// `-c` value for Codex, see [`codex_hooks_override`].
-    pub codex_override: String,
+    pub executable: PathBuf,
 }
 
 /// Z tela hooku vytiahne len to, čo potrebujeme na stav relácie.
@@ -95,10 +94,30 @@ const CODEX_SESSION_FLAGS_KEY: &str = "/<session-flags>/config.toml:session_star
 /// its own Codex process. The user's config.toml stays untouched. Codex runs hooks only
 /// with a trusted hash, which is a SHA-256 of its normalized hook declaration; if a future
 /// Codex hashes differently, the hook is skipped and session-file discovery still applies.
-pub fn codex_hooks_override(executable: &Path) -> String {
+#[allow(clippy::join_absolute_paths)] // Root-relative Windows join intentionally preserves only the volume.
+pub fn codex_hooks_override(executable: &Path, cwd: &Path) -> String {
+    // Codex resolves /<session-flags>/config.toml against the launch drive on Windows.
+    // Build this per launch: the app and project can live on different volumes.
+    let key = if cfg!(windows) {
+        format!("{}:session_start:0:0", cwd.join(r"\<session-flags>\config.toml").display())
+    } else { CODEX_SESSION_FLAGS_KEY.to_owned() };
+    codex_hooks_for_platform(executable, cfg!(windows), &key)
+}
+
+fn codex_hooks_for_platform(executable: &Path, windows: bool, key: &str) -> String {
     // Codex runs command hooks through `$SHELL -lc`; quote the path for POSIX shells.
     let path = executable.to_string_lossy().replace('\'', "'\\''");
-    let command = format!("'{path}' {CODEX_RELAY_ARG}");
+    let command = if windows {
+        use base64::Engine;
+        // Encode a PowerShell literal, not user input in a command line. This also
+        // works when Codex dispatches the hook through cmd.exe. No double quotes
+        // in the TOML override: Windows PowerShell 5.1 would strip them on launch.
+        let path = executable.to_string_lossy().replace('\'', "''");
+        let script = format!("& '{path}' {CODEX_RELAY_ARG}");
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        format!("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+            base64::engine::general_purpose::STANDARD.encode(bytes))
+    } else { format!("'{path}' {CODEX_RELAY_ARG}") };
     // JSON strings are valid TOML basic strings.
     let quoted = serde_json::to_string(&command).unwrap_or_default();
     // Keys sorted like serde_json's default map, matching Codex's `version_for_toml`.
@@ -106,6 +125,11 @@ pub fn codex_hooks_override(executable: &Path) -> String {
         r#"{{"event_name":"session_start","hooks":[{{"async":false,"command":{quoted},"timeout":{CODEX_TIMEOUT},"type":"command"}}],"matcher":"{CODEX_MATCHER}"}}"#
     );
     let hash: String = sha2::Sha256::digest(identity.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    if windows {
+        return format!(
+            "hooks={{SessionStart=[{{matcher='{CODEX_MATCHER}',hooks=[{{type='command',command='{command}',timeout={CODEX_TIMEOUT}}}]}}],state={{'{key}'={{trusted_hash='sha256:{hash}'}}}}}}"
+        );
+    }
     format!(
         r#"hooks={{SessionStart=[{{matcher="{CODEX_MATCHER}",hooks=[{{type="command",command={quoted},timeout={CODEX_TIMEOUT}}}]}}],state={{"{CODEX_SESSION_FLAGS_KEY}"={{trusted_hash="sha256:{hash}"}}}}}}"#
     )
@@ -156,7 +180,7 @@ pub fn start(app: AppHandle, dir: &Path) -> Result<HookServer, String> {
         }
     });
 
-    Ok(HookServer { token, settings_path, port, codex_override: codex_hooks_override(&executable) })
+    Ok(HookServer { token, settings_path, port, executable })
 }
 
 #[cfg(test)]
@@ -176,7 +200,7 @@ mod tests {
     #[test]
     fn codex_override_trusts_exactly_its_own_hook() {
         // Codex 0.164 `app-server` hooks/list reports this override as trusted.
-        let value = codex_hooks_override(Path::new("/Apps/Project Desk.app/it's/desk"));
+        let value = codex_hooks_for_platform(Path::new("/Apps/Project Desk.app/it's/desk"), false, CODEX_SESSION_FLAGS_KEY);
         let command = r#""'/Apps/Project Desk.app/it'\\''s/desk' --project-desk-codex-hook""#;
         assert!(value.contains(&format!("command={command}")), "{value}");
         assert!(value.starts_with(r#"hooks={SessionStart=[{matcher="startup|resume|clear",hooks=[{type="command","#));

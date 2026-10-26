@@ -31,7 +31,7 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     return entry && entry.agentId === s.agentSessionId ? entry.stats : undefined;
   };
 
-  // Codex si ID konverzácie vytvorí sám (najneskôr pri prvom prompte). Na macOS a Linuxe ho
+  // Codex si ID konverzácie vytvorí sám (najneskôr pri prvom prompte). Na všetkých platformách ho
   // oznámi SessionStart hook z vlastného procesu, aj po /resume. Inak, alebo keď Codex hook
   // nespustí, ho dohľadávame v session súboroch. Tam len pri úplne novej relácii: tá, čo sa
   // otvorila cez výber v `codex resume`, by si inak mohla privlastniť cudziu konverzáciu z toho istého projektu.
@@ -59,7 +59,7 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     });
   }
 
-  // Tokeny a kontext pre Claude aj Codex, pri Codexe aj stav (Codex nemá hooky bez zásahu do jeho konfigurácie).
+  // Tokeny a kontext pre Claude aj Codex, pri Codexe aj stav (SessionStart hook oznamuje len ID).
   let polling = false;
   let retainedAgents = "";
   async function pollAgents() {

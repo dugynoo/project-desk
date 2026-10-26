@@ -403,9 +403,10 @@ test("nevalidné agentSessionId sa do príkazu nevloží", () => {
 test("Codex: prvý štart, pokračovanie v známej konverzácii, výber pri neznámej", () => {
   const bypass = "--dangerously-bypass-approvals-and-sandbox";
   const codex = (over: Partial<Session>) => agentCommand(session({ provider: "codex", ...over }), DEFAULT_SETTINGS, "windows", true);
-  assert.equal(codex({ agentSessionId: undefined }), `codex ${bypass}`);
-  assert.equal(codex({ started: true }), `codex resume ${bypass} ${ID}`);
-  assert.equal(codex({ started: true, agentSessionId: "x; calc" }), `codex resume ${bypass}`);
+  const hook = ' -c "$env:PROJECT_DESK_CODEX_HOOKS"';
+  assert.equal(codex({ agentSessionId: undefined }), `codex ${bypass}${hook}`);
+  assert.equal(codex({ started: true }), `codex resume ${bypass}${hook} ${ID}`);
+  assert.equal(codex({ started: true, agentSessionId: "x; calc" }), `codex resume ${bypass}${hook}`);
   assert.equal(agentCommand(session({ provider: "shell" }), DEFAULT_SETTINGS, "windows", true), undefined);
   const unix = (over: Partial<Session>, hooks = true) => agentCommand(session({ provider: "codex", ...over }), DEFAULT_SETTINGS, "macos", hooks);
   assert.equal(unix({ agentSessionId: undefined }), `codex ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS"`);

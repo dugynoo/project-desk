@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { emptyState } from '../src/model.ts';
+import { exerciseEditor } from './desktop/editor.mjs';
 
 if (process.platform !== 'darwin') throw Error('This suite requires macOS and the Tauri build prerequisites.');
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -167,6 +168,7 @@ try {
   await wait('return !!document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head.stopped")', 'shell stopped');
   await click('[data-focus-id="restart-s2"]');
   await wait('return document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head").textContent.includes("Running")', 'shell restarted');
+  await exerciseEditor({ fixture, platform: 'macOS', command, evaluate, wait, until, shell, click, type });
   await click('[data-focus-id="session-menu-s"]');
   await click('[role="menuitem"]');
   await type('input.title-edit', 'macOS saved session\uE007', true);
@@ -212,7 +214,7 @@ try {
   await checkRestored('MAC_CRASH_RESTORED');
   await close();
   assertRecovered(await saved(), crashCheckpoint);
-  await writeFile(join(artifacts, 'result.txt'), 'PASS: macOS real PTYs, sidebar, settings, normal and crash recovery\n');
+  await writeFile(join(artifacts, 'result.txt'), 'PASS: macOS real PTYs, editor save/dirty/conflict/grid, sidebar, settings, normal and crash recovery\n');
   console.log('PASS: macOS desktop smoke');
 } catch (error) {
   if (sessionId && alive()) {

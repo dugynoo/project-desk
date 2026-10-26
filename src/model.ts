@@ -388,8 +388,8 @@ export function agentCommand(
   }
   if (s.provider === "codex") {
     // SessionStart hook len pre toto spustenie (`-c`), aby Desk poznal ID aj po /resume.
-    // Windows ho zatiaľ nemá: PowerShell mení úvodzovky v argumentoch natívnych programov.
-    const hooks = hooksEnabled && platform !== "windows" ? ` -c ${envRef(platform, "PROJECT_DESK_CODEX_HOOKS")}` : "";
+    // Windows override uses TOML literal strings to survive legacy PowerShell argument passing.
+    const hooks = hooksEnabled ? ` -c ${envRef(platform, "PROJECT_DESK_CODEX_HOOKS")}` : "";
     if (!s.started) return (settings.codexCommand.trim() || "codex") + hooks;
     const resume = (settings.codexResumeCommand.trim() || "codex resume") + hooks;
     // So známym ID sa otvorí presne tá konverzácia, inak Codex ukáže výber.

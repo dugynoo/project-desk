@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { emptyState } from '../src/model.ts';
 import { exerciseLinuxCrash } from './desktop/linux-crash.mjs';
+import { exerciseEditor } from './desktop/editor.mjs';
 
 if (process.platform !== 'linux') throw Error('This suite requires Linux, WebKitWebDriver and tauri-driver.');
 const run = promisify(execFile);
@@ -149,6 +150,7 @@ try {
   await wait('return !!document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head.stopped")', 'shell stopped');
   await click('[data-focus-id="restart-s2"]');
   await wait('return !document.querySelectorAll(".pane.visible")[1].querySelector(".pane-head.stopped")', 'shell restarted');
+  await exerciseEditor({ fixture, platform: 'Linux', command, evaluate, wait, until, shell, click, type });
 
   console.log('Linux: sidebar actions and settings');
   await click('[data-focus-id="session-menu-s"]');
@@ -194,7 +196,7 @@ try {
   assert.deepEqual(recovered.sessions.map(s => [s.id, s.title, s.stopped]), checkpoint.sessions.map(s => [s.id, s.title, s.stopped]));
   await exerciseLinuxCrash({ launch, close, shell, click, type, wait, until,
     saved, releaseSession, fixture, executable, artifacts });
-  await writeFile(join(artifacts, 'result.txt'), 'PASS: Linux native PTYs, sidebar, settings, normal and crash recovery\n');
+  await writeFile(join(artifacts, 'result.txt'), 'PASS: Linux native PTYs, editor save/dirty/conflict/grid, sidebar, settings, normal and crash recovery\n');
   console.log('PASS: Linux desktop smoke');
 } catch (error) {
   if (sessionId) {
