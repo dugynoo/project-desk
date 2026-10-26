@@ -98,6 +98,11 @@ fn shutdown_ready(app: tauri::AppHandle, id: String, saved: bool) {
 }
 
 #[tauri::command]
+fn shutdown_defer(app: tauri::AppHandle, id: String) -> bool {
+    shutdown::defer(&app, &id)
+}
+
+#[tauri::command]
 async fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -349,6 +354,7 @@ pub fn run() {
             save_state,
             shutdown_pending,
             shutdown_ready,
+            shutdown_defer,
             pty_spawn,
             pty_output_ack,
             pty_output_cancel,

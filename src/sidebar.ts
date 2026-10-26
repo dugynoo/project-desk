@@ -268,7 +268,7 @@ export function createSidebar(deps: SidebarDependencies) {
           item.classList.toggle("unread", unread.has(s.id) || getState().notifications.some(n => n.sessionId === s.id && !n.read));
           const body = el("div", "body");
           body.tabIndex = 0; body.setAttribute("role", "button"); body.dataset.focusId = `session-${s.id}`;
-          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}`);
+          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}${s.interrupted ? `, ${t("session.interrupted")}` : ""}`);
           body.setAttribute("aria-pressed", String(s.id === getState().ui.activeSessionId));
           body.onkeydown = e => {
             if (e.target instanceof HTMLInputElement) return;
@@ -283,7 +283,13 @@ export function createSidebar(deps: SidebarDependencies) {
           } else {
             body.append(el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`));
           }
-          body.append(el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`));
+          const sub = el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`);
+          if (s.interrupted) {
+            const mark = el("span", "interrupted", ` · ${t("session.interrupted")}`);
+            mark.title = t("session.interruptedHint");
+            sub.append(mark);
+          }
+          body.append(sub);
           const actions = el("span", "row-actions");
           if (!runtimes.get(s.id)?.running) {
             const restart = iconButton("↻", t("session.restart"), () => void start(s));

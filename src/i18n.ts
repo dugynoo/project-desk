@@ -227,6 +227,11 @@ const en = {
 
   "close.title": "Close terminal?",
   "close.body": "“{title}” will stop, along with the process running in it. The item disappears from the list.",
+  "quit.title": "Quit while agents are working?",
+  "quit.body": "Working or waiting for you: {titles}. Quitting interrupts their current step. Conversations resume after restart; the interrupted sessions are marked so you can tell them to continue.",
+  "quit.ok": "Quit",
+  "session.interrupted": "interrupted",
+  "session.interruptedHint": "The app closed while this agent was working. Tell it to continue.",
   "pause.title": "Pause a working agent?",
   "pause.body": "“{title}” is working right now. Pausing interrupts the current step; the conversation can be resumed with Start again.",
 
@@ -606,6 +611,11 @@ const sk: Record<Key, string> = {
 
   "close.title": "Zavrieť terminál?",
   "close.body": "„{title}“ sa ukončí vrátane procesu, ktorý v ňom beží. Položka zmizne zo zoznamu.",
+  "quit.title": "Ukončiť, kým agenti pracujú?",
+  "quit.body": "Pracujú alebo čakajú na teba: {titles}. Ukončenie preruší ich aktuálny krok. Konverzácie sa po reštarte obnovia a prerušené relácie budú označené, aby si im mohol povedať, nech pokračujú.",
+  "quit.ok": "Ukončiť",
+  "session.interrupted": "prerušené",
+  "session.interruptedHint": "Aplikácia sa zavrela, kým tento agent pracoval. Povedz mu, nech pokračuje.",
   "pause.title": "Pozastaviť pracujúceho agenta?",
   "pause.body": "„{title}“ práve pracuje. Pozastavenie preruší aktuálny krok; konverzáciu obnovíte cez Spustiť znova.",
 
@@ -982,6 +992,11 @@ const cs: Record<Key, string> = {
 
   "close.title": "Zavřít terminál?",
   "close.body": "„{title}“ se ukončí včetně procesu, který v něm běží. Položka zmizí ze seznamu.",
+  "quit.title": "Ukončit, zatímco agenti pracují?",
+  "quit.body": "Pracují nebo čekají na tebe: {titles}. Ukončení přeruší jejich aktuální krok. Konverzace se po restartu obnoví a přerušené relace budou označené, abys jim mohl říct, ať pokračují.",
+  "quit.ok": "Ukončit",
+  "session.interrupted": "přerušeno",
+  "session.interruptedHint": "Aplikace se zavřela, zatímco tento agent pracoval. Řekni mu, ať pokračuje.",
   "pause.title": "Pozastavit pracujícího agenta?",
   "pause.body": "„{title}“ právě pracuje. Pozastavení přeruší aktuální krok; konverzaci obnovíte přes Spustit znovu.",
 
