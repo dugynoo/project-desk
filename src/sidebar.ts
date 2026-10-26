@@ -281,7 +281,10 @@ export function createSidebar(deps: SidebarDependencies) {
             line.append(document.createTextNode(`${PROVIDER_ICON[s.provider]}  `), editInput);
             body.append(line);
           } else {
-            body.append(el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`));
+            const title = el("div", "title", `${PROVIDER_ICON[s.provider]}  ${s.title}`);
+            // Celý názov na hover, len keď je orezaný.
+            title.onmouseenter = () => { title.title = title.scrollWidth > title.clientWidth ? s.title : ""; };
+            body.append(title);
           }
           const sub = el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`);
           if (s.interrupted) {
