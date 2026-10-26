@@ -1,3 +1,1 @@
-- Closing the window or quitting while an agent is working or waiting for you now asks for confirmation, because quitting interrupts its current step.
-- Sessions interrupted by closing the app or by an update are marked "interrupted" in the sidebar after restart, so you know which agents to tell to continue.
-- Linux: fix a blank window on the NVIDIA proprietary driver ("Failed to create GBM buffer"). The WebKitGTK workaround is now applied automatically only where WebKit renders on NVIDIA; a WEBKIT_DISABLE_DMABUF_RENDERER value you set yourself still wins.
+- Copying from a terminal (Ctrl+C / Cmd+C) no longer includes the indentation Claude Code puts at the start of each line or trailing spaces; indentation inside the selection, such as code blocks and list continuations, is kept.
