@@ -32,6 +32,8 @@ import {
   findFileRefs,
   formatTokens,
   moveProject,
+  moveSession,
+  sessionsOf,
   opensInSystem,
   orderedProjects,
   relativePath,
@@ -347,8 +349,33 @@ test("Ctrl+číslo ide podľa poradia v zozname, pripnuté projekty prvé, Ctrl+
     session({ id: "a1", projectId: "a", createdAt: 1 }),
     session({ id: "b1", projectId: "b", createdAt: 3 }),
   ];
-  assert.deepEqual([1, 2, 3, 4].map((n) => sessionByNumber(st, n)?.id), ["b1", "a1", "a2", undefined]);
-  assert.equal(sessionByNumber(st, 9)?.id, "a2");
+  assert.deepEqual([1, 2, 3, 4].map((n) => sessionByNumber(st, n)?.id), ["b1", "a2", "a1", undefined]);
+  assert.equal(sessionByNumber(st, 9)?.id, "a1");
+});
+
+test("skrytá relácia sa uloží, Ctrl+číslo ju preskočí a z histórie sa vráti viditeľná", () => {
+  const st = parseState("{}").state;
+  st.projects = [{ id: "a", name: "a", path: "/a" }];
+  st.sessions = [session({ id: "a1", projectId: "a", hidden: true }), session({ id: "a2", projectId: "a" })];
+  const loaded = parseState(JSON.stringify(st)).state;
+  assert.equal(loaded.sessions[0].hidden, true);
+  assert.equal(sessionByNumber(loaded, 1)?.id, "a2");
+  archiveSession(loaded, "a1");
+  assert.equal(restoreSession(loaded, "a1")?.hidden, false);
+});
+
+test("relácie sa presúvajú len v rámci svojho projektu", () => {
+  const list = [
+    session({ id: "a1", projectId: "a" }),
+    session({ id: "b1", projectId: "b" }),
+    session({ id: "a2", projectId: "a" }),
+    session({ id: "a3", projectId: "a" }),
+  ];
+  const st = parseState("{}").state;
+  st.sessions = moveSession(list, "a3", "a1", false);
+  assert.deepEqual(sessionsOf(st, "a").map((s) => s.id), ["a3", "a1", "a2"]);
+  assert.deepEqual(moveSession(list, "a1", "a2", true).filter((s) => s.projectId === "a").map((s) => s.id), ["a2", "a1", "a3"]);
+  assert.equal(moveSession(list, "a1", "b1", true), list);
 });
 
 test("nový Claude dostane --session-id a odkaz na hook settings cez env", () => {

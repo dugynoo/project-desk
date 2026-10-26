@@ -63,6 +63,8 @@ export interface Session {
   resumeAfterShutdown?: boolean;
   /** The agent was working when the app closed; cleared once it works again. */
   interrupted?: boolean;
+  /** Skrytá v sidebare; proces beží ďalej a vráti sa, keď na teba čaká. */
+  hidden?: boolean;
   exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
@@ -228,6 +230,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         stopped: s.stopped === true,
         resumeAfterShutdown: s.stopped === true && s.resumeAfterShutdown === true,
         interrupted: s.interrupted === true,
+        hidden: s.hidden === true,
         exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),
@@ -668,13 +671,24 @@ export function formatTokens(n: number): string {
   return `${v < 10 ? v.toFixed(1).replace(".", ",") : Math.round(v)}${unit}`;
 }
 
+/** Relácie projektu v poradí, ako ich používateľ usporiadal (nové pribúdajú na koniec). */
 export function sessionsOf(state: PersistedState, projectId: string): Session[] {
-  return state.sessions.filter((s) => s.projectId === projectId).sort((a, b) => a.createdAt - b.createdAt);
+  return state.sessions.filter((s) => s.projectId === projectId);
 }
 
-/** Relácia pre Ctrl+1–8 v poradí zoznamu (aj zo zbalených projektov); Ctrl+9 je vždy posledná. */
+/** Presunie reláciu pred alebo za cieľovú v tom istom projekte. */
+export function moveSession(sessions: Session[], fromId: string, toId: string, after: boolean): Session[] {
+  const from = sessions.find((s) => s.id === fromId);
+  const to = sessions.find((s) => s.id === toId);
+  if (!from || !to || from === to || from.projectId !== to.projectId) return sessions;
+  const rest = sessions.filter((s) => s !== from);
+  rest.splice(rest.indexOf(to) + (after ? 1 : 0), 0, from);
+  return rest;
+}
+
+/** Relácia pre Ctrl+1–8 v poradí zoznamu (aj zo zbalených projektov, bez skrytých); Ctrl+9 je vždy posledná. */
 export function sessionByNumber(state: PersistedState, n: number): Session | undefined {
-  const all = orderedProjects(state.projects).flatMap((p) => sessionsOf(state, p.id));
+  const all = orderedProjects(state.projects).flatMap((p) => sessionsOf(state, p.id)).filter((s) => !s.hidden);
   return n === 9 ? all.at(-1) : all[n - 1];
 }
 
@@ -726,7 +740,7 @@ export function relativePath(root: string, file: string): string | undefined {
 export function archiveSession(state: PersistedState, id: string): void {
   const s = state.sessions.find((s) => s.id === id);
   if (!s) return;
-  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false, interrupted: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
+  state.closedSessions = [{ ...s, stopped: true, resumeAfterShutdown: false, interrupted: false, hidden: false }, ...state.closedSessions.filter((x) => x.id !== id)].slice(0, 20);
   state.sessions = state.sessions.filter((s) => s.id !== id);
   state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((x) => x !== id);
   state.ui.paneSlots = state.ui.paneSlots.map(value => value === id ? null : value);

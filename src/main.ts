@@ -130,6 +130,11 @@ function setStatus(id: string, next: Status, silent = false) {
     s.interrupted = false;
     save();
   }
+  // Skrytá relácia, ktorá na teba čaká, sa vráti do zoznamu.
+  if (next === "needs-you" && s?.hidden) {
+    s.hidden = false;
+    save();
+  }
   if (kind && s) {
     recordAttention(state, s, kind, crypto.randomUUID(), Date.now(), isWatched(id));
     save();

@@ -255,6 +255,10 @@ const en = {
 
   "session.info": "Session info (right-click)",
   "session.rename": "Rename",
+  "session.hide": "Hide",
+  "session.unhide": "Show",
+  "sidebar.hiddenCount": "Hidden: {n}",
+  "sidebar.collapseHidden": "Collapse hidden",
   "session.closeTerminal": "Close terminal",
   "session.removeFromList": "Remove from list",
 
@@ -639,6 +643,10 @@ const sk: Record<Key, string> = {
 
   "session.info": "Info o relácii (pravý klik)",
   "session.rename": "Premenovať",
+  "session.hide": "Skryť",
+  "session.unhide": "Zobraziť",
+  "sidebar.hiddenCount": "Skryté: {n}",
+  "sidebar.collapseHidden": "Zbaliť skryté",
   "session.closeTerminal": "Zavrieť terminál",
   "session.removeFromList": "Odstrániť zo zoznamu",
 
@@ -1020,6 +1028,10 @@ const cs: Record<Key, string> = {
 
   "session.info": "Info o relaci (pravý klik)",
   "session.rename": "Přejmenovat",
+  "session.hide": "Skrýt",
+  "session.unhide": "Zobrazit",
+  "sidebar.hiddenCount": "Skryté: {n}",
+  "sidebar.collapseHidden": "Sbalit skryté",
   "session.closeTerminal": "Zavřít terminál",
   "session.removeFromList": "Odebrat ze seznamu",
 
