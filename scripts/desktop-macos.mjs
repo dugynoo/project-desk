@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, copyFile, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, copyFile, chmod, readdir } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,10 +107,11 @@ async function shell(index, text) {
 async function launch() {
   const port = await freePort();
   endpoint = `http://127.0.0.1:${port}`;
-  app = spawn(executable, [], { cwd: fixture, env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port) },
+  app = spawn(executable, [], { cwd: fixture, env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port), RUST_BACKTRACE: '1' },
     stdio: ['ignore', 'pipe', 'pipe'] });
   let spawnError;
   app.on('error', error => { spawnError = error; });
+  app.on('exit', (code, signal) => { appLog += `\nApplication exit: code=${code}, signal=${signal}\n`; });
   app.stdout.on('data', data => { appLog += data; });
   app.stderr.on('data', data => { appLog += data; });
   await until(async () => {
@@ -127,7 +128,7 @@ async function close() {
   // It exercises our native CloseRequested/save handler. App exit may cut HTTP short.
   await command('DELETE', '/window').catch(error => { appLog += `\nClose response: ${error.message}\n`; });
   await until(() => alive(), running => !running, 'native window close exits application');
-  assert.equal(app.exitCode, 0, 'normal close exits cleanly');
+  assert.equal(app.exitCode, 0, `normal close exits cleanly (signal=${app.signalCode})`);
   sessionId = undefined;
 }
 function assertRecovered(actual, expected) {
@@ -208,6 +209,15 @@ try {
   }
   await writeFile(join(artifacts, 'failure.txt'), error.stack);
   await copyFile(statePath, join(artifacts, 'state.json')).catch(() => {});
+  // Only reports naming this random fixture executable; never collect unrelated apps.
+  const reports = join(homedir(), 'Library/Logs/DiagnosticReports');
+  for (const name of await readdir(reports).catch(() => [])) {
+    if (!name.startsWith('project-desk') || !/\.(ips|crash)$/.test(name)) continue;
+    const report = await readFile(join(reports, name), 'utf8').catch(() => '');
+    if (report.includes(identifier) || report.includes(fixture)) {
+      await writeFile(join(artifacts, name), report);
+    }
+  }
   throw error;
 } finally {
   if (sessionId && alive()) await close().catch(() => {});
