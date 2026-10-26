@@ -6,7 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
-import { isUuid, type Session, type PersistedState, type Status } from "./model.ts";
+import { copiedText, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
   outputId?: string;
@@ -84,7 +84,7 @@ export function createTerminalFactory({ getState, runtimes, setupLinks, isAppSho
       if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
       // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
       if (mod && e.key.toLowerCase() === "c" && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection());
+        void navigator.clipboard.writeText(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x));
         term.clearSelection();
         e.preventDefault();
         return false;

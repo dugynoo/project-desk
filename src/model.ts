@@ -581,6 +581,17 @@ export function pasteSequence(text: string): string {
   return `\x1b[200~${clean}\x1b[201~`;
 }
 
+/** Text z terminálu na skopírovanie: bez medzier na konci riadkov a bez spoločného odsadenia.
+ * `startColumn` je stĺpec, kde výber začína; prvý riadok sa počíta, akoby mal pred sebou toľko medzier.
+ */
+export function copiedText(text: string, startColumn = 0): string {
+  const lines = text.split("\n").map(line => line.trimEnd());
+  const indents = lines.map((line, i) => line.length - line.trimStart().length + (i === 0 ? startColumn : 0));
+  const indent = Math.min(...lines.flatMap((line, i) => line ? [indents[i]] : []));
+  if (!Number.isFinite(indent)) return lines.join("\n");
+  return lines.map((line, i) => line.slice(Math.max(0, indent - (i === 0 ? startColumn : 0)))).join("\n");
+}
+
 /** Literal file references for a single paste, never an Enter or a command.
  * Quote for the default shells (PowerShell on Windows, POSIX elsewhere).
  * Reject control characters instead of silently changing a filename.
