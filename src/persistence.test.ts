@@ -29,6 +29,14 @@ test("native shutdown acknowledgement waits for disk, deduplicates requests and 
   assert.deepEqual(events.slice(-2), ["error", "logout:false"]);
 });
 
+test("a declined quit is acknowledged unsaved without preparing or writing", async () => {
+  const events: string[] = [];
+  const handler = createShutdownHandler(async () => { events.push("flush"); }, async (id, saved) => { events.push(`${id}:${saved}`); },
+    () => events.push("preparing"), error => assert.fail(String(error)), async () => false);
+  await handler("quit");
+  assert.deepEqual(events, ["quit:false"]);
+});
+
 test("a flush waits behind an in-flight write without overwriting newer state", async () => {
   let state = "first";
   let release!: () => void;

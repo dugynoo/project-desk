@@ -17,6 +17,8 @@ mod shutdown;
 mod updates;
 mod instance;
 mod file_drop;
+#[cfg(target_os = "linux")]
+mod webkit_nvidia;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -98,6 +100,11 @@ fn shutdown_ready(app: tauri::AppHandle, id: String, saved: bool) {
 }
 
 #[tauri::command]
+fn shutdown_defer(app: tauri::AppHandle, id: String) -> bool {
+    shutdown::defer(&app, &id)
+}
+
+#[tauri::command]
 async fn pty_spawn(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -117,6 +124,7 @@ async fn pty_spawn(
         env.push((hooks::TOKEN_ENV.to_owned(), h.token.clone()));
         env.push((hooks::PORT_ENV.to_owned(), h.port.to_string()));
         env.push((hooks::SETTINGS_ENV.to_owned(), h.settings_path.to_string_lossy().into_owned()));
+        env.push((hooks::CODEX_HOOKS_ENV.to_owned(), h.codex_override.clone()));
     }
     let prepared = if args.background {
         if args.provider.as_deref() != Some("claude") || state.hooks.is_none() { return Err("background.unsupportedCommand".into()); }
@@ -296,6 +304,8 @@ async fn find_codex_session(cwd: String, since_ms: u64, exclude: Vec<String>) ->
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    webkit_nvidia::configure();
     if let Err(e) = job::kill_children_on_exit() {
         eprintln!("Orphan guard is off, terminals may outlive a crash: {e}");
     }
@@ -349,6 +359,7 @@ pub fn run() {
             save_state,
             shutdown_pending,
             shutdown_ready,
+            shutdown_defer,
             pty_spawn,
             pty_output_ack,
             pty_output_cancel,

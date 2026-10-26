@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+// @ts-expect-error -- plain ESM script without type declarations
+import { bumpFor, nextVersion } from "../scripts/release.mjs";
 
 test("AUR metadata links GitHub's normalized Tauri asset name and hashes its actual bytes", () => {
   const root = mkdtempSync(join(tmpdir(), "desk-aur-test-"));
@@ -28,4 +30,15 @@ test("AUR metadata links GitHub's normalized Tauri asset name and hashes its act
       assert.ok(!text.includes("Project%20Desk"));
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("release bump follows commit types; major is never inferred", () => {
+  assert.equal(bumpFor(["fix: a", "feat(sidebar): b", "docs: c"]), "minor");
+  assert.equal(bumpFor(["fix(linux): a", "test: b"]), "patch");
+  assert.equal(bumpFor(["perf: a"]), "patch");
+  assert.equal(bumpFor(["feat!: drop old state", "BREAKING CHANGE"]), "minor");
+  assert.equal(bumpFor(["docs: a", "chore: b", "test(desktop): c"]), undefined);
+  assert.equal(nextVersion("0.8.8", "minor"), "0.9.0");
+  assert.equal(nextVersion("0.8.8", "patch"), "0.8.9");
+  assert.equal(nextVersion("0.8.8", "major"), "1.0.0");
 });

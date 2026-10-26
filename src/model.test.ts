@@ -20,6 +20,7 @@ import {
   sessionDiagnostics,
   agentCommand,
   archiveSession,
+  busyAgents,
   restoreSession,
   recordSessionExit,
   shouldAutoResume,
@@ -31,10 +32,13 @@ import {
   findFileRefs,
   formatTokens,
   moveProject,
+  moveSession,
+  sessionsOf,
   opensInSystem,
   orderedProjects,
   relativePath,
   pasteSequence,
+  copiedText,
   templatesFor,
   DEFAULT_SETTINGS,
   folderName,
@@ -90,6 +94,19 @@ test("confirmed OS shutdown preserves resume eligibility without disguising stop
   recordSessionExit(state, s.id, 0, true, true);
   assert.equal(state.sessions.length, 0);
   assert.equal(shouldAutoResume(state.closedSessions[0], true), false, "explicit close wins over shutdown");
+});
+test("closing the app interrupts only running agents mid-step and the mark survives restart", () => {
+  const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
+    sessions: ["work", "ask", "done", "shell", "stopped", "worker"].map(id => ({ id, projectId: "p", title: id,
+      provider: id === "shell" ? "shell" : "claude", background: id === "worker" })) })).state;
+  const status: Record<string, string> = { work: "working", ask: "needs-you", done: "done", shell: "working", stopped: "working", worker: "working" };
+  const busy = busyAgents(state.sessions, id => status[id] as never, id => id !== "stopped");
+  assert.deepEqual(busy.map(s => s.id), ["work", "ask"]);
+  for (const s of busy) s.interrupted = true;
+  const restored = parseState(JSON.stringify(state)).state;
+  assert.deepEqual(restored.sessions.filter(s => s.interrupted).map(s => s.id), ["work", "ask"]);
+  archiveSession(restored, "work");
+  assert.equal(restored.closedSessions[0].interrupted, false, "explicit close discards the mark");
 });
 test("saved layouts are independent snapshots and switching never changes session lifecycle", () => {
   const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
@@ -332,8 +349,33 @@ test("Ctrl+číslo ide podľa poradia v zozname, pripnuté projekty prvé, Ctrl+
     session({ id: "a1", projectId: "a", createdAt: 1 }),
     session({ id: "b1", projectId: "b", createdAt: 3 }),
   ];
-  assert.deepEqual([1, 2, 3, 4].map((n) => sessionByNumber(st, n)?.id), ["b1", "a1", "a2", undefined]);
-  assert.equal(sessionByNumber(st, 9)?.id, "a2");
+  assert.deepEqual([1, 2, 3, 4].map((n) => sessionByNumber(st, n)?.id), ["b1", "a2", "a1", undefined]);
+  assert.equal(sessionByNumber(st, 9)?.id, "a1");
+});
+
+test("skrytá relácia sa uloží, Ctrl+číslo ju preskočí a z histórie sa vráti viditeľná", () => {
+  const st = parseState("{}").state;
+  st.projects = [{ id: "a", name: "a", path: "/a" }];
+  st.sessions = [session({ id: "a1", projectId: "a", hidden: true }), session({ id: "a2", projectId: "a" })];
+  const loaded = parseState(JSON.stringify(st)).state;
+  assert.equal(loaded.sessions[0].hidden, true);
+  assert.equal(sessionByNumber(loaded, 1)?.id, "a2");
+  archiveSession(loaded, "a1");
+  assert.equal(restoreSession(loaded, "a1")?.hidden, false);
+});
+
+test("relácie sa presúvajú len v rámci svojho projektu", () => {
+  const list = [
+    session({ id: "a1", projectId: "a" }),
+    session({ id: "b1", projectId: "b" }),
+    session({ id: "a2", projectId: "a" }),
+    session({ id: "a3", projectId: "a" }),
+  ];
+  const st = parseState("{}").state;
+  st.sessions = moveSession(list, "a3", "a1", false);
+  assert.deepEqual(sessionsOf(st, "a").map((s) => s.id), ["a3", "a1", "a2"]);
+  assert.deepEqual(moveSession(list, "a1", "a2", true).filter((s) => s.projectId === "a").map((s) => s.id), ["a2", "a1", "a3"]);
+  assert.equal(moveSession(list, "a1", "b1", true), list);
 });
 
 test("nový Claude dostane --session-id a odkaz na hook settings cez env", () => {
@@ -365,6 +407,10 @@ test("Codex: prvý štart, pokračovanie v známej konverzácii, výber pri nezn
   assert.equal(codex({ started: true }), `codex resume ${bypass} ${ID}`);
   assert.equal(codex({ started: true, agentSessionId: "x; calc" }), `codex resume ${bypass}`);
   assert.equal(agentCommand(session({ provider: "shell" }), DEFAULT_SETTINGS, "windows", true), undefined);
+  const unix = (over: Partial<Session>, hooks = true) => agentCommand(session({ provider: "codex", ...over }), DEFAULT_SETTINGS, "macos", hooks);
+  assert.equal(unix({ agentSessionId: undefined }), `codex ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS"`);
+  assert.equal(unix({ started: true }), `codex resume ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS" ${ID}`);
+  assert.equal(unix({ started: true }, false), `codex resume ${bypass} ${ID}`);
 });
 
 test("staré predvolené Codex príkazy sa prepnú na bypass, vlastné ostanú", () => {
@@ -463,6 +509,45 @@ test("šablóny: projektové pred spoločnými, cudzí projekt nie", () => {
 test("vloženie šablóny je jeden paste a nedá sa z neho utiecť", () => {
   assert.equal(pasteSequence("a\nb"), "\x1b[200~a\rb\x1b[201~");
   assert.equal(pasteSequence("x\x1b[201~; calc"), "\x1b[200~x; calc\x1b[201~");
+});
+
+test("kopírovanie z terminálu odstráni spoločné odsadenie a medzery na konci, štruktúru nechá", () => {
+  // Výber začína za „⏺ “ v odpovedi Claude Code, ďalšie riadky majú jeho dve medzery odsadenia.
+  assert.equal(copiedText("Čau Kubo,   \n  druhý riadok\n\n  1. krok\n     pokračovanie", 2),
+    "Čau Kubo,\ndruhý riadok\n\n1. krok\n   pokračovanie");
+  // Celé riadky bloku kódu: vnútorné odsadenie zostane.
+  assert.equal(copiedText("    def f():\n        return 1"), "def f():\n    return 1");
+  // Riadok s menším odsadením než prvý nesmie prísť o text.
+  assert.equal(copiedText("  ⏺ odpoveď\n    pokračuje"), "⏺ odpoveď\n  pokračuje");
+  assert.equal(copiedText("a\n   \nb"), "a\n\nb");
+  assert.equal(copiedText("   "), "");
+});
+
+test("kopírovanie spojí riadky zalomené na šírku terminálu, zámerné konce riadkov nechá", () => {
+  const cols = 40;
+  // Šírka 40, výber začína za „⏺ “: „which“ by sa do prvého riadku už nezmestilo.
+  const reply = [
+    "This paragraph is long enough that the",
+    "  agent wraps it at the terminal width,",
+    "  which is forty columns here.",
+    "",
+    "  Short line.",
+    "  Another short line.",
+  ].join("\n");
+  assert.equal(copiedText(reply, 2, cols),
+    "This paragraph is long enough that the agent wraps it at the terminal width, which is forty columns here.\n\nShort line.\nAnother short line.");
+  // Odrážky: pokračovanie pod textom sa spojí, ďalšia odrážka zostane na novom riadku.
+  const list = [
+    "  1. Download the package from the release",
+    "     page and keep it in Downloads.",
+    "  2. Install it with pacman and start the",
+    "  app without the variable.",
+  ].join("\n");
+  assert.equal(copiedText(list, 0, 44),
+    "1. Download the package from the release page and keep it in Downloads.\n2. Install it with pacman and start the\napp without the variable.");
+  // Riadky tabuľky ani kód začínajúci symbolom sa nespájajú; bez šírky sa nespája nič.
+  assert.equal(copiedText("│ a long table cell that reaches the edge │\n│ next │", 0, 44), "│ a long table cell that reaches the edge │\n│ next │");
+  assert.equal(copiedText("This paragraph is long enough that the\nagent wraps it.", 0), "This paragraph is long enough that the\nagent wraps it.");
 });
 
 test("cesty k súborom v texte terminálu", () => {

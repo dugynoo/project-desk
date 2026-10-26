@@ -83,6 +83,10 @@ when available. Report checks run and any platform or manual checks not performe
   text scraping. Keep integrations local; do not modify global agent settings except for the owned
   Project Desk AGY plugin in ~/.gemini/config/plugins/project-desk. Preserve other
   plugins/settings and only migrate exact copies of our legacy workspace hooks.
+  Codex learns its conversation ID from a SessionStart hook passed per launch with
+  `-c` (`hooks::codex_hooks_override`, trusted by its declaration hash); never write
+  Codex hooks or trust into ~/.codex/config.toml and never use
+  `--dangerously-bypass-hook-trust`, which would also run untrusted repository hooks.
 - Session-file watchers and hook payloads expose only required metadata, events,
   and usage statistics. Do not persist or forward conversation text through them.
 - Never interpolate project/session names, paths, or pasted text into shell
@@ -98,10 +102,15 @@ when available. Report checks run and any platform or manual checks not performe
 
 ## Releases and shared instructions
 
-`npm version` also updates Cargo versions via `scripts/sync-version.mjs` and
-creates a commit/tag. A pushed `v*` tag triggers release builds and a draft release;
-publishing that draft makes the update available. Treat these as release actions,
-not routine validation. Preserve updater signing configuration.
+Release with `npm run release` after writing user-facing `RELEASE_NOTES.md` (see
+README). It infers the bump from Conventional Commits since the last tag (`feat` →
+minor, `fix`/`perf` → patch; major only when passed explicitly), syncs Cargo versions,
+commits, tags and pushes. Check with `npm run release -- --dry-run` first. The pushed
+tag builds all platforms and publishes the release automatically when every build
+succeeds, which makes the update available to users. Treat this as a release action,
+not routine validation; run it only when the user asks for a release. Write commit
+subjects as Conventional Commits, because they decide the version. Preserve updater
+signing configuration.
 
 Locally, `AGENTS.md` and `CLAUDE.md` are hard links to the same file, so writes
 to either name update both. Edit `CLAUDE.md` in place; replacing a file through

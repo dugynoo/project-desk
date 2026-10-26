@@ -37,9 +37,9 @@ button.icon.on { color: var(--accent); }
 .update:disabled { cursor: default; opacity: 0.8; }
 
 .project { margin-bottom: 4px; }
-.project.dragging { opacity: .45; }
-.project.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
-.project.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.project.dragging, .session.dragging { opacity: .45; }
+.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .project-row .pin { color: var(--needs); font-weight: 400; }
 .project-row { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; cursor: pointer; }
 .project-row:hover { background: var(--panel-2); }
@@ -77,6 +77,10 @@ button.icon.on { color: var(--accent); }
 .session .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .session .title-edit { width: calc(100% - 24px); padding: 0 4px; margin: -1px 0; background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; color: var(--text); font: inherit; outline: none; user-select: text; }
 .session .sub { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session .sub .interrupted { color: var(--needs); }
+.session.is-hidden .body { opacity: .55; }
+.hidden-toggle { display: block; margin: 1px 0 3px 26px; padding: 2px 6px; border: 0; background: none; color: var(--muted); font-size: 11px; cursor: pointer; }
+.hidden-toggle:hover, .hidden-toggle:focus-visible { color: var(--text); }
 .session.unread .title { font-weight: 600; }
 .session.unread .title::after { content: " ●"; color: var(--needs); font-size: 10px; }
 

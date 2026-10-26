@@ -17,6 +17,8 @@ export interface LifecycleRuntime extends MonitoredRuntime {
   fit: { fit(): void };
   webgl?: { dispose(): void };
   pane: { remove(): void };
+  /** Exit requested by Pause: keep the session listed and stopped, not archived. */
+  pausing?: boolean;
 }
 
 interface Dependencies<R extends LifecycleRuntime> {
@@ -182,8 +184,10 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     const rt = runtimes.get(id);
     const s = session(id);
     if (!s) { forgetRuntime(id); return; }
-    if (rt) rt.running = false;
+    const paused = rt?.pausing === true;
+    if (rt) { rt.running = false; rt.pausing = false; }
     recordSessionExit(getState(), id, code, rt?.closing ?? false, systemShutdown);
+    if (paused) s.exitCode = undefined;
     if (s.background && !rt?.closing) {
       s.stopped = false; // Attachment exited; the worker may still be running.
       statuses.set(id, "sleeping");
@@ -195,8 +199,8 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       forgetRuntime(id);
     } else {
       statuses.set(id, "exited");
-      rt?.term.writeln(`\r\n${t("session.exitCode", { code: code ?? "?" })}`);
-      if (!isWatched(id)) unread.add(id);
+      rt?.term.writeln(`\r\n${paused ? t("session.pausedNotice") : t("session.exitCode", { code: code ?? "?" })}`);
+      if (!paused && !isWatched(id)) unread.add(id);
     }
     save();
     // Persist shutdown recovery without waiting for the debounce or window-close event.
@@ -230,5 +234,20 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     renderSidebar();
   }
 
-  return { start, onExit, closeSession, forgetRuntime, isStarting: (id: string) => pendingStarts.has(id) };
+  /** Agents resume their conversation on Start again; shells and detachable workers have nothing to pause. */
+  function canPause(s: Session) {
+    return s.provider !== "shell" && !s.background && !pendingStarts.has(s.id) && runtimes.get(s.id)?.running === true;
+  }
+
+  async function pauseSession(s: Session) {
+    if (!canPause(s)) return;
+    if (statusOf(s.id) === "working"
+      && !(await confirmBox(t("pause.title"), t("pause.body", { title: s.title }), t("session.pause")))) return;
+    const rt = runtimes.get(s.id);
+    if (!rt?.running || rt.closing) return;
+    rt.pausing = true;
+    await invoke("pty_kill", { id: s.id }).catch((e) => { rt.pausing = false; toast(errorText(e)); });
+  }
+
+  return { start, onExit, closeSession, pauseSession, canPause, forgetRuntime, isStarting: (id: string) => pendingStarts.has(id) };
 }
