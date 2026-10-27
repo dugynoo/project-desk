@@ -160,7 +160,9 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       renderPaneHeads();
       return;
     } finally { pendingStarts.delete(s.id); }
-    if (!rt.running || !session(s.id)) return;
+    if (!session(s.id)) return;
+    // An instant exit is handled by onExit, but the process did start: a later Start resumes it.
+    if (!rt.running) { s.started = true; save(); return; }
     const initialStatus = statusAfterSpawn(statusOf(s.id), s, getInfo().hooksEnabled);
     s.started = true;
     s.stopped = false;

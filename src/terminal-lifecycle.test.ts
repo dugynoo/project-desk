@@ -93,6 +93,7 @@ test("exit before spawn resolves retains a stopped terminal and does not revive 
   assert.equal(f.runtimes.has(s.id), true);
   assert.equal(f.state.closedSessions.length, 0);
   assert.equal(f.timers.length, 0);
+  assert.equal(s.started, true);
 });
 
 test("failed spawn can be retried, and an old startup timeout cannot change a restarted session", async () => {
