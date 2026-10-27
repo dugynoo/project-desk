@@ -1,2 +1,7 @@
-- New: code blocks in the Markdown preview have a Copy button, and tables have clearer borders.
-- Improvement: resizing the window or a panel is smoother in terminals with long history, and agents redraw once after the resize instead of many times while you drag.
+- Fix: Ctrl+K and Ctrl+G now reach the terminal (delete to end of line, Claude's external editor). On macOS, app shortcuts use only Cmd. On Windows and Linux, Find session and Multiple panels moved to Ctrl+Shift+K and Ctrl+Shift+G. Custom shortcuts are kept.
+- Fix: Codex starts in Windows project folders whose path contains an apostrophe.
+- Fix: a Codex session that exits right after starting resumes its conversation on the next Start.
+- Fix: dragging in the sidebar ends correctly when the mouse is released outside the window.
+- Fix: terminals switch to the standard renderer once WebGL fails, instead of retrying on every redraw.
+- Security: files that are links to programs, Office macro documents, disk images and macOS shortcuts no longer open in the default app.
+- Improvement: starting terminals and saving state no longer block typing in other sessions.
