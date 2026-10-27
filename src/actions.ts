@@ -11,7 +11,7 @@ export function actionLabel(id: ActionId): string {
     palette: 'actions.palette', shortcuts: 'actions.shortcuts', switch: 'html.switch', grid: 'html.grid',
     search: 'actions.search', templates: 'html.templates', attention: 'attention.next', zoom: 'actions.zoom',
     settings: 'settings.title', layouts: 'layouts.title', notifications: 'notifications.title',
-    history: 'session.history', editor: 'actions.editor', addProject: 'html.addProject',
+    history: 'session.history', editor: 'actions.editor', addProject: 'html.addProject', sidebar: 'sidebar.autoHide',
   };
   return t(labels[id]!, { n: '' }).replace(/\s*\(\s*\)$/, '');
 }

@@ -1,7 +1,7 @@
 import { $, el, iconButton, onNextFrame } from "./dom.ts";
 import { createBranches } from "./branches.ts";
 import { openSessionMenu, openActionMenu, type MenuAction } from "./session-menu.ts";
-import { ATTENTION, moveProject, moveSession, orderedProjects, sessionsOf, PROVIDER_LABEL,
+import { ATTENTION, moveProject, moveSession, orderedProjects, railSessions, sessionsOf, PROVIDER_LABEL,
   type PersistedState, type Project, type Provider, type Session, type Status } from "./model.ts";
 import { t } from "./i18n.ts";
 
@@ -24,6 +24,11 @@ interface SidebarDependencies {
   canPause(session: Session): boolean;
   removeProject(project: Project): Promise<unknown>;
   openEditor(path: string): void;
+  /** Platform label and action for opening the project folder in the file manager. */
+  openFolderLabel(): string;
+  openFolder(path: string): void;
+  /** The terminal area changed width (auto-hide toggled). */
+  layoutChanged(): void;
   showImport(project: Project): void;
   showInfo(session: Session): void;
   jumpAttention(): void;
@@ -36,7 +41,7 @@ interface SidebarDependencies {
 export function createSidebar(deps: SidebarDependencies) {
   const { getState, runtimes, unread, statusOf, statusLabel, contextLabel, save,
     renderPaneHeads, select, createSession, start, closeSession, pauseSession, canPause, removeProject,
-    openEditor, showImport, showInfo, jumpAttention, showClosedSessions } = deps;
+    openEditor, openFolderLabel, openFolder, showImport, showInfo, jumpAttention, showClosedSessions } = deps;
   const PROVIDER_ICON = deps.providerIcons;
   const session = (id: string) => getState().sessions.find(s => s.id === id);
   let attentionOnly = false;
@@ -160,6 +165,70 @@ export function createSidebar(deps: SidebarDependencies) {
     window.addEventListener("pointerup", up);
   }
 
+  // Automatické skrývanie: panel sa zúži na pás s bodkami stavu a pri prejdení myšou
+  // sa vysunie nad terminál, takže terminál nemení šírku.
+  const aside = $("#sidebar");
+  const rail = $("#sidebar-rail");
+  const autoHideButton = $("#btn-autohide");
+  let hideTimer: number | undefined;
+  const autoHide = () => getState().ui.sidebarAutoHide === true;
+  function applyAutoHide() {
+    const on = autoHide();
+    document.body.classList.toggle("sidebar-auto", on);
+    rail.hidden = !on;
+    autoHideButton.setAttribute("aria-pressed", String(on));
+    autoHideButton.title = t(on ? "sidebar.autoHideOff" : "sidebar.autoHide");
+    if (!on) aside.classList.remove("peek");
+    renderRail();
+    deps.layoutChanged();
+  }
+  function toggleAutoHide() {
+    getState().ui.sidebarAutoHide = !autoHide();
+    save();
+    applyAutoHide();
+  }
+  autoHideButton.onclick = toggleAutoHide;
+  function peek() {
+    window.clearTimeout(hideTimer);
+    if (autoHide()) aside.classList.add("peek");
+  }
+  /** Zasunie panel, až keď nad ním nie je myš a nič v ňom práve neprebieha (menu, premenovanie, ťahanie). */
+  function scheduleHide() {
+    window.clearTimeout(hideTimer);
+    if (!autoHide()) return;
+    hideTimer = window.setTimeout(() => {
+      if (!aside.classList.contains("peek")) return;
+      const typing = aside.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement;
+      if (aside.matches(":hover") || rail.matches(":hover") || sidebarMenuOpen || drag || editing || typing) scheduleHide();
+      else aside.classList.remove("peek");
+    }, 350);
+  }
+  rail.addEventListener("pointerenter", peek);
+  aside.addEventListener("pointerenter", peek);
+  aside.addEventListener("pointerleave", scheduleHide);
+  aside.addEventListener("focusin", peek);
+  aside.addEventListener("focusout", scheduleHide);
+  function renderRail() {
+    if (!autoHide()) { rail.replaceChildren(); return; }
+    const open = el("button", "rail-open", "»");
+    open.title = open.ariaLabel = t("sidebar.autoHideOff");
+    open.onclick = toggleAutoHide;
+    const groups = railSessions(getState(), statusOf).map(({ project, sessions }) => {
+      const group = el("div", "rail-group");
+      group.title = project.name;
+      for (const s of sessions) {
+        const st = statusOf(s.id);
+        const dot = el("button", `rail-dot dot ${st}`);
+        dot.classList.toggle("active", s.id === getState().ui.activeSessionId);
+        dot.title = dot.ariaLabel = `${project.name} · ${s.title}: ${statusLabel(st)}`;
+        dot.onclick = () => select(s.id);
+        group.append(dot);
+      }
+      return group;
+    });
+    rail.replaceChildren(open, ...groups);
+  }
+
   let closeSessionMenu: (() => void) | undefined;
   let sidebarMenuOpen = false;
   const refreshAfterMenu = onNextFrame(() => renderSidebar());
@@ -186,6 +255,7 @@ export function createSidebar(deps: SidebarDependencies) {
     branches.refresh(paths, revisit);
   }
   function renderSidebar() {
+    renderRail();
     refreshBranches();
     if (drag || sidebarMenuOpen) return;
     closeSessionMenu?.();
@@ -227,6 +297,7 @@ export function createSidebar(deps: SidebarDependencies) {
       launch.dataset.focusId = `launch-${p.id}`; more.dataset.focusId = `providers-${p.id}`;
       actions.append(launcher, actionsButton(() => [
         { label: t("project.openEditor"), run: () => openEditor(p.path) },
+        { label: openFolderLabel(), run: () => openFolder(p.path) },
         { label: t(p.pinned ? "project.unpin" : "project.pin"), run: () => { p.pinned = !p.pinned; save(); renderSidebar(); } },
         { label: t("project.remove"), danger: true, separator: true, run: () => void removeProject(p) },
       ], `project-menu-${p.id}`));
@@ -360,7 +431,7 @@ export function createSidebar(deps: SidebarDependencies) {
   }
 
   return {
-    render: renderSidebar, refreshBranches, startRename,
+    render: renderSidebar, refreshBranches, startRename, toggleAutoHide, applyAutoHide,
     editingId: () => editing?.id,
     revealSession(id: string) {
       if (attentionOnly && !ATTENTION.has(statusOf(id))) attentionOnly = false;

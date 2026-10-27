@@ -5,18 +5,41 @@ import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { invoke } from "@tauri-apps/api/core";
+import { Marked } from "marked";
+import DOMPurify from "dompurify";
 import { el, $ } from "./dom.ts";
 import { t, errorText } from "./i18n.ts";
-import { textFileFormat, type Settings } from "./model.ts";
+import { isMarkdown, linkEditorMode, textFileFormat, type Settings } from "./model.ts";
+
+export type EditorMode = "preview" | "edit";
+
+const escapeAttr = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+// Obrázky sa nenačítavajú (CSP aj súkromie); ostane z nich odkaz s alt textom.
+const markdown = new Marked({ gfm: true, renderer: {
+  image: ({ href, text }) => `<a href="${escapeAttr(href)}">${escapeAttr(text || href)}</a>`,
+} });
+
+/** Markdown ako bezpečné HTML: bez skriptov, štýlov a formulárov. */
+export function markdownHtml(source: string): string {
+  return DOMPurify.sanitize(markdown.parse(source, { async: false }), {
+    FORBID_TAGS: ["style", "form", "img", "iframe"], FORBID_ATTR: ["style"],
+  });
+}
 
 type Document = { path: string; text: string };
 export function createTextEditor(confirmDiscard: () => Promise<boolean>, external: (path: string) => void,
   visibilityChanged: (visible: boolean) => void = () => {},
-  getSettings: () => Pick<Settings, "editorFontSize" | "editorWordWrap"> = () => ({ editorFontSize: 13, editorWordWrap: false }),
-  externalLabel: () => string = () => t("editor.external")) {
+  getSettings: () => Pick<Settings, "editorFontSize" | "editorWordWrap" | "markdownOpen"> = () => ({ editorFontSize: 13, editorWordWrap: false, markdownOpen: "preview" }),
+  externalLabel: () => string = () => t("editor.external"),
+  openLink: (url: string) => void = () => {}) {
+  const preview = el("div", "markdown-preview");
+  preview.hidden = true;
+  preview.tabIndex = 0;
+  let mode: EditorMode = "edit";
   const appearance = new Compartment();
   const appearanceExtensions = () => {
     const settings = getSettings();
+    preview.style.fontSize = `${settings.editorFontSize}px`;
     return [EditorView.theme({ "&": { fontSize: `${settings.editorFontSize}px` } }),
       ...(settings.editorWordWrap ? [EditorView.lineWrapping] : [])];
   };
@@ -37,6 +60,8 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
   const title = el("span", "text-editor-title");
   const saveButton = el("button", "", t("textEditor.save"));
   const reload = el("button", "", t("textEditor.reload"));
+  const modeButton = el("button");
+  modeButton.title = t("textEditor.modeHint");
   const outside = el("button", "", externalLabel());
   const fallback = el("button", "", externalLabel());
   fallback.hidden = true;
@@ -50,8 +75,8 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     panel.hidden = divider.hidden = false;
     if (wasHidden) visibilityChanged(true);
   }
-  bar.append(title, saveButton, reload, outside, close);
-  panel.append(bar, message, fallback, host);
+  bar.append(title, modeButton, saveButton, reload, outside, close);
+  panel.append(bar, message, fallback, host, preview);
   const divider = el("div", "editor-divider");
   divider.hidden = true;
   divider.tabIndex = 0;
@@ -78,9 +103,40 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
   };
   $("#workspace").append(divider, panel);
   // Editor shortcuts must never become terminal/application shortcuts.
-  panel.addEventListener("keydown", e => e.stopPropagation());
+  panel.addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key.toLowerCase() === "v" && e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey && canPreview()) {
+      e.preventDefault();
+      setMode(mode === "preview" ? "edit" : "preview");
+    }
+  });
   const raw = () => bom + (view?.state.doc.toString() ?? "").replace(/\n/g, separator);
   const dirty = () => !!view && !!savedDoc && !view.state.doc.eq(savedDoc);
+  const canPreview = () => !!view && !!document && isMarkdown(document.path);
+  /** Náhľad vždy ukazuje aktuálny obsah editora, aj neuložený. */
+  function setMode(next: EditorMode) {
+    mode = canPreview() ? next : "edit";
+    if (mode === "preview") preview.innerHTML = markdownHtml(view!.state.doc.toString());
+    else preview.replaceChildren();
+    preview.hidden = mode !== "preview";
+    host.hidden = mode === "preview";
+    refresh();
+    if (mode === "preview") preview.focus(); else view?.focus();
+  }
+  preview.addEventListener("click", e => {
+    const link = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[href]");
+    if (!link || !document) return;
+    e.preventDefault();
+    const href = link.getAttribute("href") ?? "";
+    if (/^(https?:|mailto:)/i.test(href)) { openLink(href); return; }
+    // Relatívny odkaz na súbor vedľa dokumentu; kotvy a iné schémy ignorujeme.
+    let target: string;
+    try { target = decodeURIComponent(href.split("#")[0]); } catch { return; }
+    // Schéma má aspoň dve písmená, takže `C:` (disk na Windows) prejde ako cesta.
+    if (!target || /^[a-z][a-z0-9+.-]+:/i.test(target)) return;
+    const base = document.path.replace(/[^\\/]*$/, "");
+    void open(/^([\\/]|[a-z]:[\\/])/i.test(target) ? target : base + target, 1, false, linkEditorMode(target, getSettings()));
+  });
   function refresh() {
     title.textContent = (dirty() ? "● " : "") + (document?.path.split(/[\\/]/).at(-1) ?? "");
     title.title = document?.path ?? "";
@@ -88,6 +144,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     reload.disabled = busy || !document;
     outside.disabled = busy || !document;
     close.disabled = fallback.disabled = busy;
+    modeButton.hidden = !canPreview();
+    modeButton.textContent = t(mode === "preview" ? "textEditor.edit" : "textEditor.preview");
+    modeButton.setAttribute("aria-pressed", String(mode === "preview"));
   }
   async function mayClose() {
     if (busy) return false;
@@ -107,9 +166,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     } catch (e) { message.textContent = errorText(e); }
     finally { busy = false; refresh(); }
   }
-  async function open(path: string, line = 1, force = false) {
+  async function open(path: string, line = 1, force = false, requested: EditorMode = "edit") {
     if (busy) return;
-    if (!force && document?.path === path && view) { view.focus(); return; }
+    if (!force && document?.path === path && view) { setMode(requested); return; }
     if (!await mayClose() || busy) return;
     busy = true; refresh();
     fallback.hidden = true;
@@ -133,7 +192,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
       message.textContent = "";
       const pos = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines))).from;
       view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
-      view.focus();
+      setMode(requested);
       const current = view;
       const description = LanguageDescription.matchFilename(languages, path.split(/[\\/]/).at(-1) ?? path);
       void description?.load().then(support => {
@@ -141,6 +200,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
       }).catch(() => {}); // Plain text remains usable if a language chunk fails.
     } catch (e) {
       reveal();
+      setMode("edit");
       message.textContent = errorText(e);
       fallback.textContent = externalLabel();
       fallback.onclick = () => external(path);
@@ -148,12 +208,13 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     } finally { busy = false; refresh(); }
   }
   saveButton.onclick = () => void save();
-  reload.onclick = () => { if (document) void open(document.path, 1, true); };
+  reload.onclick = () => { if (document) void open(document.path, 1, true, mode); };
+  modeButton.onclick = () => setMode(mode === "preview" ? "edit" : "preview");
   outside.onclick = () => { if (document) external(document.path); };
   close.onclick = async () => {
     if (!await mayClose() || busy) return;
     view?.destroy(); view = undefined; document = undefined; savedDoc = undefined;
-    host.replaceChildren(); panel.hidden = divider.hidden = true;
+    host.replaceChildren(); setMode("edit"); panel.hidden = divider.hidden = true;
     visibilityChanged(false);
     $("#stage").querySelector<HTMLTextAreaElement>(".pane.visible.focused textarea")?.focus();
   };

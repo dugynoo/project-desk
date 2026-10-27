@@ -234,6 +234,12 @@ async fn reveal_file(path: String) -> Result<(), String> {
     files::reveal(&path)
 }
 
+/// Otvorí priečinok projektu v správcovi súborov.
+#[tauri::command]
+async fn open_folder(path: String) -> Result<(), String> {
+    files::open_folder(&path)
+}
+
 #[tauri::command]
 async fn project_exists(path: String, existing: Vec<String>) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || files::project_exists(&path, &existing))
@@ -380,6 +386,7 @@ pub fn run() {
             open_file_default,
             prepare_update,
             reveal_file,
+            open_folder,
             project_exists,
             list_editors,
             cli::check_cli,

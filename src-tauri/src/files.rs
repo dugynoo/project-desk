@@ -69,6 +69,21 @@ pub fn reveal(path: &str) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(p).map_err(|e| format!("file.revealFailed: {e}"))
 }
 
+/// Otvorí priečinok projektu v Prieskumníkovi, Finderi alebo správcovi súborov.
+/// Priečinok s príponou balíka (napr. `.app`) by sa spustil, ten len ukážeme v nadradenom.
+pub fn open_folder(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    if !p.is_absolute() || !p.is_dir() {
+        return Err(format!("folder.missing: {path}"));
+    }
+    let opened = if is_runnable(p) && p.extension().is_some() {
+        tauri_plugin_opener::reveal_item_in_dir(p)
+    } else {
+        tauri_plugin_opener::open_path(p, None::<&str>)
+    };
+    opened.map_err(|e| format!("folder.openFailed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_runnable;
@@ -109,6 +124,16 @@ mod tests {
         std::fs::write(&file, b"").unwrap();
         assert!(super::project_exists(&file, &[]).is_err());
         assert!(super::project_exists(".", &[]).is_err());
+    }
+
+    #[test]
+    fn open_folder_accepts_only_existing_absolute_directories() {
+        let f = Fixture::new();
+        let file = f.path("plain-file");
+        std::fs::write(&file, b"").unwrap();
+        for path in ["relative", &f.path("missing"), &file] {
+            assert!(super::open_folder(path).unwrap_err().starts_with("folder.missing: "), "{path}");
+        }
     }
 
     #[cfg(unix)]

@@ -22,6 +22,8 @@ import {
   archiveSession,
   busyAgents,
   interruptedAgents,
+  linkEditorMode,
+  railSessions,
   restoreSession,
   recordSessionExit,
   shouldAutoResume,
@@ -50,6 +52,7 @@ import {
   statusAfterSpawn,
   statusAfterStartupTimeout,
   type Session,
+  type Status,
 } from "./model.ts";
 
 test("Codex usage-only polls cannot invent completion or notifications", () => {
@@ -365,6 +368,19 @@ test("skrytá relácia sa uloží, Ctrl+číslo ju preskočí a z histórie sa v
   assert.equal(restoreSession(loaded, "a1")?.hidden, false);
 });
 
+test("zúžený panel: pripnuté projekty prvé, prázdne projekty bez bodiek, skrytá relácia len keď čaká", () => {
+  const st = parseState("{}").state;
+  st.projects = [{ id: "a", name: "a", path: "/a" }, { id: "b", name: "b", path: "/b", pinned: true }, { id: "c", name: "c", path: "/c" }];
+  st.sessions = [
+    session({ id: "a1", projectId: "a" }), session({ id: "a2", projectId: "a", hidden: true }),
+    session({ id: "b1", projectId: "b" }), session({ id: "c1", projectId: "c", hidden: true }),
+  ];
+  const status = (id: string) => (id === "a2" ? "needs-you" : "done") as Status;
+  assert.deepEqual(railSessions(st, status).map(g => [g.project.id, g.sessions.map(s => s.id)]), [["b", ["b1"]], ["a", ["a1", "a2"]]]);
+  assert.equal(parseState(JSON.stringify({ ui: { sidebarAutoHide: true } })).state.ui.sidebarAutoHide, true);
+  assert.equal(parseState(JSON.stringify({ ui: { sidebarAutoHide: "yes" } })).state.ui.sidebarAutoHide, false);
+});
+
 test("relácie sa presúvajú len v rámci svojho projektu", () => {
   const list = [
     session({ id: "a1", projectId: "a" }),
@@ -502,6 +518,17 @@ test("pripnuté projekty hore a presun medzi skupinami preberie pripnutie", () =
   assert.deepEqual(orderedProjects(moved).map((p) => p.id), ["c", "b", "a"]);
   assert.equal(moved.find((p) => p.id === "c")?.pinned, true);
   assert.deepEqual(moveProject(ps, "a", "c", true).map((p) => p.id), ["b", "c", "a"]);
+});
+
+test("Markdown z odkazu sa otvorí podľa nastavenia, ostatné súbory na úpravu", () => {
+  const settings = parseState("{}").state.settings;
+  assert.equal(settings.markdownOpen, "preview");
+  assert.equal(linkEditorMode("/p/README.md", settings), "preview");
+  assert.equal(linkEditorMode("C:\\p\\notes.MARKDOWN", settings), "preview");
+  assert.equal(linkEditorMode("/p/main.ts", settings), "edit");
+  assert.equal(linkEditorMode("/p/README.md", { markdownOpen: "edit" }), "edit");
+  assert.equal(parseState(JSON.stringify({ settings: { markdownOpen: "split" } })).state.settings.markdownOpen, "preview");
+  assert.equal(parseState(JSON.stringify({ settings: { markdownOpen: "edit" } })).state.settings.markdownOpen, "edit");
 });
 
 test("šablóny: projektové pred spoločnými, cudzí projekt nie", () => {

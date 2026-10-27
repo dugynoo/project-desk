@@ -203,6 +203,12 @@ export function createSettings(
         fileEditor.value = st.fileEditor;
         const fileLabel = el("label", "", t("editor.fileTarget")); fileLabel.htmlFor = fileEditor.id;
         editors.append(fileLabel, fileEditor);
+        const markdownOpen = el("select");
+        markdownOpen.id = "markdown-open";
+        markdownOpen.append(new Option(t("editor.markdownPreview"), "preview"), new Option(t("editor.markdownEdit"), "edit"));
+        markdownOpen.value = st.markdownOpen;
+        const markdownLabel = el("label", "", t("editor.markdownOpen")); markdownLabel.htmlFor = markdownOpen.id;
+        editors.append(markdownLabel, markdownOpen);
         const editor = editorPicker(editors, st, info, signal);
         const systemExts = field(editors, t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
         editors.append(el("div", "note", t("settings.systemOpenNote")));
@@ -274,6 +280,7 @@ export function createSettings(
           const draft = settingsDraft(st, {
             fontSize: Number(fontSize.value),
             fileEditor: fileEditor.value as Settings["fileEditor"],
+            markdownOpen: markdownOpen.value as Settings["markdownOpen"],
             editorFontSize: Number(editorFont.value),
             editorWordWrap: wrap.checked,
             showGitBranch: gitBranch.checked,

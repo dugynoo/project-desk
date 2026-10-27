@@ -58,6 +58,7 @@ import {
   type Provider,
   type Session,
   sessionByNumber,
+  linkEditorMode,
   interruptedAgents,
   sessionsOf,
   type Status,
@@ -372,7 +373,7 @@ function editorVisibilityChanged(visible: boolean) {
     if (restore) restorePaneLayout();
   }
 }
-async function openTextEditor(file?: string, line?: number) {
+async function openTextEditor(file?: string, line?: number, mode: "preview" | "edit" = "edit") {
   try {
     if (!file) {
       const selected = await openDialog({ directory: false, multiple: false });
@@ -386,10 +387,11 @@ async function openTextEditor(file?: string, line?: number) {
         editorVisibilityChanged,
         () => state.settings,
         externalEditorLabel,
+        openLink,
       );
     }).catch(e => { loadingEditor = undefined; throw e; });
     await loadingEditor;
-    await textEditor!.open(file, line);
+    await textEditor!.open(file, line, false, mode);
   } catch (e) { toast(errorText(e)); }
 }
 const busy = () => busyAgents(state.sessions, statusOf, id => runtimes.get(id)?.running === true);
@@ -413,7 +415,8 @@ async function flushForRestart() {
 
 function openFile(file: string, line?: number) {
   const target = fileOpenTarget(file, state.settings);
-  const openPreferred = () => state.settings.fileEditor === "external" ? openEditor(file, line) : void openTextEditor(file, line);
+  const openPreferred = () => state.settings.fileEditor === "external" ? openEditor(file, line)
+    : void openTextEditor(file, line, linkEditorMode(file, state.settings));
   if (target !== "system") return openPreferred();
   // Spustiteľný súbor backend odmietne; vtedy ho otvoríme aspoň v editore.
   void openDefault(file, false).then((ok) => {
@@ -438,6 +441,11 @@ async function revealFile(file: string) {
 }
 
 const REVEAL_LABEL: Record<string, Key> = { windows: "menu.revealWindows", macos: "menu.revealMac" };
+const OPEN_FOLDER_LABEL: Record<string, Key> = { windows: "project.openFolderWindows", macos: "project.openFolderMac" };
+const openFolderLabel = () => t(OPEN_FOLDER_LABEL[info.platform] ?? "project.openFolderLinux");
+function openFolder(path: string) {
+  void invoke("open_folder", { path }).catch((e) => toast(errorText(e)));
+}
 
 type MenuItem = [label: string, run: () => void];
 
@@ -737,8 +745,8 @@ const sidebar = createSidebar({
   getState: () => state, runtimes, unread, providerIcons: PROVIDER_ICON,
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
-  start, closeSession, pauseSession, canPause, removeProject, openEditor, showImport, showInfo, jumpAttention,
-  showClosedSessions, showNotifications: () => notificationCenter.show(),
+  start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
+  showImport, showInfo, jumpAttention, showClosedSessions, layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
@@ -1215,6 +1223,7 @@ function appActions(): PaletteAction[] {
     layouts: () => showSavedLayouts(state, modal, save, restorePaneLayout),
     notifications: notificationCenter.show, history: showClosedSessions,
     editor: () => { if (p) openEditor(p.path); }, addProject: () => void addProject(),
+    sidebar: () => sidebar.toggleAutoHide(),
   };
   for (const provider of ["claude", "codex", "antigravity", "shell"] as const)
     run[provider] = () => { if (p) void createSession(p, provider); };
@@ -1293,6 +1302,7 @@ async function main() {
   if (loaded.dropped) toast(t("app.corrupted", { n: loaded.dropped }));
 
   setupResizer();
+  sidebar.applyAutoHide();
   $("#btn-add-project").onclick = () => void addProject();
   $("#btn-palette").onclick = openPalette;
   refreshShortcutHints();

@@ -85,6 +85,8 @@ export interface Settings {
   language: string;
   /** ID nájdeného editora, "" = prvý nájdený, "custom" = vlastný program. */
   fileEditor: "builtin" | "external";
+  /** Ako vstavaný editor otvorí Markdown z odkazu v termináli. */
+  markdownOpen: "preview" | "edit";
   editorFontSize: number;
   editorWordWrap: boolean;
   editorId: string;
@@ -131,7 +133,7 @@ export interface PersistedState {
   closedSessions: Session[];
   settings: Settings;
   settingsRev: number;
-  ui: { sidebarWidth: number; grid: boolean; paneLayout: PaneLayout; paneSlots: (string | null)[]; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
+  ui: { sidebarWidth: number; sidebarAutoHide?: boolean; grid: boolean; paneLayout: PaneLayout; paneSlots: (string | null)[]; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -147,6 +149,7 @@ export const DEFAULT_SETTINGS: Settings = {
   shell: "",
   language: "en",
   fileEditor: "builtin",
+  markdownOpen: "preview",
   editorFontSize: 13,
   editorWordWrap: false,
   editorId: "",
@@ -266,6 +269,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     }
     state.settings.editorFontSize = normalizeFontSize(data.settings.editorFontSize);
     if (!["builtin", "external"].includes(state.settings.fileEditor)) state.settings.fileEditor = "builtin";
+    if (!["preview", "edit"].includes(state.settings.markdownOpen)) state.settings.markdownOpen = DEFAULT_SETTINGS.markdownOpen;
     state.settings.fontSize = normalizeFontSize(data.settings.fontSize);
     state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
@@ -282,6 +286,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
   }
   if (isObj(data.ui)) {
     state.ui.sidebarWidth = clampSidebar(num(data.ui.sidebarWidth, 280));
+    state.ui.sidebarAutoHide = data.ui.sidebarAutoHide === true;
     state.ui.grid = data.ui.grid === true;
     if (["grid", "columns", "rows"].includes(data.ui.paneLayout as string)) state.ui.paneLayout = data.ui.paneLayout as PaneLayout;
     if (isObj(data.ui.paneSizes)) {
@@ -673,6 +678,13 @@ export function formatTokens(n: number): string {
 }
 
 /** Relácie projektu v poradí, ako ich používateľ usporiadal (nové pribúdajú na koniec). */
+/** Bodky v zúženom paneli: skryté relácie len keď čakajú na teba (vtedy sa aj tak vrátia). */
+export function railSessions(state: PersistedState, statusOf: (id: string) => Status): { project: Project; sessions: Session[] }[] {
+  return orderedProjects(state.projects)
+    .map(project => ({ project, sessions: sessionsOf(state, project.id).filter(s => !s.hidden || statusOf(s.id) === "needs-you") }))
+    .filter(group => group.sessions.length);
+}
+
 export function sessionsOf(state: PersistedState, projectId: string): Session[] {
   return state.sessions.filter((s) => s.projectId === projectId);
 }
@@ -889,7 +901,7 @@ export const ACTION_DEFAULTS = {
   session1: 'Mod+1', session2: 'Mod+2', session3: 'Mod+3', session4: 'Mod+4',
   session5: 'Mod+5', session6: 'Mod+6', session7: 'Mod+7', session8: 'Mod+8', session9: 'Mod+9',
   fontIncrease: 'Mod+Plus', fontDecrease: 'Mod+Minus', fontReset: 'Mod+0',
-  settings: '', shortcuts: '', layouts: '', notifications: '', history: '', editor: '',
+  settings: '', shortcuts: '', layouts: '', notifications: '', history: '', editor: '', sidebar: '',
   addProject: '', claude: '', codex: '', antigravity: '', shell: '',
 } as const;
 export type ActionId = keyof typeof ACTION_DEFAULTS;
@@ -945,6 +957,15 @@ export function textFileFormat(raw: string): { bom: string; separator: string; t
   const normalized = body.replace(/\r\n/g, "\n");
   if (body.includes("\0") || normalized.includes("\r") || (body.includes("\r\n") && body.replace(/\r\n/g, "").includes("\n"))) return undefined;
   return { bom, separator: body.includes("\r\n") ? "\r\n" : "\n", text: normalized };
+}
+
+export function isMarkdown(file: string): boolean {
+  return /\.(md|markdown|mdown|mkd)$/i.test(file);
+}
+
+/** Režim vstavaného editora pre odkaz z terminálu: Markdown podľa nastavenia, inak úprava. */
+export function linkEditorMode(file: string, settings: Pick<Settings, "markdownOpen">): "preview" | "edit" {
+  return isMarkdown(file) ? settings.markdownOpen : "edit";
 }
 
 /** System file associations take precedence over the preferred text editor. */
