@@ -1,4 +1,2 @@
-- New: Markdown files open as a rendered preview. Switch between preview and editable text with the button in the editor or Ctrl/Cmd+Shift+V, and choose the default in Settings → Editor. Relative links in the preview open the linked file; absolute and network paths are ignored.
-- New: open a project's folder in Explorer, Finder or the file manager from the project menu.
-- New: the sidebar can hide automatically; turn it on with the button next to Settings. A narrow strip with a status dot for each session stays visible; hover over it to show the sidebar, or click a dot to switch to that session.
-- Fix: tables with emoji such as ✅ in Claude and Codex output no longer have a misaligned right border.
+- New: code blocks in the Markdown preview have a Copy button, and tables have clearer borders.
+- Improvement: resizing the window or a panel is smoother in terminals with long history, and agents redraw once after the resize instead of many times while you drag.
