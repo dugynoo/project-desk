@@ -77,13 +77,14 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
     }
 }
 
-#[tauri::command]
+// Disk I/O with fsync: keep it off the main thread, which also handles terminal input.
+#[tauri::command(async)]
 fn load_state(state: State<'_, AppState>) -> Result<persistence::Loaded, String> {
     let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
     persistence::load(&state.state_file)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_state(state: State<'_, AppState>, json: String) -> Result<(), String> {
     let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
     persistence::save(&state.state_file, &json)
@@ -145,7 +146,8 @@ async fn pty_spawn(
         cols: args.cols,
         rows: args.rows,
     };
-    state.pty.spawn(app, req, on_output)?;
+    let pty = state.pty.clone();
+    tauri::async_runtime::spawn_blocking(move || pty.spawn(app, req, on_output)).await.map_err(|e| e.to_string())??;
     Ok(prepared)
 }
 
@@ -247,7 +249,7 @@ async fn project_exists(path: String, existing: Vec<String>) -> Result<bool, Str
 }
 
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
-#[tauri::command]
+#[tauri::command(async)]
 fn resolve_file(cwd: String, candidate: String) -> Option<String> {
     if candidate.len() > 1024 {
         return None;

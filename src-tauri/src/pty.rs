@@ -278,8 +278,9 @@ fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut send: impl FnMut(Ou
 
 impl PtyManager {
     pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<OutputChunk>) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.contains_key(&req.id)
+        // Open and fork without the registry lock: ConPTY and process creation can be slow,
+        // and input, resizes and kills of other sessions must not wait for them.
+        if self.sessions.lock().map_err(|e| e.to_string())?.contains_key(&req.id)
             || self.outputs.lock().map_err(|e| e.to_string())?.contains_key(&req.output_id) {
             return Err("pty.alreadyRunning".into());
         }
@@ -287,6 +288,9 @@ impl PtyManager {
         let pair = native_pty_system()
             .openpty(size(req.cols, req.rows))
             .map_err(|e| format!("pty.openFailed: {e}"))?;
+        // Before the fork, so an error here cannot leave a child running.
+        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
 
         let mut cmd = if let Some((program, args)) = req.direct {
             let mut cmd = CommandBuilder::new(program); cmd.args(args); cmd
@@ -304,28 +308,29 @@ impl PtyManager {
             .map_err(|e| format!("pty.shellFailed: {e}"))?;
         drop(pair.slave);
 
-        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-        let killer = child.clone_killer();
-        let pid = child.process_id();
-
         let flow = Arc::new(OutputFlow::default());
-        self.outputs.lock().map_err(|e| e.to_string())?.insert(req.output_id.clone(), flow.clone());
-        let reader_flow = flow.clone();
+        let (input, input_rx) = InputQueue::new();
+        let session = PtySession { master: pair.master, input, killer: child.clone_killer(), pid: child.process_id(), output: flow.clone() };
+        if let Err((error, mut session)) = self.register(&req.id, &req.output_id, session) {
+            let _ = session.kill();
+            thread::spawn(move || { let _ = child.wait(); });
+            return Err(error);
+        }
+
         let outputs = self.outputs.clone();
         let output_id = req.output_id;
         thread::spawn(move || {
-            pump_output(reader, &reader_flow, |chunk| output.send(chunk).is_ok());
+            pump_output(reader, &flow, |chunk| output.send(chunk).is_ok());
             if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
         });
 
-        let (input, input_rx) = InputQueue::new();
         thread::spawn(move || {
             // Ends when the session drops its sender or the PTY rejects the write; dropping the writer sends EOF.
             pump_input(writer, input_rx);
         });
 
-        let id = req.id.clone();
+        // Started only after registration, so an instant exit cannot leave a stale session behind.
+        let id = req.id;
         let registry = self.sessions.clone();
         let shutting_down = self.shutting_down.clone();
         let preparing_shutdown = self.preparing_shutdown.clone();
@@ -343,8 +348,19 @@ impl PtyManager {
                 let _ = app.emit("pty-exit", ExitEvent { id, code, system_shutdown });
             }
         });
+        Ok(())
+    }
 
-        sessions.insert(req.id, PtySession { master: pair.master, input, killer, pid, output: flow });
+    /// Registers a forked session unless a concurrent start or app shutdown got there first.
+    fn register(&self, id: &str, output_id: &str, session: PtySession) -> Result<(), (String, PtySession)> {
+        let mut sessions = match self.sessions.lock() { Ok(map) => map, Err(e) => return Err((e.to_string(), session)) };
+        let mut outputs = match self.outputs.lock() { Ok(map) => map, Err(e) => return Err((e.to_string(), session)) };
+        // kill_all sets the flag before taking the registry, so a session is either killed there or refused here.
+        if self.shutting_down.load(Ordering::SeqCst) || sessions.contains_key(id) || outputs.contains_key(output_id) {
+            return Err(("pty.alreadyRunning".into(), session));
+        }
+        outputs.insert(output_id.to_owned(), session.output.clone());
+        sessions.insert(id.to_owned(), session);
         Ok(())
     }
 
