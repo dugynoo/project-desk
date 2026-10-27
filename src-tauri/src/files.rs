@@ -58,7 +58,9 @@ fn existing_file(path: &str) -> Result<&Path, String> {
 
 pub fn open_default(path: &str) -> Result<(), String> {
     let p = existing_file(path)?;
-    if is_runnable(p) {
+    // The opener follows symlinks: `notes.txt -> run.command` must not launch its target.
+    let target = std::fs::canonicalize(p).map_err(|e| format!("file.missing: {path}: {e}"))?;
+    if is_runnable(p) || is_runnable(&target) {
         return Err("file.runnable".into());
     }
     tauri_plugin_opener::open_path(p, None::<&str>).map_err(|e| format!("file.openFailed: {e}"))
@@ -145,6 +147,17 @@ mod tests {
         std::fs::create_dir(&original).unwrap();
         std::os::unix::fs::symlink(&original, &alias).unwrap();
         assert!(super::project_exists(&alias, &[original]).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_to_program_does_not_open() {
+        let f = Fixture::new();
+        let target = f.path("payload.command");
+        let link = f.path("notes.txt");
+        std::fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(super::open_default(&link), Err("file.runnable".into()));
     }
 
     #[test]
