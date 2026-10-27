@@ -121,7 +121,7 @@ export function migrateEditorCommand(command: string): string {
 }
 
 /** Verzia predvolených nastavení; pri zvýšení sa staré predvolené hodnoty nahradia novými. */
-export const SETTINGS_REV = 2;
+export const SETTINGS_REV = 3;
 
 export interface PersistedState {
   savedLayouts: SavedLayout[];
@@ -143,8 +143,10 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcuts: {},
   defaultProvider: "claude",
   claudeCommand: "claude --dangerously-skip-permissions",
-  codexCommand: "codex --dangerously-bypass-approvals-and-sandbox",
-  codexResumeCommand: "codex resume --dangerously-bypass-approvals-and-sandbox",
+  // Without the shared Codex daemon the conversation belongs to this terminal's process tree,
+  // so restarting Project Desk does not leave it "open in another app".
+  codexCommand: "codex --dangerously-bypass-approvals-and-sandbox --no-daemon",
+  codexResumeCommand: "codex resume --dangerously-bypass-approvals-and-sandbox --no-daemon",
   antigravityCommand: "agy",
   shell: "",
   language: "en",
@@ -162,6 +164,10 @@ export const DEFAULT_SETTINGS: Settings = {
 
 /** Predvolené hodnoty z rev 1; ak ich používateľ nezmenil, prejdú na nové. */
 const REV1_DEFAULTS: Partial<Settings> = { codexCommand: "codex", codexResumeCommand: "codex resume" };
+const REV2_DEFAULTS: Partial<Settings> = {
+  codexCommand: "codex --dangerously-bypass-approvals-and-sandbox",
+  codexResumeCommand: "codex resume --dangerously-bypass-approvals-and-sandbox",
+};
 
 export function emptyState(): PersistedState {
   return {
@@ -278,8 +284,9 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
       state.settings.editorId = migrateEditorCommand(data.settings.editorCommand);
     }
     const rev = num(data.settingsRev, 1);
-    if (rev < 2) {
-      for (const [key, old] of Object.entries(REV1_DEFAULTS) as [keyof Settings, string][]) {
+    for (const [since, defaults] of [[2, REV1_DEFAULTS], [3, REV2_DEFAULTS]] as const) {
+      if (rev >= since) continue;
+      for (const [key, old] of Object.entries(defaults) as [keyof Settings, string][]) {
         if (state.settings[key] === old) (state.settings as unknown as Record<string, unknown>)[key] = DEFAULT_SETTINGS[key];
       }
     }

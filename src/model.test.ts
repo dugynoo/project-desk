@@ -419,7 +419,7 @@ test("nevalidné agentSessionId sa do príkazu nevloží", () => {
 });
 
 test("Codex: prvý štart, pokračovanie v známej konverzácii, výber pri neznámej", () => {
-  const bypass = "--dangerously-bypass-approvals-and-sandbox";
+  const bypass = "--dangerously-bypass-approvals-and-sandbox --no-daemon";
   const codex = (over: Partial<Session>) => agentCommand(session({ provider: "codex", ...over }), DEFAULT_SETTINGS, "windows", true);
   const hook = ' -c "$env:PROJECT_DESK_CODEX_HOOKS"';
   assert.equal(codex({ agentSessionId: undefined }), `codex ${bypass}${hook}`);
@@ -443,6 +443,17 @@ test("staré predvolené Codex príkazy sa prepnú na bypass, vlastné ostanú",
   assert.equal(custom.settings.codexCommand, "codex -m o3");
   const rev2 = parseState(JSON.stringify({ settingsRev: 2, settings: { codexCommand: "codex" } })).state;
   assert.equal(rev2.settings.codexCommand, "codex");
+});
+
+test("predvolené Codex príkazy z rev 2 obídu zdieľaný daemon, vlastné ostanú", () => {
+  const bypass = "--dangerously-bypass-approvals-and-sandbox";
+  const old = parseState(JSON.stringify({ settingsRev: 2, settings: { codexCommand: `codex ${bypass}`, codexResumeCommand: `codex resume ${bypass}` } })).state;
+  assert.equal(old.settings.codexCommand, `codex ${bypass} --no-daemon`);
+  assert.equal(old.settings.codexResumeCommand, `codex resume ${bypass} --no-daemon`);
+  const custom = parseState(JSON.stringify({ settingsRev: 2, settings: { codexCommand: `codex ${bypass} -m o3` } })).state;
+  assert.equal(custom.settings.codexCommand, `codex ${bypass} -m o3`);
+  const current = parseState(JSON.stringify({ settingsRev: 3, settings: { codexCommand: `codex ${bypass}` } })).state;
+  assert.equal(current.settings.codexCommand, `codex ${bypass}`);
 });
 
 test("starý príkaz editora sa prevedie na ID, nový výber ostane", () => {
