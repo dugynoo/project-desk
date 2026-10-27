@@ -41,10 +41,12 @@ export async function exerciseEditor({ fixture, platform, command, evaluate, wai
   await wait('return !!document.querySelector(".text-editor:not([hidden]) .cm-content")', 'editor opens from terminal link');
   assert.equal(await evaluate('return document.querySelectorAll(".pane.visible").length'), 1);
   assert.equal(await evaluate('return document.querySelector(".text-editor-title").textContent'), 'editor-smoke.md');
-  // Markdown links open as a rendered preview; switch to editable text.
-  const mode = '.text-editor-bar button[aria-pressed]';
+  // Markdown links open as a rendered preview; the shortcut switches to editable text
+  // and focuses it. A click would leave focus on the button, and WebDriver typing
+  // into an unfocused element moves the caret to its end.
   await wait('return document.querySelector(".markdown-preview:not([hidden]) h1")?.textContent === "Smoke editor"', 'markdown preview renders');
-  await click(mode);
+  await keys([{ type: 'keyDown', value: mod }, { type: 'keyDown', value: '\uE008' }, { type: 'keyDown', value: 'v' },
+    { type: 'keyUp', value: 'v' }, { type: 'keyUp', value: '\uE008' }, { type: 'keyUp', value: mod }]);
   await wait('return !!document.querySelector(".text-editor-host:not([hidden])") && !!document.querySelector(".markdown-preview[hidden]")', 'editor switches to editable text');
   const content = '.text-editor .cm-content';
   const save = '.text-editor-bar button:nth-of-type(2)';
@@ -52,9 +54,7 @@ export async function exerciseEditor({ fixture, platform, command, evaluate, wai
   const close = '.text-editor-bar button[aria-label="Close"]';
   const text = () => evaluate('return document.querySelector(".text-editor .cm-content").innerText');
   assert.match(await text(), /# Smoke editor/);
-  // Put the caret at the document start after the mode switch. Use keyboard input, not contenteditable clear.
-  await keys([{ type: 'keyDown', value: mod }, { type: 'keyDown', value: '\uE011' },
-    { type: 'keyUp', value: '\uE011' }, { type: 'keyUp', value: mod }]);
+  // open() places the caret at line 1. Use keyboard input, not contenteditable clear.
   await type(content, 'Saved edit\uE007');
   await wait(`return !document.querySelector('${save}').disabled`, 'document dirty');
   await keys([{ type: 'keyDown', value: mod }, { type: 'keyDown', value: 's' },
