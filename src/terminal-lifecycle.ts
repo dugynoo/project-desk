@@ -125,6 +125,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     rt.running = true;
     rt.closing = false;
     pendingStarts.add(s.id);
+    let untrusted = false;
     try {
       // Persist ownership intent before starting a worker that can outlive this app.
       if (s.background) await flush();
@@ -149,17 +150,28 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       }
     } catch (e) {
       rt.running = false;
-      s.stopped = true;
-      statuses.set(s.id, "exited");
-      rt.term.writeln(`\r\n${errorText(e)}`);
-      agentMonitor.cancelDiscovery(s.id);
-      save();
-      toast(errorText(e));
-      layout();
-      renderSidebar();
-      renderPaneHeads();
-      return;
+      untrusted = s.background === true && String(e) === "background.untrusted";
+      if (!untrusted) {
+        s.stopped = true;
+        statuses.set(s.id, "exited");
+        rt.term.writeln(`\r\n${errorText(e)}`);
+        agentMonitor.cancelDiscovery(s.id);
+        save();
+        toast(errorText(e));
+        layout();
+        renderSidebar();
+        renderPaneHeads();
+        return;
+      }
     } finally { pendingStarts.delete(s.id); }
+    if (untrusted) {
+      if (session(s.id) !== s) return;
+      // Claude asks for workspace trust only interactively: continue in this terminal.
+      s.background = false;
+      rt.term.writeln(t("background.untrusted"));
+      save();
+      return start(s);
+    }
     if (!session(s.id)) return;
     // An instant exit is handled by onExit, but the process did start: a later Start resumes it.
     if (!rt.running) { s.started = true; save(); return; }

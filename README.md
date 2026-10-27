@@ -92,9 +92,12 @@ Click **ⓘ** or choose **⋯ → Session info** (also on right-click) to see th
 In **Settings → Agents**, enable **Keep new Claude sessions running when the app
 closes**. It is off by default and applies only to newly created Claude sessions;
 existing and imported conversations keep their current behavior. Requires native
-Claude Code **2.1.310+**, a project already trusted in Claude, and the command
-`claude` or `claude --dangerously-skip-permissions`. Custom command options are
-rejected explicitly in this mode. Other providers are unchanged.
+Claude Code **2.1.310+** and the command `claude` or
+`claude --dangerously-skip-permissions`. Custom command options are rejected
+explicitly in this mode. Other providers are unchanged. If Claude does not trust
+the project yet, the new session starts as an ordinary session in its own terminal
+so you can accept Claude's trust prompt there; later new sessions in that project
+run in the background.
 
 Claude's background supervisor owns the worker and its subagents. Closing or
 updating Project Desk disconnects its terminal; the work can keep running and

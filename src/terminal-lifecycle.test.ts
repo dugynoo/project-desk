@@ -157,6 +157,24 @@ test("background detach preserves the session; explicit close kills the detached
   assert.equal(f.state.closedSessions.length, 1);
 });
 
+test("an untrusted project starts the background session in its terminal instead", async () => {
+  let untrusted = true;
+  const f = fixture(async command => {
+    if (command === "pty_spawn" && untrusted) { untrusted = false; throw "background.untrusted"; }
+    return null;
+  });
+  const s = f.state.sessions[0];
+  s.provider = "claude"; s.background = true;
+  await f.lifecycle.start(s);
+  const spawns = f.calls.filter(c => c.command === "pty_spawn").map(c => c.args.args as { background: boolean; command: string });
+  assert.deepEqual(spawns.map(a => a.background), [true, false]);
+  assert.match(spawns[1].command, /^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36} --settings/);
+  assert.equal(s.background, false);
+  assert.equal(s.stopped, false);
+  assert.equal(f.rt.running, true);
+  assert.equal(f.notices.length, 0);
+});
+
 test("system shutdown persists recovery immediately without archiving", async () => {
   const f = fixture();
   const s = f.state.sessions[0];

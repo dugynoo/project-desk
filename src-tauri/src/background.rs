@@ -107,6 +107,8 @@ fn find<'a>(rows: &'a [Value], owned: &Owned) -> Option<&'a Value> {
     } })
 }
 
+fn untrusted(error: &str) -> bool { error.to_ascii_lowercase().contains("not trusted") }
+
 fn control_id(row: &Value) -> Result<&str, String> {
     row["id"].as_str().filter(|id| id.len() == 8 && id.bytes().all(|b| b.is_ascii_hexdigit()))
         .ok_or_else(|| error("Invalid Claude job ID"))
@@ -146,7 +148,16 @@ pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> 
         let settings = settings.to_string_lossy();
         let mut args = vec!["--bg", "--name", &owned.name, "--settings", &settings];
         if bypass { args.push("--dangerously-skip-permissions"); }
-        run(&owned.program, &owned.cwd, &args)?;
+        if let Err(e) = run(&owned.program, &owned.cwd, &args) {
+            // The trust prompt needs an interactive terminal: forget this attempt so the
+            // session can start in the foreground, where Claude asks for trust itself.
+            if untrusted(&e) {
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(dir.join(format!("background-{id}-hooks.json")));
+                return Err("background.untrusted".into());
+            }
+            return Err(e);
+        }
         rows = entries(&owned)?;
     }
     let row = find(&rows, &owned).ok_or_else(|| error("Claude did not return the new background session"))?;
@@ -208,5 +219,10 @@ mod tests {
         assert!(launch_options("claude --dangerously-skip-permissions").unwrap());
         for command in ["claude; echo hi", "claude --model sonnet", "other"] { assert!(launch_options(command).is_err()); }
         assert!(record(Path::new("/test"), "../other").is_err());
+    }
+    #[test]
+    fn recognizes_untrusted_workspace_failures() {
+        assert!(untrusted(&error("Workspace not trusted. Run `claude` in C:\\p once and accept the trust prompt, then retry.")));
+        assert!(!untrusted(&error("Claude command timed out; retry to reconnect")));
     }
 }
