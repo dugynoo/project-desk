@@ -117,6 +117,8 @@ jobs:
           releaseName: Project Desk ${{ env.RELEASE_TAG }}
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
+          # Parallel builds overwrote each other's platforms; the manifest job writes it once.
+          uploadUpdaterJson: false
           args: --config src-tauri/tauri.release.json ${{ matrix.args }}
 
       - name: Build and verify Arch Linux package
@@ -137,11 +139,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/arch/*.pkg.tar.zst src-tauri/target/release/bundle/aur/*.tar.gz --clobber
 
+  # Updater manifest from the finished draft: every build has uploaded its
+  # bundle and signature by now, so no platform can be lost to a race.
+  manifest:
+    needs: [source, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/updater-manifest.mjs
+
   # Builds and full CI test the same pinned commit, in parallel. A failed,
   # skipped or cancelled prerequisite prevents publishing (default success()).
   # Manual rebuilds of an older tag must not become the latest release.
   publish:
-    needs: [checks, build]
+    needs: [checks, manifest]
     if: github.event_name == 'push'
     permissions:
       contents: write
