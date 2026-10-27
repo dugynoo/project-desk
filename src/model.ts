@@ -907,15 +907,19 @@ export const ACTION_DEFAULTS = {
 export type ActionId = keyof typeof ACTION_DEFAULTS;
 export const ACTION_IDS = Object.keys(ACTION_DEFAULTS) as ActionId[];
 export type Shortcuts = Partial<Record<ActionId, string>>;
-export function bindingFor(id: ActionId, bindings: Shortcuts): string { return bindings[id] ?? ACTION_DEFAULTS[id]; }
+// Outside macOS, Mod is Ctrl: bare Ctrl+K/G belong to the terminal (kill-line, Claude's external editor).
+const NON_MAC_DEFAULTS: Partial<Record<ActionId, string>> = { switch: 'Mod+Shift+K', grid: 'Mod+Shift+G' };
+export function bindingFor(id: ActionId, bindings: Shortcuts, mac: boolean): string {
+  return bindings[id] ?? (mac ? undefined : NON_MAC_DEFAULTS[id]) ?? ACTION_DEFAULTS[id];
+}
 export function validBinding(value: unknown): value is string {
   return typeof value === 'string' && (value === '' || /^Mod\+(Shift\+)?([A-Z0-9]|Plus|Minus|Enter|F(?:[1-9]|1[0-2]))$/.test(value)
     && !['Mod+Shift+Plus', 'Mod+Shift+Minus', 'Mod+C', 'Mod+V', 'Mod+X', 'Mod+Q', 'Mod+W', 'Mod+Z', 'Mod+Shift+C', 'Mod+Shift+V'].includes(value));
 }
-export function shortcutConflict(bindings: Shortcuts): ActionId | undefined {
+export function shortcutConflict(bindings: Shortcuts, mac: boolean): ActionId | undefined {
   const seen = new Set<string>();
   for (const id of ACTION_IDS) {
-    const value = bindingFor(id, bindings);
+    const value = bindingFor(id, bindings, mac);
     if (value && seen.has(value)) return id;
     if (value) seen.add(value);
   }
@@ -928,15 +932,23 @@ export function parseShortcuts(value: unknown): Shortcuts {
   for (const id of ['fontIncrease', 'fontDecrease', 'fontReset'] as const) {
     if (result[id] === undefined && Object.values(result).includes(ACTION_DEFAULTS[id])) result[id] = '';
   }
+  // Platform defaults differ: a custom binding taken from one platform pins the other's default.
+  for (const [id, value] of Object.entries(NON_MAC_DEFAULTS) as [ActionId, string][]) {
+    if (result[id] !== undefined) continue;
+    const used = Object.values(result);
+    if (used.includes(value)) result[id] = ACTION_DEFAULTS[id];
+    else if (used.includes(ACTION_DEFAULTS[id])) result[id] = value;
+  }
   // Invalid saved collisions must never make dispatch depend on object order.
-  return shortcutConflict(result) ? {} : result;
+  return shortcutConflict(result, true) || shortcutConflict(result, false) ? {} : result;
 }
 export interface ShortcutEvent {
   key: string; code: string; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; altKey: boolean;
   isComposing?: boolean; getModifierState?: (key: string) => boolean;
 }
-export function bindingFromEvent(e: ShortcutEvent): string | undefined {
-  if (e.isComposing || e.getModifierState?.('AltGraph') || e.altKey || !(e.ctrlKey || e.metaKey) || (e.ctrlKey && e.metaKey)) return;
+/** Mod is Cmd on macOS and Ctrl elsewhere; the other key always reaches the terminal. */
+export function bindingFromEvent(e: ShortcutEvent, mac: boolean): string | undefined {
+  if (e.isComposing || e.getModifierState?.('AltGraph') || e.altKey || !(mac ? e.metaKey : e.ctrlKey) || (e.ctrlKey && e.metaKey)) return;
   // Symbol keys normalize Shift needed to type +; digit-row navigation stays layout-independent.
   if (e.code === 'NumpadAdd' || e.code === 'Equal' || (e.key === '+' && !/^Digit/.test(e.code))) return 'Mod+Plus';
   if (e.code === 'NumpadSubtract' || e.key === '-') return 'Mod+Minus';
@@ -945,9 +957,9 @@ export function bindingFromEvent(e: ShortcutEvent): string | undefined {
   const binding = `Mod+${e.shiftKey ? 'Shift+' : ''}${key}`;
   return validBinding(binding) && binding ? binding : undefined;
 }
-export function shortcutAction(e: ShortcutEvent, bindings: Shortcuts): ActionId | undefined {
-  const binding = bindingFromEvent(e);
-  return binding ? ACTION_IDS.find(id => bindingFor(id, bindings) === binding) : undefined;
+export function shortcutAction(e: ShortcutEvent, bindings: Shortcuts, mac: boolean): ActionId | undefined {
+  const binding = bindingFromEvent(e, mac);
+  return binding ? ACTION_IDS.find(id => bindingFor(id, bindings, mac) === binding) : undefined;
 }
 
 /** Preserve UTF-8 BOM and uniform line endings; reject ambiguous conversions. */

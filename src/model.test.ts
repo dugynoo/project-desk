@@ -893,33 +893,49 @@ test("a slow stale lookup cannot postpone a replacement session", async () => {
 import { ACTION_DEFAULTS, bindingFor, bindingFromEvent, shortcutAction, shortcutConflict, parseShortcuts, validBinding } from './model.ts';
 
 test('shortcuts preserve defaults, custom bindings and explicit disabling through persistence', () => {
-  assert.equal(bindingFor('palette', {}), 'Mod+Shift+P');
-  assert.equal(shortcutConflict(ACTION_DEFAULTS), undefined);
+  assert.equal(bindingFor('palette', {}, true), 'Mod+Shift+P');
+  assert.equal(shortcutConflict(ACTION_DEFAULTS, true), undefined);
+  assert.equal(shortcutConflict({}, false), undefined);
   const state = emptyState();
   state.settings.shortcuts = { switch: 'Mod+Shift+K', palette: '' };
   const loaded = parseState(JSON.stringify(state)).state;
   assert.deepEqual(loaded.settings.shortcuts, state.settings.shortcuts);
-  assert.equal(bindingFor('palette', loaded.settings.shortcuts), '');
-  assert.equal(bindingFor('grid', loaded.settings.shortcuts), 'Mod+G');
+  assert.equal(bindingFor('palette', loaded.settings.shortcuts, true), '');
+  assert.equal(bindingFor('grid', loaded.settings.shortcuts, true), 'Mod+G');
   assert.deepEqual(parseState('{"settings":{"shortcuts":null}}').state.settings.shortcuts, {});
-  assert.deepEqual(parseShortcuts({ grid: 'Mod+K' }), {});
+  assert.deepEqual(parseShortcuts({ grid: 'Mod+Shift+P' }), {});
   assert.deepEqual(parseShortcuts({ palette: 'Mod+C', unknown: 'Mod+J' }), {});
   assert.deepEqual(parseShortcuts({ grid: 'Mod+K', switch: 'Mod+G' }), { switch: 'Mod+G', grid: 'Mod+K' });
 });
 
-test('shortcut dispatch handles Ctrl/Cmd, localized digits and protects terminal input', () => {
+test('switch and grid leave bare Ctrl+K/G to the terminal outside macOS', () => {
+  assert.equal(bindingFor('switch', {}, true), 'Mod+K');
+  assert.equal(bindingFor('switch', {}, false), 'Mod+Shift+K');
+  assert.equal(bindingFor('grid', {}, false), 'Mod+Shift+G');
+  assert.equal(bindingFor('switch', { switch: 'Mod+K' }, false), 'Mod+K');
+  // A binding taken from either platform's default pins the other default, so neither platform collides.
+  assert.deepEqual(parseShortcuts({ palette: 'Mod+Shift+K' }), { palette: 'Mod+Shift+K', switch: 'Mod+K' });
+  assert.deepEqual(parseShortcuts({ templates: 'Mod+G' }), { templates: 'Mod+G', grid: 'Mod+Shift+G' });
+});
+
+test('shortcut dispatch uses Cmd on macOS, Ctrl elsewhere, handles localized digits and protects terminal input', () => {
   const event = { key: 'k', code: 'KeyK', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false };
-  assert.equal(shortcutAction(event, {}), 'switch');
-  assert.equal(shortcutAction({ ...event, ctrlKey: false, metaKey: true }, {}), 'switch');
-  assert.equal(shortcutAction(event, { switch: '' }), undefined);
-  assert.equal(shortcutAction(event, { switch: 'Mod+J' }), undefined);
-  assert.equal(shortcutAction({ ...event, key: 'j' }, { switch: 'Mod+J' }), 'switch');
-  assert.equal(shortcutAction({ ...event, key: '+', code: 'Digit1' }, {}), 'session1');
-  assert.equal(shortcutAction({ ...event, key: '1', code: 'Numpad1' }, {}), 'session1');
+  const mac = { ...event, ctrlKey: false, metaKey: true };
+  assert.equal(shortcutAction(mac, {}, true), 'switch');
+  assert.equal(shortcutAction(event, {}, true), undefined);
+  assert.equal(shortcutAction(event, {}, false), undefined);
+  assert.equal(shortcutAction(mac, {}, false), undefined);
+  assert.equal(shortcutAction({ ...event, shiftKey: true }, {}, false), 'switch');
+  assert.equal(shortcutAction({ ...event, key: 'g', code: 'KeyG' }, {}, false), undefined);
+  assert.equal(shortcutAction(mac, { switch: '' }, true), undefined);
+  assert.equal(shortcutAction(mac, { switch: 'Mod+J' }, true), undefined);
+  assert.equal(shortcutAction({ ...event, key: 'j' }, { switch: 'Mod+J' }, false), 'switch');
+  assert.equal(shortcutAction({ ...event, key: '+', code: 'Digit1' }, {}, false), 'session1');
+  assert.equal(shortcutAction({ ...event, key: '1', code: 'Numpad1' }, {}, false), 'session1');
   for (const extra of [{ ctrlKey: false }, { isComposing: true }, { altKey: true }, { metaKey: true }, { getModifierState: () => true }])
-    assert.equal(bindingFromEvent({ ...event, ...extra }), undefined);
+    assert.equal(bindingFromEvent({ ...event, ...extra }, false), undefined);
   for (const key of ['c', 'v', 'x', 'w', 'q', 'z', 'Escape', 'Tab', 'Dead', 'Process'])
-    assert.equal(bindingFromEvent({ ...event, key }), undefined);
+    assert.equal(bindingFromEvent({ ...event, key }, false), undefined);
   assert.equal(validBinding('Mod+Shift+F12'), true);
   assert.equal(validBinding('Mod+F13'), false);
   assert.equal(validBinding('Shift+K'), false);
@@ -939,15 +955,15 @@ test('terminal font size migrates, persists and stays finite within bounds', () 
 test('font shortcuts support symbols, numpad and remapping without stealing localized session digits', () => {
   const e = { key: '+', code: 'Equal', ctrlKey: true, metaKey: false, altKey: false, shiftKey: true };
   for (const code of ['Equal', 'NumpadAdd', 'BracketRight'])
-    assert.equal(shortcutAction({ ...e, code }, {}), 'fontIncrease');
-  assert.equal(shortcutAction({ ...e, key: '=', shiftKey: false }, {}), 'fontIncrease');
-  assert.equal(shortcutAction({ ...e, key: '-', code: 'Minus', shiftKey: false }, {}), 'fontDecrease');
-  assert.equal(shortcutAction({ ...e, key: 'Subtract', code: 'NumpadSubtract' }, {}), 'fontDecrease');
-  assert.equal(shortcutAction({ ...e, key: '0', code: 'Digit0', shiftKey: false }, {}), 'fontReset');
-  assert.equal(shortcutAction({ ...e, code: 'Digit1', shiftKey: false }, {}), 'session1');
-  assert.equal(shortcutAction(e, { fontIncrease: '' }), undefined);
-  assert.equal(shortcutAction(e, { fontIncrease: 'Mod+J' }), undefined);
-  assert.equal(shortcutAction({ ...e, altKey: true }, {}), undefined);
+    assert.equal(shortcutAction({ ...e, code }, {}, false), 'fontIncrease');
+  assert.equal(shortcutAction({ ...e, key: '=', shiftKey: false }, {}, false), 'fontIncrease');
+  assert.equal(shortcutAction({ ...e, key: '-', code: 'Minus', shiftKey: false }, {}, false), 'fontDecrease');
+  assert.equal(shortcutAction({ ...e, key: 'Subtract', code: 'NumpadSubtract' }, {}, false), 'fontDecrease');
+  assert.equal(shortcutAction({ ...e, key: '0', code: 'Digit0', shiftKey: false }, {}, false), 'fontReset');
+  assert.equal(shortcutAction({ ...e, code: 'Digit1', shiftKey: false }, {}, false), 'session1');
+  assert.equal(shortcutAction(e, { fontIncrease: '' }, false), undefined);
+  assert.equal(shortcutAction(e, { fontIncrease: 'Mod+J' }, false), undefined);
+  assert.equal(shortcutAction({ ...e, altKey: true }, {}, false), undefined);
   assert.equal(validBinding('Mod+Shift+Plus'), false);
   assert.deepEqual(parseShortcuts({ palette: 'Mod+0' }), { palette: 'Mod+0', fontReset: '' });
 });

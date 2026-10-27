@@ -156,7 +156,10 @@ Cancel leaves saved bindings unchanged. Other unsaved settings survive switching
 between these views. Existing settings retain the default shortcuts.
 
 Bindings support Ctrl/Cmd plus a letter, digit, F1–F12, Enter, plus or minus, optionally with
-Shift. Ctrl and Cmd are equivalent for app actions. Number-row and numpad bindings
+Shift. App actions use Cmd on macOS and Ctrl elsewhere; Ctrl on macOS always goes to the
+terminal. Outside macOS, finding a session and multiple panels default to Ctrl+Shift+K and
+Ctrl+Shift+G, so Ctrl+K (delete to end of line) and Ctrl+G (Claude's external editor) reach
+the terminal. Number-row and numpad bindings
 work on localized keyboards. Clipboard and common close/undo combinations are
 reserved; other app bindings take priority over terminal input. OS-reserved
 shortcuts may not reach the app. Editing bindings does not change shortcuts inside
@@ -211,8 +214,8 @@ shutting down releases waiting readers, and each launch has its own output ID.
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.
 - **Ctrl+click** a URL to open it in your browser. Ctrl+click a file path such as `src/main.ts:120` to open it in your editor at that line. File types listed in ⚙ Settings (by default HTML, PDF and images) open in the default app instead, so an HTML file opens in the browser.
 - **Right-click** a file path for more: open in the editor, open with the default app, show in Explorer / Finder / the file manager, copy the full or relative path. Right-click a URL to open or copy it.
-- **Multiple panels:** Ctrl+G opens a saved layout with **2 to 8 panels** (two by default). Choose **Grid**, **Side by side**, or **Top to bottom** under **Layout** beside the sidebar search button. Click a panel title to choose its session, with search and grouping by project. Empty places stay empty until you choose a session. Selecting an already visible session focuses its existing panel without moving it. The minus button hides a session without stopping it; reducing the panel count also leaves sessions running. Clicking a session outside the layout opens a temporary single-session view; **Back to layout** restores the saved arrangement. Drag dividers to resize, or focus them and use arrow keys (Home/End move to the limits). Session assignments, order, and proportions survive restarts. The grid uses three columns for 5-6 panels and four for 7-8. With an odd count, the last panel spans the remaining space in its row. Ctrl+Shift+Enter temporarily maximizes a panel and restores the layout. Older pinned panels migrate into the saved layout.
-- **Find a session:** Ctrl+K. **Ctrl+1–8** jumps to a session by its position in the sidebar, **Ctrl+9** to the last one.
+- **Multiple panels:** Ctrl+Shift+G (Cmd+G on macOS) opens a saved layout with **2 to 8 panels** (two by default). Choose **Grid**, **Side by side**, or **Top to bottom** under **Layout** beside the sidebar search button. Click a panel title to choose its session, with search and grouping by project. Empty places stay empty until you choose a session. Selecting an already visible session focuses its existing panel without moving it. The minus button hides a session without stopping it; reducing the panel count also leaves sessions running. Clicking a session outside the layout opens a temporary single-session view; **Back to layout** restores the saved arrangement. Drag dividers to resize, or focus them and use arrow keys (Home/End move to the limits). Session assignments, order, and proportions survive restarts. The grid uses three columns for 5-6 panels and four for 7-8. With an odd count, the last panel spans the remaining space in its row. Ctrl+Shift+Enter temporarily maximizes a panel and restores the layout. Older pinned panels migrate into the saved layout.
+- **Find a session:** Ctrl+Shift+K (Cmd+K on macOS). **Ctrl+1–8** jumps to a session by its position in the sidebar, **Ctrl+9** to the last one.
 - **Clipboard:** Ctrl+C copies the selection without trailing spaces and the indentation shared by its lines; in agent sessions it also rejoins lines the agent wrapped at the terminal width, keeping blank lines, list items and tables (with nothing selected it interrupts the process), Ctrl+V pastes, and Shift+Enter inserts a new line in Claude.
 
 ### Editor

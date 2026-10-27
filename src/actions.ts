@@ -38,17 +38,17 @@ export function editShortcuts(box: HTMLElement, current: Shortcuts, mac: boolean
     for (const id of ACTION_IDS.filter(id => actionLabel(id).toLocaleLowerCase().includes(filter.value.toLocaleLowerCase()))) {
       const row = el('div', 'shortcut-row');
       const label = el('span', '', actionLabel(id));
-      const record = el('button', 'shortcut-record', bindingLabel(bindingFor(id, draft), mac) || t('keys.none'));
+      const record = el('button', 'shortcut-record', bindingLabel(bindingFor(id, draft, mac), mac) || t('keys.none'));
       record.setAttribute('aria-label', `${actionLabel(id)}: ${record.textContent}`);
       record.onclick = () => { record.textContent = t('keys.record'); record.dataset.recording = 'true'; };
-      record.onblur = () => { record.dataset.recording = ''; record.textContent = bindingLabel(bindingFor(id, draft), mac) || t('keys.none'); };
+      record.onblur = () => { record.dataset.recording = ''; record.textContent = bindingLabel(bindingFor(id, draft, mac), mac) || t('keys.none'); };
       record.onkeydown = e => {
         if (record.dataset.recording !== 'true' || e.key === 'Tab' || e.key === 'Escape') return;
         e.preventDefault(); e.stopPropagation();
         if (['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) return;
-        const value = bindingFromEvent(e);
+        const value = bindingFromEvent(e, mac);
         if (!value) { message.textContent = t('keys.invalid'); return; }
-        const other = ACTION_IDS.find(other => other !== id && bindingFor(other, draft) === value);
+        const other = ACTION_IDS.find(other => other !== id && bindingFor(other, draft, mac) === value);
         if (other) { message.textContent = t('keys.conflict', { name: actionLabel(other) }); return; }
         draft[id] = value; message.textContent = ''; record.blur(); draw();
       };
@@ -57,7 +57,7 @@ export function editShortcuts(box: HTMLElement, current: Shortcuts, mac: boolean
       const reset = el('button', '', t('keys.reset'));
       reset.onclick = () => {
         const next = { ...draft }; delete next[id];
-        const conflict = shortcutConflict(next);
+        const conflict = shortcutConflict(next, mac);
         if (conflict) { message.textContent = t('keys.conflict', { name: actionLabel(conflict) }); return; }
         draft = next; message.textContent = ''; draw();
       };
@@ -90,7 +90,7 @@ export function showPalette(modal: ReturnType<typeof createDialogs>['modal'], ac
       results.forEach((action, index) => {
         const row = el('div', 'palette-option'); row.id = `action-${action.id}`;
         row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(index === selected));
-        row.append(el('span', '', actionLabel(action.id)), el('kbd', '', bindingLabel(bindingFor(action.id, bindings), mac)));
+        row.append(el('span', '', actionLabel(action.id)), el('kbd', '', bindingLabel(bindingFor(action.id, bindings, mac), mac)));
         row.onmousedown = e => e.preventDefault(); row.onclick = () => run(action); list.append(row);
       });
       if (!results.length) { list.append(el('p', 'note', t('actions.empty'))); input.removeAttribute('aria-activedescendant'); }

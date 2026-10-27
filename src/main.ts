@@ -1247,10 +1247,10 @@ function openPalette() {
     p ? t("actions.context", { name: p.name }) : t("actions.noProject"));
 }
 function isAppShortcut(e: KeyboardEvent): boolean {
-  return shortcutAction(e, state.settings.shortcuts) !== undefined;
+  return shortcutAction(e, state.settings.shortcuts, info.platform === "macos") !== undefined;
 }
 function handleGlobalKey(e: KeyboardEvent): boolean {
-  const id = shortcutAction(e, state.settings.shortcuts);
+  const id = shortcutAction(e, state.settings.shortcuts, info.platform === "macos");
   if (!id) return true;
   e.preventDefault(); e.stopPropagation();
   if (!e.repeat) {
@@ -1262,7 +1262,7 @@ function handleGlobalKey(e: KeyboardEvent): boolean {
 function refreshShortcutHints() {
   for (const [selector, id] of Object.entries({ "#btn-palette": "palette", "#btn-switch": "switch", "#btn-templates": "templates" })) {
     const button = document.querySelector<HTMLElement>(selector);
-    const binding = bindingLabel(bindingFor(id as ActionId, state.settings.shortcuts), info.platform === "macos");
+    const binding = bindingLabel(bindingFor(id as ActionId, state.settings.shortcuts, info.platform === "macos"), info.platform === "macos");
     if (button) { button.title = actionLabel(id as ActionId) + (binding ? ` (${binding})` : ""); button.setAttribute("aria-label", button.title); }
   }
 }
