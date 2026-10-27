@@ -1,6 +1,6 @@
 [package]
 name = "project-desk"
-version = "0.9.4"
+version = "0.10.0"
 license = "MIT"
 edition = "2021"
 

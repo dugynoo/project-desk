@@ -1,3 +1,4 @@
-- Fix: a Claude session no longer turns to "Waiting for input" when one of its background agents needs input, so an idle session is not shown as waiting.
-- Fix: after quitting or updating, only sessions that were working are marked as interrupted; a session waiting for approval still triggers the quit warning.
-- The session menu item is now called just "Session info".
+- New: Markdown files open as a rendered preview. Switch between preview and editable text with the button in the editor or Ctrl/Cmd+Shift+V, and choose the default in Settings → Editor.
+- New: open a project's folder in Explorer, Finder or the file manager from the project menu.
+- New: the sidebar can hide automatically; turn it on with the button next to Settings. A narrow strip with a status dot for each session stays visible; hover over it to show the sidebar, or click a dot to switch to that session.
+- Fix: tables with emoji such as ✅ in Claude and Codex output no longer have a misaligned right border.
