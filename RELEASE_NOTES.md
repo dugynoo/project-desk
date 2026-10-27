@@ -1,2 +1,2 @@
-- Fix: Codex sessions no longer report "This conversation is open in another app" after Project Desk restarts or updates. Default Codex commands now run without Codex's shared background server; custom commands are kept as entered.
-- Fix: a new Claude background session in a project Claude does not trust yet starts in its own window, where you can accept the trust prompt, instead of failing. Later new sessions in that project run in the background.
+- Fix: Codex starts again with older Codex releases that do not support running without the shared background server.
+- Fix: the Claude background setting no longer says the project must already be trusted; an untrusted project asks for trust in its own window.
