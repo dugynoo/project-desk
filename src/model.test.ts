@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   fileOpenTarget,
+  codexHooksFit,
   backgroundStatus,
   droppedFilePaths,
   savePanePreset,
@@ -429,6 +430,9 @@ test("Codex: prvý štart, pokračovanie v známej konverzácii, výber pri nezn
   assert.equal(unix({ agentSessionId: undefined }), `codex ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS"`);
   assert.equal(unix({ started: true }), `codex resume ${bypass} -c "$PROJECT_DESK_CODEX_HOOKS" ${ID}`);
   assert.equal(unix({ started: true }, false), `codex resume ${bypass} ${ID}`);
+  assert.equal(codexHooksFit("windows", "C:\\Users\\O'Brien\\app"), false);
+  assert.equal(codexHooksFit("windows", "C:\\Users\\obrien\\app"), true);
+  assert.equal(codexHooksFit("macos", "/Users/o'brien/app"), true);
 });
 
 test("staré predvolené Codex príkazy sa prepnú na bypass, vlastné ostanú", () => {

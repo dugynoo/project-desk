@@ -380,6 +380,11 @@ function envRef(platform: Platform, name: string): string {
  * Príkaz, ktorý shell spustí pri štarte relácie. Do príkazu ide iba text z nastavení,
  * overené UUID a odkaz na env premennú. Názov projektu ani úlohy nikdy.
  */
+/** On Windows the Codex hook override keys the project path as a TOML literal string, which cannot hold `'`. */
+export function codexHooksFit(platform: Platform, projectPath: string): boolean {
+  return platform !== "windows" || !projectPath.includes("'");
+}
+
 export function agentCommand(
   s: Session,
   settings: Settings,

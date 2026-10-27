@@ -1,4 +1,4 @@
-import { agentCommand, archiveSession, backgroundStatus, isUuid, recordSessionExit,
+import { agentCommand, archiveSession, codexHooksFit, backgroundStatus, isUuid, recordSessionExit,
   statusAfterSpawn, statusAfterStartupTimeout, type PersistedState, type Session, type Status } from "./model.ts";
 import { errorText, t } from "./i18n.ts";
 import type { MonitoredRuntime, createAgentMonitor } from "./agent-monitor.ts";
@@ -90,7 +90,10 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       s.agentSessionId = crypto.randomUUID();
       s.hasConversation = false;
     }
-    const command = agentCommand(s, getState().settings, getInfo().platform, getInfo().hooksEnabled);
+    const { platform, hooksEnabled } = getInfo();
+    // Without the hook, session-file discovery still finds the Codex conversation.
+    const hooks = hooksEnabled && (s.provider !== "codex" || codexHooksFit(platform, p.path));
+    const command = agentCommand(s, getState().settings, platform, hooks);
     s.resumeAfterShutdown = false;
     s.exitCode = undefined;
     s.lastStartAt = Date.now();
