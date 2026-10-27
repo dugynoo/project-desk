@@ -20,6 +20,7 @@ import {
   observeSession,
   sessionDiagnostics,
   agentCommand,
+  withoutNoDaemon,
   archiveSession,
   busyAgents,
   interruptedAgents,
@@ -443,6 +444,13 @@ test("staré predvolené Codex príkazy sa prepnú na bypass, vlastné ostanú",
   assert.equal(custom.settings.codexCommand, "codex -m o3");
   const rev2 = parseState(JSON.stringify({ settingsRev: 2, settings: { codexCommand: "codex" } })).state;
   assert.equal(rev2.settings.codexCommand, "codex");
+});
+
+test("--no-daemon sa dá odobrať pre starší Codex bez zmeny zvyšku príkazu", () => {
+  const hook = '-c "$env:PROJECT_DESK_CODEX_HOOKS"';
+  assert.equal(withoutNoDaemon(`codex resume --x --no-daemon ${hook} ${ID}`), `codex resume --x ${hook} ${ID}`);
+  assert.equal(withoutNoDaemon("codex --no-daemon"), "codex");
+  assert.equal(withoutNoDaemon("codex --no-daemons --x=--no-daemon"), "codex --no-daemons --x=--no-daemon");
 });
 
 test("predvolené Codex príkazy z rev 2 obídu zdieľaný daemon, vlastné ostanú", () => {

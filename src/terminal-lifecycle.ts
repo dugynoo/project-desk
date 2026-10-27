@@ -1,4 +1,4 @@
-import { agentCommand, archiveSession, codexHooksFit, backgroundStatus, isUuid, recordSessionExit,
+import { agentCommand, archiveSession, codexHooksFit, backgroundStatus, isUuid, recordSessionExit, withoutNoDaemon,
   statusAfterSpawn, statusAfterStartupTimeout, type PersistedState, type Session, type Status } from "./model.ts";
 import { errorText, t } from "./i18n.ts";
 import type { MonitoredRuntime, createAgentMonitor } from "./agent-monitor.ts";
@@ -67,6 +67,19 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
 
   const pendingStarts = new Set<string>();
 
+  // One `codex --help` probe per configured command and shell for the app's lifetime.
+  const noDaemon = new Map<string, Promise<boolean>>();
+  function codexNoDaemon(command: string) {
+    const shell = getState().settings.shell;
+    const key = `${command}\n${shell}`;
+    let supported = noDaemon.get(key);
+    if (!supported) {
+      supported = invoke<boolean>("codex_no_daemon", { command, shell }).then(v => v !== false, () => true);
+      noDaemon.set(key, supported);
+    }
+    return supported;
+  }
+
   async function start(s: Session) {
     const p = project(s.projectId);
     if (!p || pendingStarts.has(s.id) || runtimes.get(s.id)?.running || isClosing()) return;
@@ -129,6 +142,11 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     try {
       // Persist ownership intent before starting a worker that can outlive this app.
       if (s.background) await flush();
+      let launch = command;
+      if (s.provider === "codex" && command && withoutNoDaemon(command) !== command
+        && !(await codexNoDaemon(s.started ? getState().settings.codexResumeCommand : getState().settings.codexCommand))) {
+        launch = withoutNoDaemon(command);
+      }
       const prepared = await invoke<{ sessionId: string; status: string } | null>("pty_spawn", {
         args: {
           id: s.id,
@@ -137,7 +155,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
           provider: s.provider,
           background: s.background === true,
           claudeCommand: getState().settings.claudeCommand,
-          command: command ?? null,
+          command: launch ?? null,
           shell: getState().settings.shell || null,
           cols: rt.term.cols,
           rows: rt.term.rows,

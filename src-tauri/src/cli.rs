@@ -52,17 +52,24 @@ impl Drop for ProcessGroup {
     fn drop(&mut self) { unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0); } }
 }
 
-fn run(mut command: Command, timeout: Duration) -> Check {
+fn run(command: Command, timeout: Duration) -> Check {
+    let (status, text) = execute(command, timeout, 4096);
+    let version = text.lines().rev().find(|line| line.chars().any(|c| c.is_ascii_digit()))
+        .unwrap_or("").chars().filter(|c| !c.is_control()).take(160).collect::<String>();
+    Check { status: if status == "available" && version.is_empty() { "failed" } else { status }, version: if status == "available" { version } else { String::new() } }
+}
+
+fn execute(mut command: Command, timeout: Duration, limit: usize) -> (&'static str, String) {
     command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]
     { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
     #[cfg(unix)]
     { use std::os::unix::process::CommandExt; command.process_group(0); }
-    let Ok(mut child) = command.spawn() else { return result("failed") };
+    let Ok(mut child) = command.spawn() else { return ("failed", String::new()) };
     #[cfg(windows)]
     let group = match ProcessGroup::new(&child) {
         Some(group) => group,
-        None => { let _ = child.kill(); let _ = child.wait(); return result("failed"); }
+        None => { let _ = child.kill(); let _ = child.wait(); return ("failed", String::new()); }
     };
     let mut stdout = child.stdout.take().unwrap();
     let reader = std::thread::spawn(move || {
@@ -70,7 +77,7 @@ fn run(mut command: Command, timeout: Duration) -> Check {
         let mut buffer = [0; 1024];
         while let Ok(n) = stdout.read(&mut buffer) {
             if n == 0 { break; }
-            let retain = n.min(4096 - kept.len());
+            let retain = n.min(limit - kept.len());
             kept.extend_from_slice(&buffer[..retain]);
         }
         kept
@@ -92,29 +99,45 @@ fn run(mut command: Command, timeout: Duration) -> Check {
     let _ = child.kill();
     let _ = child.wait();
     let bytes = reader.join().unwrap_or_default();
-    let text = String::from_utf8_lossy(&bytes);
-    let version = text.lines().rev().find(|line| line.chars().any(|c| c.is_ascii_digit()))
-        .unwrap_or("").chars().filter(|c| !c.is_control()).take(160).collect::<String>();
-    Check { status: if status == "available" && version.is_empty() { "failed" } else { status }, version: if status == "available" { version } else { String::new() } }
+    (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn probe(command: &str, expected: &str, shell: &str) -> Check {
-    let Some(program) = executable(command, expected) else { return result("unsupported") };
+/// Runs only the agent executable with one fixed argument through the user's shell.
+fn shell_command(program: &str, shell: &str, argument: &'static str) -> Option<Command> {
     let shell = if shell.trim().is_empty() {
         if cfg!(windows) { "powershell.exe".into() } else { std::env::var("SHELL").unwrap_or("/bin/sh".into()) }
     } else { shell.to_owned() };
     let name = shell.rsplit(['/', '\\']).next().unwrap_or("").to_ascii_lowercase();
     let mut cmd = Command::new(&shell);
     if cfg!(windows) {
-        if !["powershell", "powershell.exe", "pwsh", "pwsh.exe"].contains(&name.as_str()) { return result("unsupported"); }
-        cmd.args(["-NoLogo", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $c=Get-Command -Name $env:PD_CHECK_CLI -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1; if (!$c) {exit 127}; try { & $c.Source --version; if ($LASTEXITCODE) {exit $LASTEXITCODE} } catch {exit 1}"]);
+        if !["powershell", "powershell.exe", "pwsh", "pwsh.exe"].contains(&name.as_str()) { return None; }
+        cmd.args(["-NoLogo", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $c=Get-Command -Name $env:PD_CHECK_CLI -CommandType Application,ExternalScript -ErrorAction SilentlyContinue | Select-Object -First 1; if (!$c) {exit 127}; try { & $c.Source $env:PD_CHECK_ARG; if ($LASTEXITCODE) {exit $LASTEXITCODE} } catch {exit 1}"]);
     } else {
-        if !["sh", "bash", "zsh", "dash", "ksh"].contains(&name.as_str()) { return result("unsupported"); }
-        cmd.args(["-l", "-i", "-c", "command -v \"$PD_CHECK_CLI\" >/dev/null 2>&1 || exit 127; command \"$PD_CHECK_CLI\" --version"]);
+        if !["sh", "bash", "zsh", "dash", "ksh"].contains(&name.as_str()) { return None; }
+        cmd.args(["-l", "-i", "-c", "command -v \"$PD_CHECK_CLI\" >/dev/null 2>&1 || exit 127; command \"$PD_CHECK_CLI\" \"$PD_CHECK_ARG\""]);
     }
-    cmd.env("PD_CHECK_CLI", program).env("NO_COLOR", "1");
+    cmd.env("PD_CHECK_CLI", program).env("PD_CHECK_ARG", argument).env("NO_COLOR", "1");
     if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) { cmd.current_dir(home); }
+    Some(cmd)
+}
+
+fn probe(command: &str, expected: &str, shell: &str) -> Check {
+    let Some(program) = executable(command, expected) else { return result("unsupported") };
+    let Some(cmd) = shell_command(program, shell, "--version") else { return result("unsupported") };
     run(cmd, Duration::from_secs(8))
+}
+
+/// False only when the installed Codex demonstrably lacks `--no-daemon` (older releases);
+/// unknown commands and failed probes keep the configured command unchanged.
+fn codex_lacks_no_daemon(command: &str, shell: &str) -> bool {
+    let Some(cmd) = executable(command, "codex").and_then(|program| shell_command(program, shell, "--help")) else { return false };
+    let (status, help) = execute(cmd, Duration::from_secs(8), 65_536);
+    status == "available" && !help.contains("--no-daemon")
+}
+
+#[tauri::command]
+pub async fn codex_no_daemon(command: String, shell: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || !codex_lacks_no_daemon(&command, &shell)).await.unwrap_or(true)
 }
 
 #[tauri::command]
@@ -181,5 +204,29 @@ mod tests {
         assert_eq!(checked.status, "available", "{checked:?}");
         assert_eq!(checked.version, "fixture 1.2.3");
         assert_eq!(missing.status, "missing");
+    }
+    #[test]
+    fn detects_codex_without_no_daemon_only_from_its_help() {
+        let dir = std::env::temp_dir().join(format!("pd codex {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(if cfg!(windows) { "codex.ps1" } else { "codex" });
+        let shell = if cfg!(windows) { "powershell.exe" } else { "/bin/sh" };
+        let command = format!("\"{}\" resume --no-daemon", path.display());
+        // The flag appears after more than the version probe's 4 KiB, as in real Codex help.
+        for (flag, lacks) in [("--no-daemon", false), ("--no-alt-screen", true)] {
+            let body = if cfg!(windows) {
+                format!("if ($args.Count -ne 1 -or $args[0] -ne '--help') {{ exit 1 }}; Write-Output ('x' * 5000); Write-Output '{flag}'")
+            } else {
+                format!("#!/bin/sh\n[ \"$#\" = 1 ] && [ \"$1\" = --help ] || exit 1\nhead -c 5000 /dev/zero | tr '\\0' x; printf '\\n%s\\n' '{flag}'\n")
+            };
+            std::fs::write(&path, body).unwrap();
+            #[cfg(unix)]
+            { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap(); }
+            assert_eq!(codex_lacks_no_daemon(&command, shell), lacks, "{flag}");
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert!(!codex_lacks_no_daemon(&command, shell), "a missing Codex keeps the command");
+        assert!(!codex_lacks_no_daemon("npx codex", shell));
+        std::fs::remove_dir(&dir).unwrap();
     }
 }

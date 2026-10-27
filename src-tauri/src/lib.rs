@@ -392,6 +392,7 @@ pub fn run() {
             project_exists,
             list_editors,
             cli::check_cli,
+            cli::codex_no_daemon,
             resolve_file,
             find_codex_session,
             recover_codex_session,

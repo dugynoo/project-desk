@@ -175,6 +175,27 @@ test("an untrusted project starts the background session in its terminal instead
   assert.equal(f.notices.length, 0);
 });
 
+test("Codex drops --no-daemon only when the installed release lacks it, probing once", async () => {
+  let supported = false;
+  const f = fixture(async command => command === "codex_no_daemon" ? supported : null);
+  const s = f.state.sessions[0];
+  s.provider = "codex";
+  const spawned = () => (f.calls.filter(c => c.command === "pty_spawn").at(-1)!.args.args as { command: string }).command;
+  await f.lifecycle.start(s);
+  assert.doesNotMatch(spawned(), /--no-daemon/);
+  assert.match(spawned(), /^codex --dangerously-bypass-approvals-and-sandbox -c/);
+  f.lifecycle.onExit(s.id, 0);
+  s.started = false; supported = true;
+  await f.lifecycle.start(s);
+  assert.doesNotMatch(spawned(), /--no-daemon/, "the first answer is cached");
+  assert.equal(f.calls.filter(c => c.command === "codex_no_daemon").length, 1);
+
+  const g = fixture(async () => null);
+  g.state.sessions[0].provider = "codex";
+  await g.lifecycle.start(g.state.sessions[0]);
+  assert.match((g.calls.find(c => c.command === "pty_spawn")!.args.args as { command: string }).command, /--no-daemon/);
+});
+
 test("system shutdown persists recovery immediately without archiving", async () => {
   const f = fixture();
   const s = f.state.sessions[0];

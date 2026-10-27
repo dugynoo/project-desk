@@ -392,6 +392,11 @@ export function codexHooksFit(platform: Platform, projectPath: string): boolean 
   return platform !== "windows" || !projectPath.includes("'");
 }
 
+/** Codex releases before the shared daemon reject `--no-daemon`; they need nothing in its place. */
+export function withoutNoDaemon(command: string): string {
+  return command.replace(/(^|\s)--no-daemon(?=\s|$)/g, "");
+}
+
 export function agentCommand(
   s: Session,
   settings: Settings,
