@@ -119,11 +119,16 @@ export function createSidebar(deps: SidebarDependencies) {
 
   // Presúvanie projektov a relácií ťahaním. Počas ťahania sa zoznam neprekresľuje, inak by zmizol cieľ.
   let drag: { moved: boolean } | undefined;
+  // Pustenie mimo okna nemusí poslať pointerup; nové ťahanie vtedy staré zruší.
+  let dragListeners: AbortController | undefined;
 
   /** `targets` sú selektor povolených cieľov (s `data-id`), `drop` dostane cieľ a stranu. */
   function startDrag(e: PointerEvent, box: HTMLElement, targets: string, drop: (toId: string, after: boolean) => void) {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button, input")) return;
     e.stopPropagation();
+    dragListeners?.abort();
+    document.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging"));
+    const listeners = dragListeners = new AbortController();
     const startY = e.clientY;
     drag = { moved: false };
     let target: { id: string; after: boolean } | undefined;
@@ -143,8 +148,7 @@ export function createSidebar(deps: SidebarDependencies) {
       }
     };
     const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      listeners.abort();
       clearMarks();
       box.classList.remove("dragging");
       if (!drag?.moved) {
@@ -161,8 +165,12 @@ export function createSidebar(deps: SidebarDependencies) {
         renderSidebar();
       }, 0);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    const cancel = () => { target = undefined; up(); };
+    const { signal } = listeners;
+    window.addEventListener("pointermove", move, { signal });
+    window.addEventListener("pointerup", up, { signal });
+    window.addEventListener("pointercancel", cancel, { signal });
+    window.addEventListener("blur", cancel, { signal });
   }
 
   // Automatické skrývanie: panel sa zúži na pás s bodkami stavu a pri prejdení myšou
