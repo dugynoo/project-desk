@@ -41,9 +41,14 @@ export async function exerciseEditor({ fixture, platform, command, evaluate, wai
   await wait('return !!document.querySelector(".text-editor:not([hidden]) .cm-content")', 'editor opens from terminal link');
   assert.equal(await evaluate('return document.querySelectorAll(".pane.visible").length'), 1);
   assert.equal(await evaluate('return document.querySelector(".text-editor-title").textContent'), 'editor-smoke.md');
+  // Markdown links open as a rendered preview; switch to editable text.
+  const mode = '.text-editor-bar button[aria-pressed]';
+  await wait('return document.querySelector(".markdown-preview:not([hidden]) h1")?.textContent === "Smoke editor"', 'markdown preview renders');
+  await click(mode);
+  await wait('return !!document.querySelector(".text-editor-host:not([hidden])") && !!document.querySelector(".markdown-preview[hidden]")', 'editor switches to editable text');
   const content = '.text-editor .cm-content';
-  const save = '.text-editor-bar button:nth-of-type(1)';
-  const reload = '.text-editor-bar button:nth-of-type(2)';
+  const save = '.text-editor-bar button:nth-of-type(2)';
+  const reload = '.text-editor-bar button:nth-of-type(3)';
   const close = '.text-editor-bar button[aria-label="Close"]';
   const text = () => evaluate('return document.querySelector(".text-editor .cm-content").innerText');
   assert.match(await text(), /# Smoke editor/);

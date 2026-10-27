@@ -77,7 +77,8 @@ fn windows_codex_override_survives_powershell_and_relays_resume() {
     use sha2::Digest;
     let identity = serde_json::json!({"event_name":"session_start", "matcher":"startup|resume|clear",
         "hooks":[{"type":"command", "command":command, "timeout":5, "async":false}]});
-    let hash = format!("sha256:{:x}", sha2::Sha256::digest(identity.to_string().as_bytes()));
+    let digest = sha2::Sha256::digest(identity.to_string().as_bytes());
+    let hash = format!("sha256:{}", digest.iter().map(|b| format!("{b:02x}")).collect::<String>());
     let key = format!("{}:session_start:0:0", dir.path().join(r"\<session-flags>\config.toml").display());
     assert_eq!(parsed["hooks"]["state"][&key]["trusted_hash"].as_str(), Some(hash.as_str()));
     let other = codex_hooks_override(&exe, std::path::Path::new(r"D:\another project"));
