@@ -476,7 +476,8 @@ export function sessionDiagnostics(s: Pick<Session, "provider" | "agentSessionId
   return { linked, method, reason, recovery } as const;
 }
 
-const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]);
+// Bez `agent_needs_input`: ten hlási agenta na pozadí, hlavná relácia vtedy nič nerobí.
+const NEEDS_INPUT = new Set(["permission_prompt", "elicitation_dialog", "elicitation_url_dialog"]);
 
 /** Nový stav relácie po udalosti z Claude hooku. `undefined` = udalosť stav nemení. */
 export function statusAfter(prev: Status, ev: AgentEvent): Status | undefined {
@@ -765,6 +766,11 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
 export function busyAgents(sessions: Session[], statusOf: (id: string) => Status, running: (id: string) => boolean): Session[] {
   return sessions.filter(s => s.provider !== "shell" && !s.background && running(s.id)
     && (statusOf(s.id) === "working" || statusOf(s.id) === "needs-you"));
+}
+
+/** Only a step in progress is interrupted; an open question merely warrants the quit warning. */
+export function interruptedAgents(sessions: Session[], statusOf: (id: string) => Status, running: (id: string) => boolean): Session[] {
+  return busyAgents(sessions, statusOf, running).filter(s => statusOf(s.id) === "working");
 }
 
 export function shouldAutoResume(s: Session, enabled: boolean): boolean {

@@ -58,6 +58,7 @@ import {
   type Provider,
   type Session,
   sessionByNumber,
+  interruptedAgents,
   sessionsOf,
   type Status,
   templatesFor,
@@ -402,7 +403,7 @@ function confirmQuit(): Promise<boolean> {
 }
 /** Remember interrupted steps so the restarted sessions can say so. */
 function markInterrupted() {
-  for (const s of busy()) s.interrupted = true;
+  for (const s of interruptedAgents(state.sessions, statusOf, id => runtimes.get(id)?.running === true)) s.interrupted = true;
 }
 async function flushForRestart() {
   if (textEditor?.pending()) throw new Error(t("textEditor.saveFirst"));

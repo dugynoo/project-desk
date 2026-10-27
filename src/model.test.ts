@@ -21,6 +21,7 @@ import {
   agentCommand,
   archiveSession,
   busyAgents,
+  interruptedAgents,
   restoreSession,
   recordSessionExit,
   shouldAutoResume,
@@ -101,10 +102,10 @@ test("closing the app interrupts only running agents mid-step and the mark survi
       provider: id === "shell" ? "shell" : "claude", background: id === "worker" })) })).state;
   const status: Record<string, string> = { work: "working", ask: "needs-you", done: "done", shell: "working", stopped: "working", worker: "working" };
   const busy = busyAgents(state.sessions, id => status[id] as never, id => id !== "stopped");
-  assert.deepEqual(busy.map(s => s.id), ["work", "ask"]);
-  for (const s of busy) s.interrupted = true;
+  assert.deepEqual(busy.map(s => s.id), ["work", "ask"], "both warrant the quit warning");
+  for (const s of interruptedAgents(state.sessions, id => status[id] as never, id => id !== "stopped")) s.interrupted = true;
   const restored = parseState(JSON.stringify(state)).state;
-  assert.deepEqual(restored.sessions.filter(s => s.interrupted).map(s => s.id), ["work", "ask"]);
+  assert.deepEqual(restored.sessions.filter(s => s.interrupted).map(s => s.id), ["work"], "an open question is not an interrupted step");
   archiveSession(restored, "work");
   assert.equal(restored.closedSessions[0].interrupted, false, "explicit close discards the mark");
 });
@@ -446,6 +447,8 @@ test("stavy z hookov", () => {
   assert.equal(statusAfter("working", ev("Stop")), "done");
   assert.equal(statusAfter("done", ev("Notification", "idle_prompt")), undefined);
   assert.equal(statusAfter("working", ev("Notification", "auth_success")), undefined);
+  // Agent na pozadí potrebuje vstup; hlavná relácia stojí a ostáva v svojom stave.
+  assert.equal(statusAfter("done", ev("Notification", "agent_needs_input")), undefined);
   assert.equal(statusAfter("done", ev("SessionEnd")), "agent-exited");
 });
 
