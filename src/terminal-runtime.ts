@@ -26,16 +26,24 @@ export interface Runtime extends MonitoredRuntime {
   hoverLink?: { url: string } | { file: string; line?: number };
 }
 
+// Ako VS Code: po zlyhaní alebo strate kontextu ostane DOM renderer, inak by sa WebGL
+// skúšal znova pri každom layoute (a pri resetovanom GPU dookola).
+let webglFailed = false;
 export function attachWebgl(rt: Runtime) {
+  if (webglFailed) return;
+  let gl: WebglAddon | undefined;
   try {
-    const gl = new WebglAddon();
+    gl = new WebglAddon();
     gl.onContextLoss(() => {
-      gl.dispose();
+      webglFailed = true;
+      gl?.dispose();
       rt.webgl = undefined;
     });
     rt.term.loadAddon(gl);
     rt.webgl = gl;
   } catch {
+    webglFailed = true;
+    gl?.dispose();
     rt.webgl = undefined; // DOM renderer stačí
   }
 }
