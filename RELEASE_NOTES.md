@@ -1,2 +1,3 @@
-- Fix: cap pending terminal input and show an error when a paste cannot be accepted.
-- Release: publish updates only after full CI and all platform builds pass.
+- Fix: a Claude session no longer turns to "Waiting for input" when one of its background agents needs input, so an idle session is not shown as waiting.
+- Fix: after quitting or updating, only sessions that were working are marked as interrupted; a session waiting for approval still triggers the quit warning.
+- The session menu item is now called just "Session info".
