@@ -132,10 +132,12 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     // Relatívny odkaz na súbor vedľa dokumentu; kotvy a iné schémy ignorujeme.
     let target: string;
     try { target = decodeURIComponent(href.split("#")[0]); } catch { return; }
-    // Schéma má aspoň dve písmená, takže `C:` (disk na Windows) prejde ako cesta.
+    // Schéma má aspoň dve písmená; `C:` (disk na Windows) odmietne až kontrola nižšie.
     if (!target || /^[a-z][a-z0-9+.-]+:/i.test(target)) return;
+    // Iba relatívne cesty: UNC (`\\server\share`) by na Windows poslal NTLM hash cudziemu serveru.
+    if (/^([\\/]|[a-z]:)/i.test(target)) return;
     const base = document.path.replace(/[^\\/]*$/, "");
-    void open(/^([\\/]|[a-z]:[\\/])/i.test(target) ? target : base + target, 1, false, linkEditorMode(target, getSettings()));
+    void open(base + target, 1, false, linkEditorMode(target, getSettings()));
   });
   function refresh() {
     title.textContent = (dirty() ? "● " : "") + (document?.path.split(/[\\/]/).at(-1) ?? "");
