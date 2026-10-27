@@ -116,8 +116,15 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
   /** Náhľad vždy ukazuje aktuálny obsah editora, aj neuložený. */
   function setMode(next: EditorMode) {
     mode = canPreview() ? next : "edit";
-    if (mode === "preview") preview.innerHTML = markdownHtml(view!.state.doc.toString());
-    else preview.replaceChildren();
+    if (mode === "preview") {
+      preview.innerHTML = markdownHtml(view!.state.doc.toString());
+      for (const pre of preview.querySelectorAll("pre")) {
+        const copy = el("button", "markdown-copy", t("textEditor.copy"));
+        copy.onclick = () => void navigator.clipboard.writeText(pre.querySelector("code")?.textContent ?? "")
+          .then(() => { copy.textContent = t("info.copied"); setTimeout(() => (copy.textContent = t("textEditor.copy")), 1500); });
+        pre.append(copy);
+      }
+    } else preview.replaceChildren();
     preview.hidden = mode !== "preview";
     host.hidden = mode === "preview";
     refresh();
