@@ -24,9 +24,12 @@ const RUNNABLE: &[&str] = &[
     "cpl", "msc", "msi", "msp", "mst", "msix", "msixbundle", "appx", "appxbundle", "appinstaller", "reg", "scr",
     "pif", "inf", "scf", "lnk", "url", "website", "application", "appref-ms", "gadget", "diagcab", "xbap", "chm",
     "library-ms", "search-ms", "searchconnector-ms", "settingcontent-ms",
+    // Office makrá a doplnky, webové dotazy; obrazy diskov sa po otvorení pripoja a ukážu svoj obsah
+    "docm", "dotm", "xlsm", "xltm", "xlam", "xll", "pptm", "potm", "ppam", "ppsm", "sldm", "iqy", "slk",
+    "iso", "img", "vhd", "vhdx",
     // macOS
     "app", "command", "tool", "terminal", "pkg", "mpkg", "dmg", "scpt", "scptd", "applescript", "workflow", "action",
-    "prefpane", "kext", "webloc", "inetloc", "fileloc",
+    "prefpane", "kext", "webloc", "inetloc", "fileloc", "shortcut",
     // Linux
     "desktop", "appimage", "run", "deb", "rpm", "snap", "flatpakref",
     // skripty, ktoré majú na niektorom systéme priradený interpreter
@@ -165,7 +168,7 @@ mod tests {
         for ok in ["index.html", "a/b/report.PDF", "logo.svg", "notes.md", "data.csv"] {
             assert!(!is_runnable(Path::new(ok)), "{ok}");
         }
-        for bad in ["setup.exe", "run.BAT", "x.ps1", "Makefile", "build", "a.exe.", "a.exe ", "a.html:b.exe", ".bashrc", "app.AppImage"] {
+        for bad in ["setup.exe", "run.BAT", "x.ps1", "Makefile", "build", "a.exe.", "a.exe ", "a.html:b.exe", ".bashrc", "app.AppImage", "report.xlsm", "disk.ISO", "run.shortcut"] {
             assert!(is_runnable(Path::new(bad)), "{bad}");
         }
     }
