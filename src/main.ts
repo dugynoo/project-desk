@@ -1,4 +1,4 @@
-import { createTerminalFactory, attachWebgl, type Runtime } from "./terminal-runtime.ts";
+import { createTerminalFactory, attachWebgl, fitTerminal, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
@@ -236,7 +236,7 @@ function fitVisible() {
     const rt = runtimes.get(id);
     if (!rt) continue;
     try {
-      rt.fit.fit();
+      fitTerminal(rt);
     } catch {
       // kontajner ešte nemá rozmery
     }

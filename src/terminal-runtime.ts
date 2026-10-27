@@ -20,6 +20,8 @@ export interface Runtime extends MonitoredRuntime {
   pane: HTMLElement;
   host: HTMLElement;
   head: HTMLElement;
+  /** Odložená zmena šírky, pozri fitTerminal. */
+  colsTimer?: ReturnType<typeof setTimeout>;
   /** Odkaz pod myšou, pre menu na pravom kliku. */
   hoverLink?: { url: string } | { file: string; line?: number };
 }
@@ -36,6 +38,30 @@ export function attachWebgl(rt: Runtime) {
   } catch {
     rt.webgl = undefined; // DOM renderer stačí
   }
+}
+
+/**
+ * Ako terminál vo VS Code: pri dlhej histórii mení výšku hneď, ale šírku až po
+ * 100 ms pokoja. Prepočet zalomenia je drahý a agent pri každej zmene šírky prekresľuje,
+ * takže ťahanie okna mu nepošle desiatky zmien za sebou.
+ */
+export function fitTerminal(rt: Runtime) {
+  const dims = rt.fit.proposeDimensions();
+  if (!dims || isNaN(dims.cols) || isNaN(dims.rows)) return;
+  const { term } = rt;
+  clearTimeout(rt.colsTimer);
+  rt.colsTimer = undefined;
+  if (term.buffer.normal.length < 200) {
+    if (dims.cols !== term.cols || dims.rows !== term.rows) term.resize(dims.cols, dims.rows);
+    return;
+  }
+  if (dims.rows !== term.rows) term.resize(term.cols, dims.rows);
+  if (dims.cols === term.cols) return;
+  rt.colsTimer = setTimeout(() => {
+    rt.colsTimer = undefined;
+    const latest = rt.fit.proposeDimensions();
+    if (latest && !isNaN(latest.cols) && !isNaN(latest.rows) && (latest.cols !== term.cols || latest.rows !== term.rows)) term.resize(latest.cols, latest.rows);
+  }, 100);
 }
 
 interface Dependencies {

@@ -16,6 +16,7 @@ export interface LifecycleRuntime extends MonitoredRuntime {
   };
   fit: { fit(): void };
   webgl?: { dispose(): void };
+  colsTimer?: ReturnType<typeof setTimeout>;
   pane: { remove(): void };
   /** Exit requested by Pause: keep the session listed and stopped, not archived. */
   pausing?: boolean;
@@ -57,6 +58,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     const rt = runtimes.get(id);
     if (!rt) return;
     if (rt.outputId) void invoke("pty_output_cancel", { outputId: rt.outputId }).catch(console.error);
+    clearTimeout(rt.colsTimer);
     rt.webgl?.dispose();
     rt.term.dispose();
     rt.pane.remove();
