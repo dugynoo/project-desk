@@ -88,16 +88,19 @@ export async function exerciseDesktop({ launch, close, fixture, statePath }) {
     await page.waitForTimeout(500);
     await page.screenshot({ path: process.env.PROJECT_DESK_SCREENSHOT });
   }
+  // Markdown links open as a rendered preview; switch to editable text.
+  await editor.locator('.markdown-preview h1', { hasText: 'Smoke editor' }).waitFor();
+  await editor.getByRole('button', { name: 'Edit', exact: true }).click();
   await editor.locator('.cm-content').click(); await page.keyboard.press('Control+Home');
   await page.keyboard.insertText('Saved edit\n');
-  await wait(() => !document.querySelector('.text-editor-bar button').disabled);
+  await editor.getByRole('button', { name: 'Save', exact: true }).and(page.locator(':enabled')).waitFor();
   await page.keyboard.press('Control+s');
   await editor.getByRole('button', { name: 'Save', exact: true }).waitFor();
   // Save is disabled both during the native write and after success. Reload
   // becomes enabled again only after that write has actually completed.
   await wait(() => {
-    const buttons = document.querySelectorAll('.text-editor-bar button');
-    return buttons[0].disabled && !buttons[1].disabled;
+    const [save, reload] = document.querySelectorAll('.text-editor-bar button:not([aria-pressed])');
+    return save.disabled && !reload.disabled;
   });
   assert.equal(await readFile(join(fixture, 'editor-smoke.md'), 'utf8'), 'Saved edit\n# Smoke editor\n');
   await page.keyboard.insertText('Unsaved edit');

@@ -59,7 +59,7 @@ async function until(read, accepts, description) {
   while (true) {
     const value = await read();
     if (accepts(value)) return value;
-    if (Date.now() >= deadline) throw Error(`Timed out: ${description}`);
+    if (Date.now() >= deadline) throw Error(`Timed out: ${description}; last value: ${JSON.stringify(value)?.slice(0, 300)}`);
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 }

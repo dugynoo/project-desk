@@ -52,7 +52,9 @@ export async function exerciseEditor({ fixture, platform, command, evaluate, wai
   const close = '.text-editor-bar button[aria-label="Close"]';
   const text = () => evaluate('return document.querySelector(".text-editor .cm-content").innerText');
   assert.match(await text(), /# Smoke editor/);
-  // open() places the caret at line 1. Use keyboard input, not contenteditable clear.
+  // Put the caret at the document start after the mode switch. Use keyboard input, not contenteditable clear.
+  await keys([{ type: 'keyDown', value: mod }, { type: 'keyDown', value: '\uE011' },
+    { type: 'keyUp', value: '\uE011' }, { type: 'keyUp', value: mod }]);
   await type(content, 'Saved edit\uE007');
   await wait(`return !document.querySelector('${save}').disabled`, 'document dirty');
   await keys([{ type: 'keyDown', value: mod }, { type: 'keyDown', value: 's' },
