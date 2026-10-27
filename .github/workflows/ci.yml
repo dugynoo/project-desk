@@ -91,7 +91,7 @@ jobs:
 
       - name: Linux desktop smoke diagnostics
         if: failure() && matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-smoke-linux
           path: test-results/desktop-linux/
@@ -103,14 +103,14 @@ jobs:
 
       - name: macOS desktop smoke diagnostics
         if: failure() && matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-smoke-macos
           path: test-results/desktop-macos/
 
       - name: Desktop smoke diagnostics
         if: failure() && matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-smoke-windows
           path: test-results/desktop/
