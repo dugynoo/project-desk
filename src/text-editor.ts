@@ -175,9 +175,15 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     } catch (e) { message.textContent = errorText(e); }
     finally { busy = false; refresh(); }
   }
-  async function open(path: string, line = 1, force = false, requested: EditorMode = "edit") {
+  function goTo(line: number) {
+    if (!view) return;
+    const pos = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines))).from;
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  }
+  async function open(path: string, line?: number, force = false, requested: EditorMode = "edit") {
     if (busy) return;
-    if (!force && document?.path === path && view) { setMode(requested); return; }
+    // Already open: keep unsaved edits and move only when a link names a line.
+    if (!force && document?.path === path && view) { setMode(requested); if (line) goTo(line); return; }
     if (!await mayClose() || busy) return;
     busy = true; refresh();
     fallback.hidden = true;
@@ -199,8 +205,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
       savedDoc = view.state.doc;
       reveal();
       message.textContent = "";
-      const pos = view.state.doc.line(Math.max(1, Math.min(line, view.state.doc.lines))).from;
-      view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+      goTo(line ?? 1);
       setMode(requested);
       const current = view;
       const description = LanguageDescription.matchFilename(languages, path.split(/[\\/]/).at(-1) ?? path);
