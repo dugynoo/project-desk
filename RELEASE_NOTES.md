@@ -1,2 +1,3 @@
-- Fix: Codex starts again with older Codex releases that do not support running without the shared background server.
-- Fix: the Claude background setting no longer says the project must already be trusted; an untrusted project asks for trust in its own window.
+- Fix: Ctrl+C copies code from agent sessions line for line; it no longer joins separate lines that reach the edge of the terminal.
+- New shortcut: Ctrl+Shift+C rejoins prose the agent wrapped at the terminal width.
+- Fix: clicking a link to another line of a file already open in the built-in editor now jumps to that line.
