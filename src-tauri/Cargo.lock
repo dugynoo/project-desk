@@ -3114,7 +3114,7 @@ dependencies = [
  "base64 0.23.1",
  "gdk",
  "gio",
- "glib 0.18.5",
+ "glib 0.21.5",
  "libc",
  "objc2",
  "portable-pty",
