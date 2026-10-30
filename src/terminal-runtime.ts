@@ -138,8 +138,9 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
       if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
       // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
       if (mod && e.key.toLowerCase() === "c" && term.hasSelection()) {
-        // Agenti lámu dlhé vety sami; v shelli môžu byť riadky zarovnané zámerne (stĺpce, tabuľky).
-        const columns = s.provider === "shell" ? undefined : term.cols;
+        // Zalomenie od agenta sa od dvoch riadkov kódu odlíšiť nedá, preto riadky spája len Ctrl+Shift+C.
+        // V shelli môžu byť riadky zarovnané zámerne (stĺpce, tabuľky).
+        const columns = e.shiftKey && s.provider !== "shell" ? term.cols : undefined;
         void navigator.clipboard.writeText(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x, columns));
         term.clearSelection();
         e.preventDefault();

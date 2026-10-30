@@ -602,6 +602,9 @@ test("kopírovanie spojí riadky zalomené na šírku terminálu, zámerné konc
   // Riadky tabuľky ani kód začínajúci symbolom sa nespájajú; bez šírky sa nespája nič.
   assert.equal(copiedText("│ a long table cell that reaches the edge │\n│ next │", 0, 44), "│ a long table cell that reaches the edge │\n│ next │");
   assert.equal(copiedText("This paragraph is long enough that the\nagent wraps it.", 0), "This paragraph is long enough that the\nagent wraps it.");
+  // Kód blízko okraja vyzerá ako zalomená veta, preto bežné kopírovanie (bez šírky) riadky nespája.
+  const code = `message = "${"x".repeat(64)}"\nprint(message)`;
+  assert.equal(copiedText(code, 0), code);
 });
 
 test("cesty k súborom v texte terminálu", () => {
