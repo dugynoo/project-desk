@@ -1,3 +1,1 @@
-- Fix: Ctrl+C copies code from agent sessions line for line; it no longer joins separate lines that reach the edge of the terminal.
-- New shortcut: Ctrl+Shift+C rejoins prose the agent wrapped at the terminal width.
-- Fix: clicking a link to another line of a file already open in the built-in editor now jumps to that line.
+- Fix: conversation import and Codex conversation recovery now work for projects added through a symlink (or `/tmp` on macOS).
