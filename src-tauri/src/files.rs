@@ -34,13 +34,20 @@ impl SameDir {
         let text = dir_text(other);
         if text == self.text { return true; }
         let Some(real) = &self.real else { return false };
-        // A recorded network (UNC) path is compared as text only: resolving it would connect
-        // to that server and could send it the user's NTLM hash on Windows.
-        let network = text.starts_with("//") || text.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("unc/"));
         *self.seen.entry(other.to_owned()).or_insert_with(|| {
-            !network && Path::new(other).is_absolute() && std::fs::canonicalize(other).is_ok_and(|p| &p == real)
+            local_absolute(Path::new(other)) && std::fs::canonicalize(other).is_ok_and(|p| &p == real)
         })
     }
+}
+
+/// Only these recorded paths are resolved. On Windows that is a drive-letter path: resolving
+/// a network (UNC), device or GLOBALROOT path would connect to a server and could send it the
+/// user's NTLM hash, so such paths are compared as text only.
+fn local_absolute(path: &Path) -> bool {
+    if !cfg!(windows) { return path.is_absolute(); }
+    use std::path::{Component, Prefix};
+    matches!(path.components().next(), Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)))
+        && path.is_absolute()
 }
 
 fn dir_text(dir: &str) -> String {
@@ -207,8 +214,17 @@ mod tests {
         assert!(project.matches(&original));
         assert!(!project.matches(&f.path("other")));
         assert!(!project.matches(&f.path("missing")));
-        assert!(!project.matches(r"\\server\share\repo"));
-        assert!(!project.matches(r"\\?\UNC\server\share\repo"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn same_dir_resolves_only_drive_paths() {
+        assert!(super::local_absolute(Path::new(r"C:\work\repo")));
+        assert!(super::local_absolute(Path::new(r"\\?\C:\work\repo")));
+        for path in [r"\\server\share\repo", r"\\?\UNC\server\share\repo", r"\\.\UNC\server\share",
+            r"\\?\GLOBALROOT\Device\Mup\server\share", r"\\.\pipe\x", r"C:repo", r"\repo"] {
+            assert!(!super::local_absolute(Path::new(path)), "{path}");
+        }
     }
 
     #[cfg(unix)]
