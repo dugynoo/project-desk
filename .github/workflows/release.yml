@@ -165,6 +165,10 @@ jobs:
   publish:
     needs: [checks, manifest]
     if: github.event_name == 'push'
+    # One publish at a time, so the version comparison below sees the current latest release.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -181,5 +185,12 @@ jobs:
               || { echo "::error::latest.json is missing $platform"; exit 1; }
           done
           test "$(jq -r .version "$RUNNER_TEMP/latest.json")" = "${RELEASE_TAG#v}"
+      # A rerun of an older tag, or a slower build finishing later, must not take "latest"
+      # from a newer release: the app looks for updates only in the latest release.
       - name: Publish release
-        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+        run: |
+          current=$(gh release view --json tagName --jq .tagName)
+          newest=$(printf '%s\n%s\n' "${current#v}" "${RELEASE_TAG#v}" | sort -V | tail -n 1)
+          if [ "$newest" = "${RELEASE_TAG#v}" ]; then latest=true; else latest=false; fi
+          echo "Current latest: $current; marking $RELEASE_TAG as latest: $latest"
+          gh release edit "$RELEASE_TAG" --draft=false --latest="$latest"
