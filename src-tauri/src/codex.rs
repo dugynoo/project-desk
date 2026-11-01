@@ -10,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
+use crate::files::SameDir;
+
 /// Prvý riadok obsahuje aj systémové inštrukcie, takže býva desiatky kB.
 const MAX_META_LINE: u64 = 4 * 1024 * 1024;
 /// Tolerancia medzi naším časom štartu a časom zápisu Codexu.
@@ -36,6 +38,7 @@ pub fn recover_session(root: &Path, cwd: &str, created_ms: u64, exclude: &[Strin
     let from = created_ms.saturating_sub(SLACK_MS);
     let until = created_ms.checked_add(60_000)?;
     let mut found = None;
+    let mut project = SameDir::new(cwd);
     // Directory dates use local time, metadata uses UTC. Include adjacent days.
     for day in (from / DAY_MS).saturating_sub(1)..=until / DAY_MS + 1 {
         let (y, m, d) = civil(day as i64);
@@ -44,7 +47,7 @@ pub fn recover_session(root: &Path, cwd: &str, created_ms: u64, exclude: &[Strin
         for path in entries.flatten().map(|entry| entry.path()) {
             if path.extension().is_none_or(|e| e != "jsonl") { continue; }
             let Some((meta, created)) = read_meta(&path) else { continue };
-            if created < from || created > until || !same_dir(&meta.cwd, cwd)
+            if created < from || created > until || !project.matches(&meta.cwd)
                 || uuid::Uuid::parse_str(&meta.id).is_err()
                 || exclude.contains(&meta.id)
                 || meta.source.as_ref().is_some_and(|s| !matches!(s.as_str(), Some("cli" | "vscode"))) {
@@ -62,14 +65,6 @@ pub fn sessions_root() -> Option<PathBuf> {
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".codex"))
     })?;
     Some(home.join("sessions"))
-}
-
-fn same_dir(a: &str, b: &str) -> bool {
-    let norm = |p: &str| {
-        let p = p.trim_end_matches(['\\', '/']).replace('\\', "/");
-        if cfg!(windows) { p.to_lowercase() } else { p }
-    };
-    norm(a) == norm(b)
 }
 
 /// RFC 3339 v UTC (`2026-10-21T18:06:23.297Z`) na milisekundy od epochy.
@@ -121,9 +116,10 @@ fn modified_ms(path: &Path) -> u64 {
 pub fn find_session(root: &Path, cwd: &str, since_ms: u64, exclude: &[String]) -> Option<String> {
     let from = since_ms.saturating_sub(SLACK_MS);
     let mut found = None;
+    let mut project = SameDir::new(cwd);
     for path in recent_files(root, from) {
         let Some((meta, created)) = read_meta(&path) else { continue };
-        if created < from || !same_dir(&meta.cwd, cwd) || exclude.contains(&meta.id)
+        if created < from || !project.matches(&meta.cwd) || exclude.contains(&meta.id)
             || uuid::Uuid::parse_str(&meta.id).is_err()
             || meta.source.as_ref().is_some_and(|s| !matches!(s.as_str(), Some("cli" | "vscode"))) {
             continue;
@@ -181,14 +177,6 @@ mod tests {
         assert_eq!(parse_utc_ms("1970-01-01T00:00:01.5Z"), Some(1500));
         assert_eq!(parse_utc_ms("2026-10-21T18:06:23.297Z"), Some(1_792_605_983_297));
         assert_eq!(parse_utc_ms("nezmysel"), None);
-    }
-
-    #[test]
-    fn compares_dirs_loosely_on_windows_paths() {
-        assert!(same_dir(r"C:\Users\a\proj\", r"C:\Users\a\proj"));
-        if cfg!(windows) {
-            assert!(same_dir(r"c:\users\a\PROJ", r"C:\Users\a\proj"));
-        }
     }
 
     fn write_session(dir: &Path, name: &str, id: &str, cwd: &str, ts: &str) {

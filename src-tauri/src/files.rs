@@ -16,6 +16,34 @@ pub fn project_exists(path: &str, existing: &[String]) -> Result<bool, String> {
     }))
 }
 
+/// Matches directories recorded by agents against one project directory, including aliases
+/// such as symlinks or `/tmp` on macOS: agents usually record the resolved path. Text
+/// comparison comes first; the filesystem is asked once per distinct recorded path.
+pub struct SameDir {
+    text: String,
+    real: Option<std::path::PathBuf>,
+    seen: std::collections::HashMap<String, bool>,
+}
+
+impl SameDir {
+    pub fn new(dir: &str) -> Self {
+        Self { text: dir_text(dir), real: std::fs::canonicalize(dir).ok(), seen: Default::default() }
+    }
+
+    pub fn matches(&mut self, other: &str) -> bool {
+        if dir_text(other) == self.text { return true; }
+        let Some(real) = &self.real else { return false };
+        *self.seen.entry(other.to_owned())
+            .or_insert_with(|| Path::new(other).is_absolute() && std::fs::canonicalize(other).is_ok_and(|p| &p == real))
+    }
+}
+
+fn dir_text(dir: &str) -> String {
+    let dir = dir.replace('\\', "/");
+    let dir = dir.strip_prefix("//?/").unwrap_or(&dir).trim_end_matches('/');
+    if cfg!(windows) { dir.to_lowercase() } else { dir.to_owned() }
+}
+
 /// Prípony, ktoré by predvolená aplikácia spustila ako program, skript, inštalátor alebo skratku.
 /// Takýto súbor ide len do editora; nastavenie to neprepíše.
 const RUNNABLE: &[&str] = &[
@@ -150,6 +178,30 @@ mod tests {
         std::fs::create_dir(&original).unwrap();
         std::os::unix::fs::symlink(&original, &alias).unwrap();
         assert!(super::project_exists(&alias, &[original]).unwrap());
+    }
+
+    #[test]
+    fn same_dir_ignores_separators_and_trailing_slashes() {
+        assert!(super::SameDir::new(r"C:\Users\a\proj\").matches(r"C:\Users\a\proj"));
+        assert!(super::SameDir::new(r"\\?\C:\p").matches("C:/p/"));
+        if cfg!(windows) {
+            assert!(super::SameDir::new(r"c:\users\a\PROJ").matches(r"C:\Users\a\proj"));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_dir_follows_aliases() {
+        let f = Fixture::new();
+        let original = f.path("original");
+        let alias = f.path("alias");
+        std::fs::create_dir(&original).unwrap();
+        std::fs::create_dir(f.path("other")).unwrap();
+        std::os::unix::fs::symlink(&original, &alias).unwrap();
+        let mut project = super::SameDir::new(&alias);
+        assert!(project.matches(&original));
+        assert!(!project.matches(&f.path("other")));
+        assert!(!project.matches(&f.path("missing")));
     }
 
     #[cfg(unix)]

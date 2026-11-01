@@ -61,14 +61,6 @@ struct Metadata {
 #[derive(Deserialize)]
 struct CodexMetadata { id: String, cwd: String, source: Option<serde_json::Value> }
 
-fn same_dir(a: &str, b: &str) -> bool {
-    let normalize = |s: &str| {
-        let s = s.replace('\\', "/");
-        let s = s.strip_prefix("//?/").unwrap_or(&s).trim_end_matches('/');
-        if cfg!(windows) { s.to_lowercase() } else { s.to_owned() }
-    };
-    normalize(a) == normalize(b)
-}
 fn valid(id: &str) -> bool { uuid::Uuid::parse_str(id).is_ok() }
 fn modified(path: &Path) -> u64 {
     fs::metadata(path).and_then(|m| m.modified()).ok()
@@ -86,6 +78,7 @@ fn files(root: &Path, depth: usize) -> Vec<PathBuf> {
 
 pub fn discover(root: &Path, provider: &str, cwd: &str) -> Vec<Conversation> {
     let mut found = std::collections::BTreeMap::new();
+    let mut project = crate::files::SameDir::new(cwd);
     let mut names = if provider == "codex" {
         root.parent().map(|p| titles(&p.join("session_index.jsonl"), true)).unwrap_or_default()
     } else { std::collections::BTreeMap::new() };
@@ -94,7 +87,7 @@ pub fn discover(root: &Path, provider: &str, cwd: &str) -> Vec<Conversation> {
             let map: Result<std::collections::BTreeMap<String, String>, _> = serde_json::from_reader(file.take(4 * 1024 * 1024));
             if let Ok(map) = map {
                 for (path, id) in map {
-                    if same_dir(&path, cwd) && valid(&id) { found.insert(id.to_lowercase(), modified(root)); }
+                    if project.matches(&path) && valid(&id) { found.insert(id.to_lowercase(), modified(root)); }
                 }
             }
         }
@@ -113,7 +106,7 @@ pub fn discover(root: &Path, provider: &str, cwd: &str) -> Vec<Conversation> {
                     meta.session_id.zip(meta.cwd)
                 } else { None };
                 if let Some((id, dir)) = candidate {
-                    if same_dir(&dir, cwd) && valid(&id) {
+                    if project.matches(&dir) && valid(&id) {
                         found.insert(id.to_lowercase(), modified(&path));
                         if provider == "claude" { names.extend(titles(&path, false)); }
                     }
