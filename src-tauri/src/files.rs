@@ -31,10 +31,15 @@ impl SameDir {
     }
 
     pub fn matches(&mut self, other: &str) -> bool {
-        if dir_text(other) == self.text { return true; }
+        let text = dir_text(other);
+        if text == self.text { return true; }
         let Some(real) = &self.real else { return false };
-        *self.seen.entry(other.to_owned())
-            .or_insert_with(|| Path::new(other).is_absolute() && std::fs::canonicalize(other).is_ok_and(|p| &p == real))
+        // A recorded network (UNC) path is compared as text only: resolving it would connect
+        // to that server and could send it the user's NTLM hash on Windows.
+        let network = text.starts_with("//") || text.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("unc/"));
+        *self.seen.entry(other.to_owned()).or_insert_with(|| {
+            !network && Path::new(other).is_absolute() && std::fs::canonicalize(other).is_ok_and(|p| &p == real)
+        })
     }
 }
 
@@ -202,6 +207,8 @@ mod tests {
         assert!(project.matches(&original));
         assert!(!project.matches(&f.path("other")));
         assert!(!project.matches(&f.path("missing")));
+        assert!(!project.matches(r"\\server\share\repo"));
+        assert!(!project.matches(r"\\?\UNC\server\share\repo"));
     }
 
     #[cfg(unix)]
