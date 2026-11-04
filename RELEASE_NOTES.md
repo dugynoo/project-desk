@@ -1,1 +1,1 @@
-- Fix: conversation import and Codex conversation recovery now work for projects added through a symlink (or `/tmp` on macOS).
+- Fix: when Codex updates itself from its startup prompt, Project Desk starts it again and the session continues with the same conversation instead of dropping to a shell.
