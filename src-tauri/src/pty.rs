@@ -241,6 +241,25 @@ fn build_command(shell: Option<&str>, command: Option<&str>) -> CommandBuilder {
     }
 }
 
+/// Codex prints "Please restart Codex" and exits 0 after updating itself. When it exits
+/// successfully with a different `--version` than before the run, run the same command once
+/// more, so the session resumes its conversation. The program comes through
+/// `PROJECT_DESK_CODEX`, never interpolated. `None` for shells without this syntax.
+pub fn rerun_after_update(command: &str, shell: Option<&str>) -> Option<String> {
+    if cfg!(windows) {
+        let name = shell.unwrap_or("powershell.exe").rsplit(['/', '\\']).next()?.to_ascii_lowercase();
+        if !["powershell", "powershell.exe", "pwsh", "pwsh.exe"].contains(&name.as_str()) { return None; }
+        return Some(format!("$pdCodexVersion = & $env:PROJECT_DESK_CODEX --version 2>$null; {command}; \
+            if ($LASTEXITCODE -eq 0 -and $pdCodexVersion -and \"$(& $env:PROJECT_DESK_CODEX --version 2>$null)\" -ne \"$pdCodexVersion\") {{ {command} }}"));
+    }
+    let shell = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_else(|| "/bin/sh".into());
+    let name = shell.rsplit('/').next()?;
+    if !["sh", "bash", "zsh", "dash", "ksh"].contains(&name) { return None; }
+    Some(format!("pd_codex_version=$(\"$PROJECT_DESK_CODEX\" --version 2>/dev/null); {command}; \
+        if [ $? -eq 0 ] && [ -n \"$pd_codex_version\" ] \
+        && [ \"$(\"$PROJECT_DESK_CODEX\" --version 2>/dev/null)\" != \"$pd_codex_version\" ]; then {command}; fi"))
+}
+
 /// Bajty z PTY môžu rozdeliť UTF-8 znak medzi dva bloky. Neúplný koniec si
 /// podržíme do ďalšieho čítania, aby sa nerozbila diakritika.
 pub fn take_utf8(pending: &mut Vec<u8>) -> String {
@@ -589,6 +608,47 @@ mod tests {
         let status = child.wait().unwrap();
         assert!(result.is_ok(), "{result:?}");
         assert!(!status.success());
+    }
+
+    #[test]
+    fn codex_runs_again_only_after_it_updated_itself() {
+        let dir = std::env::temp_dir().join(format!("pd-codex-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Fake Codex: `--version` prints the installed version; a run appends to the log,
+        // "updates" itself when asked to, like the real updater, and exits with its argument.
+        let (codex, shell) = if cfg!(windows) {
+            let codex = dir.join("codex.cmd");
+            std::fs::write(&codex, "@echo off\r\nif \"%1\"==\"--version\" (type \"%~dp0version\" & exit /b 0)\r\n\
+                (echo run)>>\"%~dp0log\"\r\nif exist \"%~dp0update\" (del \"%~dp0update\" & (echo 2)>\"%~dp0version\")\r\nexit /b %1\r\n").unwrap();
+            (codex, "powershell.exe")
+        } else {
+            let codex = dir.join("codex");
+            std::fs::write(&codex, "#!/bin/sh\nd=$(dirname \"$0\")\n\
+                if [ \"$1\" = --version ]; then cat \"$d/version\"; exit; fi\n\
+                echo run >> \"$d/log\"\nif [ -f \"$d/update\" ]; then rm \"$d/update\"; echo 2 > \"$d/version\"; fi\nexit \"$1\"\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            (codex, "/bin/sh")
+        };
+        let program = if cfg!(windows) { "& $env:PROJECT_DESK_CODEX" } else { "\"$PROJECT_DESK_CODEX\"" };
+        let runs = |update: bool, code: &str| {
+            std::fs::write(dir.join("version"), "1\n").unwrap();
+            let _ = std::fs::remove_file(dir.join("log"));
+            if update { std::fs::write(dir.join("update"), "").unwrap(); }
+            let script = super::rerun_after_update(&format!("{program} {code}"), Some(shell)).unwrap();
+            let mut cmd = std::process::Command::new(shell);
+            if cfg!(windows) { cmd.args(["-NoLogo", "-NonInteractive", "-Command"]); } else { cmd.arg("-c"); }
+            cmd.arg(script).env("PROJECT_DESK_CODEX", &codex).status().unwrap();
+            std::fs::read_to_string(dir.join("log")).unwrap().lines().count()
+        };
+        assert_eq!(runs(true, "0"), 2);
+        assert_eq!(runs(false, "0"), 1);
+        assert_eq!(runs(true, "1"), 1);
+        if !cfg!(windows) { assert!(super::rerun_after_update("codex", Some("/usr/bin/fish")).is_none()); }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -135,12 +135,23 @@ async fn pty_spawn(
         let command = args.claude_command.clone().unwrap_or_default();
         Some(tauri::async_runtime::spawn_blocking(move || background::prepare(&dir, &home, &id, &cwd, &command)).await.map_err(|e| e.to_string())??)
     } else { None };
+    // Codex exits after updating itself; run the same command (and conversation) again.
+    let mut command = args.command;
+    if args.provider.as_deref() == Some("codex") {
+        let shell = args.shell.as_deref().filter(|s| !s.trim().is_empty());
+        if let Some((program, wrapped)) = command.as_deref().and_then(|c| {
+            Some((cli::executable(c, "codex")?.to_owned(), pty::rerun_after_update(c, shell)?))
+        }) {
+            env.push((hooks::CODEX_PROGRAM_ENV.to_owned(), program));
+            command = Some(wrapped);
+        }
+    }
     let req = SpawnRequest {
         direct: prepared.as_ref().map(|p| (p.program.clone(), vec!["attach".into(), p.job_id.clone()])) ,
         id: args.id,
         output_id: args.output_id,
         cwd: args.cwd,
-        command: args.command,
+        command,
         shell: args.shell.filter(|s| !s.trim().is_empty()),
         env,
         cols: args.cols,

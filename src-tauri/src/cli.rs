@@ -11,7 +11,7 @@ pub struct Check {
 }
 fn result(status: &'static str) -> Check { Check { status, version: String::new() } }
 
-fn executable<'a>(command: &'a str, expected: &str) -> Option<&'a str> {
+pub(crate) fn executable<'a>(command: &'a str, expected: &str) -> Option<&'a str> {
     if command.chars().any(|c| c.is_control() || ";|&`$<>(){}".contains(c)) { return None; }
     let command = command.trim();
     let (program, rest) = if command.starts_with(['\'', '"']) {

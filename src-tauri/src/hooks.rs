@@ -18,6 +18,8 @@ pub const PORT_ENV: &str = "PROJECT_DESK_HOOK_PORT";
 pub const RELAY_ARG: &str = "--project-desk-session-start";
 pub const CODEX_RELAY_ARG: &str = "--project-desk-codex-hook";
 pub const CODEX_HOOKS_ENV: &str = "PROJECT_DESK_CODEX_HOOKS";
+/// Codex executable from the launch command, probed for its version around the run.
+pub const CODEX_PROGRAM_ENV: &str = "PROJECT_DESK_CODEX";
 
 pub const EVENTS: [&str; 9] = ["SessionStart", "UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "Notification", "Stop", "StopFailure", "SessionEnd"];
 const MAX_BODY: u64 = 1024 * 1024;
