@@ -22,6 +22,9 @@ fn payload(input: &str) -> Option<String> {
 fn codex_payload(input: &str) -> Option<String> {
     let v: Value = serde_json::from_str(input).ok()?;
     if v["hook_event_name"] != "SessionStart" { return None; }
+    // Codex also starts unsaved helper threads in the same process (they inherit the `-c`
+    // hook). They have no transcript and must not take over the conversation ID.
+    if v.get("transcript_path").is_some_and(Value::is_null) { return None; }
     let id = v["session_id"].as_str()?;
     uuid::Uuid::parse_str(id).ok()?;
     let mut out = json!({"hook_event_name": "SessionStart", "session_id": id, "provider": "codex"});
@@ -119,6 +122,8 @@ mod tests {
         assert_eq!(out, json!({"hook_event_name":"SessionStart", "session_id":id, "source":"resume", "provider":"codex"}));
         assert!(codex_payload(&json!({"hook_event_name":"Stop", "session_id":id}).to_string()).is_none());
         assert!(codex_payload(r#"{"hook_event_name":"SessionStart","session_id":"bad"}"#).is_none());
+        let helper = json!({"hook_event_name":"SessionStart", "session_id":id, "source":"startup", "transcript_path":null});
+        assert!(codex_payload(&helper.to_string()).is_none(), "an unsaved helper thread is not the conversation");
     }
 
     #[test]
