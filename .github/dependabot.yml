@@ -1,4 +1,7 @@
 # Týždenné aktualizácie závislostí. Menšie verzie zoskupené do jedného PR na ekosystém.
+# Tauri vyžaduje rovnakú major.minor verziu npm balíkov a Rust crates, Dependabot ich však
+# aktualizuje v samostatných PR, ktoré by každý sám neprešli CI. Minor verzie Tauri preto
+# posúvame ručne naraz v oboch ekosystémoch; patch verzie chodia ďalej automaticky.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,6 +15,9 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "@tauri-apps/*"
+        update-types: [version-update:semver-minor]
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
@@ -19,3 +25,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "tauri*"
+        update-types: [version-update:semver-minor]
+      # gio a glib musia ostať na verzii gtk-rs, ktorú používa Tauri (GTK3, gtk-rs 0.18).
+      - dependency-name: gio
+        versions: [">= 0.19"]
+      - dependency-name: glib
+        versions: [">= 0.19"]
