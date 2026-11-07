@@ -1,1 +1,1 @@
-- Fix: when Codex updates itself from its startup prompt, Project Desk starts it again and the session continues with the same conversation instead of dropping to a shell.
+- Fix: a Codex session no longer stays "Working" after it finishes. A helper task that Codex starts in the background could take over the session's conversation, so Project Desk stopped seeing its progress.
