@@ -65,6 +65,8 @@ export interface Session {
   interrupted?: boolean;
   /** Skrytá v sidebare; proces beží ďalej a vráti sa, keď na teba čaká. */
   hidden?: boolean;
+  /** Používateľ ju ručne označil ako neprečítanú; zruší sa pri otvorení. */
+  markedUnread?: boolean;
   exitCode?: number | null;
   createdAt: number;
   lastUsedAt: number;
@@ -248,6 +250,7 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
         resumeAfterShutdown: s.stopped === true && s.resumeAfterShutdown === true,
         interrupted: s.interrupted === true,
         hidden: s.hidden === true,
+        markedUnread: s.markedUnread === true || undefined,
         exitCode: typeof s.exitCode === "number" && Number.isInteger(s.exitCode) ? s.exitCode : undefined,
         lastStartAt: typeof s.lastStartAt === "number" ? s.lastStartAt : undefined,
         createdAt: num(s.createdAt, Date.now()),

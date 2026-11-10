@@ -513,6 +513,18 @@ test("parseState zahodí poškodené záznamy a relácie bez projektu", () => {
   assert.equal(state.ui.sidebarWidth, 640);
 });
 
+test("parseState zachová ručné označenie ako neprečítané", () => {
+  const raw = JSON.stringify({
+    projects: [{ id: "p1", name: "A", path: "C:\\a" }],
+    sessions: [
+      { id: "s1", projectId: "p1", provider: "shell", title: "x", markedUnread: true },
+      { id: "s2", projectId: "p1", provider: "shell", title: "y", markedUnread: "áno" },
+    ],
+  });
+  const { state } = parseState(raw);
+  assert.deepEqual(state.sessions.map((s) => s.markedUnread), [true, undefined]);
+});
+
 test("parseState prežije nezmysel", () => {
   assert.equal(parseState("{").dropped, 1);
   assert.equal(parseState(null).state.projects.length, 0);

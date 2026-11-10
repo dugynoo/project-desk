@@ -540,6 +540,16 @@ async function resolveFile(cwd: string, candidate: string): Promise<string | nul
 
 // ---------- akcie ----------
 
+/** Zruší neprečítaný stav relácie; vráti true, ak sa zmenil uložený stav.
+ *  Ručné označenie ruší len explicitné otvorenie, nie návrat fokusu do okna. */
+function markSessionRead(id: string, includeManual = true): boolean {
+  unread.delete(id);
+  const s = session(id);
+  const manual = includeManual && s?.markedUnread === true;
+  if (manual) s!.markedUnread = undefined;
+  return readAttention(state, id) || manual;
+}
+
 function select(id: string, focus = true) {
   const s = session(id);
   if (!s) return;
@@ -549,8 +559,7 @@ function select(id: string, focus = true) {
   const selectedProject = project(s.projectId);
   if (selectedProject) refreshBranches(true, [selectedProject.path]);
   s.lastUsedAt = Date.now();
-  unread.delete(id);
-  readAttention(state, id);
+  markSessionRead(id);
   save();
 
   if (!runtimes.has(id) || (!runtimes.get(id)?.running && !s.stopped)) {
@@ -788,7 +797,7 @@ const sidebar = createSidebar({
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
-  showImport, showInfo, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
+  showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
@@ -1404,8 +1413,7 @@ async function main() {
     let changed = false;
     for (const id of next) {
       if (remoteWatching.has(id)) continue;
-      unread.delete(id);
-      if (readAttention(state, id)) changed = true;
+      if (markSessionRead(id)) changed = true;
     }
     remoteWatching = next;
     if (changed) save();
@@ -1423,8 +1431,7 @@ async function main() {
       for (const id of visibleIds()) {
         const rt = runtimes.get(id);
         if (rt) reclaimSize(rt, id);
-        unread.delete(id);
-        if (readAttention(state, id)) changed = true;
+        if (markSessionRead(id, false)) changed = true;
       }
       if (changed) save();
       renderSidebar();
