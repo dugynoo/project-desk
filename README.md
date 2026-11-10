@@ -168,6 +168,23 @@ reserved; other app bindings take priority over terminal input. OS-reserved
 shortcuts may not reach the app. Editing bindings does not change shortcuts inside
 Claude/Codex or register system-wide hotkeys. App shortcuts are suspended in dialogs.
 
+### Remote access from your phone
+
+Optional and **off by default**. When enabled, you can watch and control your sessions from a phone browser, with Tailscale as the only way in.
+
+1. Install [Tailscale](https://tailscale.com/download) on this PC and on your phone, and sign in to the same account.
+2. In ⚙ Settings → **Remote access**, turn it on.
+3. Run the shown command once on this PC, for example `tailscale serve --bg 47615` (use the port from Settings).
+4. Scan the QR code with your phone and open the link.
+
+**New pairing code** replaces the token, so every paired phone is disconnected and the old link stops working.
+
+On the phone you get the session list with status, a live terminal, and typing with a key row (Esc, Tab, arrows, Ctrl+C, new line, Enter). Not available yet: creating, closing or resuming sessions, and file or editor actions.
+
+Security: the server listens on `127.0.0.1` only and Tailscale forwards your tailnet to it; every request needs the random token. Never expose the port publicly (no router port forwarding, no Tailscale Funnel).
+
+Project Desk keeps its window active when minimized, so terminals keep streaming to your phone. It cannot stop your PC from sleeping: change that in your operating system power settings.
+
 ### Settings navigation
 
 Settings is grouped into General, Display, Agents, Editor and Information tabs.
