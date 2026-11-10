@@ -6,6 +6,8 @@ import { cliChecks } from "./cli-check.ts";
 import { t, errorText, LANGUAGES, type Key } from "./i18n.ts";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
+import type { RemoteStatus } from "./remote/protocol.ts";
+import qrcode from "qrcode-generator";
 
 interface SettingsInfo { platform: string; hooksEnabled: boolean; stateFile: string; updates: boolean }
 
@@ -97,6 +99,83 @@ export function createSettings(
   }
 
 
+  /** QR ako SVG uzol z vlastného generátora, nie innerHTML. */
+  function qrNode(text: string): Element | null {
+    try {
+      const qr = qrcode(0, "M");
+      qr.addData(text);
+      qr.make();
+      const doc = new DOMParser().parseFromString(qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true }), "image/svg+xml");
+      const svg = doc.documentElement;
+      if (svg.nodeName !== "svg") return null;
+      const node = document.importNode(svg, true);
+      node.classList.add("remote-qr");
+      return node;
+    } catch { return null; }
+  }
+
+  /** Sekcia vzdialeného prístupu: stav servera sa číta z backendu, polia sa ukladajú s ostatnými. */
+  function remoteSection(box: HTMLElement, st: Settings, signal: AbortSignal, onError: (message: string) => void) {
+    const enable = el("input");
+    enable.type = "checkbox";
+    enable.checked = st.remoteAccess;
+    const enableLabel = el("label", "check");
+    enableLabel.append(enable, document.createTextNode(t("settings.remoteEnable")));
+    const port = el("input");
+    port.type = "number"; port.min = "1024"; port.max = "65535"; port.step = "1";
+    port.id = "remote-port";
+    port.value = String(st.remotePort);
+    const portLabel = el("label", "", t("settings.remotePort")); portLabel.htmlFor = port.id;
+    const address = el("input");
+    address.type = "text";
+    address.id = "remote-address";
+    address.value = st.remoteAddress;
+    const addressLabel = el("label", "", t("settings.remoteAddress")); addressLabel.htmlFor = address.id;
+    const statusBox = el("div", "remote-status");
+    box.append(el("p", "note", t("settings.saveHint")), enableLabel, portLabel, port, addressLabel, address, statusBox);
+
+    const render = (r: RemoteStatus) => {
+      if (signal.aborted) return;
+      if (r.host) address.placeholder = r.host;
+      const out: Node[] = [
+        el("div", "note", t(r.running ? "settings.remoteRunning" : "settings.remoteStopped")),
+        el("div", "note", r.host ? t("settings.remoteTailscaleFound", { host: r.host }) : t("settings.remoteTailscaleMissing")),
+      ];
+      if (r.running) {
+        out.push(el("div", "note", t(r.serving ? "settings.remoteServeOn" : "settings.remoteServeOff")));
+        if (!r.serving) {
+          const cmd = el("input");
+          cmd.type = "text"; cmd.readOnly = true; cmd.value = r.serveCommand;
+          cmd.setAttribute("aria-label", t("settings.remoteServeHint"));
+          const copy = el("button", "", t("settings.remoteCopy"));
+          copy.onclick = () => { void navigator.clipboard.writeText(r.serveCommand).catch(e => onError(errorText(e))); };
+          const row = el("div", "input-row"); row.append(cmd, copy);
+          out.push(el("div", "note", t("settings.remoteServeHint")), row);
+        }
+        const qr = r.pairingUrl ? qrNode(r.pairingUrl) : null;
+        if (qr && r.pairingUrl) {
+          const link = el("input");
+          link.type = "text"; link.readOnly = true; link.value = r.pairingUrl;
+          link.setAttribute("aria-label", t("settings.remotePairHint"));
+          const fresh = el("button", "", t("settings.remoteNewCode"));
+          fresh.onclick = () => {
+            fresh.disabled = true;
+            invoke<RemoteStatus>("remote_new_token").then(render).catch(e => { if (!signal.aborted) { fresh.disabled = false; onError(errorText(e)); } });
+          };
+          out.push(qr, link, fresh, el("div", "note", t("settings.remotePairHint")));
+        }
+      }
+      statusBox.replaceChildren(...out);
+    };
+    invoke<RemoteStatus>("remote_status").then(render).catch(e => { if (!signal.aborted) statusBox.replaceChildren(el("div", "note", errorText(e))); });
+
+    return (): { error: string; field: HTMLInputElement } | Pick<Settings, "remoteAccess" | "remotePort" | "remoteAddress"> => {
+      const value = Number(port.value);
+      if (!port.value || !Number.isInteger(value) || value < 1024 || value > 65535) return { error: t("err.remote.badPort"), field: port };
+      return { remoteAccess: enable.checked, remotePort: value, remoteAddress: address.value.trim() };
+    };
+  }
+
   function openSettings(info: SettingsInfo, keyboard = false) {
     const st = getSettings();
     let shortcuts = { ...st.shortcuts };
@@ -144,6 +223,7 @@ export function createSettings(
         const display = page("display", "settings.display");
         const agents = page("agents", "settings.agents");
         const editors = page("editor", "settings.editorTab");
+        const remotePanel = page("remote", "settings.remote");
         const about = page("about", "settings.about");
         about.tabIndex = 0;
         box.append(title, tabs, content);
@@ -210,6 +290,7 @@ export function createSettings(
         const markdownLabel = el("label", "", t("editor.markdownOpen")); markdownLabel.htmlFor = markdownOpen.id;
         editors.append(markdownLabel, markdownOpen);
         const editor = editorPicker(editors, st, info, signal);
+        const remote = remoteSection(remotePanel, st, signal, toast);
         const systemExts = field(editors, t("settings.systemOpen"), st.systemOpenExts, "html pdf png");
         editors.append(el("div", "note", t("settings.systemOpenNote")));
         const editorFont = field(editors, t("editor.fontSize"), String(st.editorFontSize));
@@ -277,7 +358,10 @@ export function createSettings(
           if (!editorFont.value || !editorFont.checkValidity()) {
             activate(3); editorFont.focus(); editorFont.reportValidity(); return;
           }
+          const remoteValue = remote();
+          if ("field" in remoteValue) { activate(4); remoteValue.field.focus(); return toast(remoteValue.error); }
           const draft = settingsDraft(st, {
+            ...remoteValue,
             fontSize: Number(fontSize.value),
             fileEditor: fileEditor.value as Settings["fileEditor"],
             markdownOpen: markdownOpen.value as Settings["markdownOpen"],
