@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod hook_relay;
 mod job;
 mod pty;
+mod remote;
 mod persistence;
 mod usage;
 mod shutdown;

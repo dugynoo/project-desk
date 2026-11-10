@@ -98,6 +98,11 @@ export interface Settings {
   autoResume: boolean;
   /** Prípony, ktoré Ctrl+klik otvorí v predvolenej aplikácii systému namiesto editora. */
   systemOpenExts: string;
+  /** Vzdialený prístup z mobilu (loopback server + `tailscale serve`). */
+  remoteAccess: boolean;
+  remotePort: number;
+  /** Ručne zadaná adresa v tailnete; "" = zistiť z Tailscale. */
+  remoteAddress: string;
 }
 
 /** Nainštalovaný editor z backendu (`list_editors`). */
@@ -160,6 +165,9 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: true,
   autoResume: true,
   systemOpenExts: "html htm pdf png jpg jpeg gif webp svg",
+  remoteAccess: false,
+  remotePort: 47615,
+  remoteAddress: "",
 };
 
 /** Predvolené hodnoty z rev 1; ak ich používateľ nezmenil, prejdú na nové. */
@@ -423,6 +431,18 @@ export function agentCommand(
   if (isUuid(id)) parts.push(s.hasConversation ? `--resume ${id}` : `--session-id ${id}`);
   if (hooksEnabled) parts.push(`--settings ${envRef(platform, "PROJECT_DESK_HOOK_SETTINGS")}`);
   return parts.join(" ");
+}
+
+/** Zjednodušený stav pre mobil: bez konverzačných dát. */
+export interface RemoteSnapshot {
+  language: string;
+  projects: { id: string; name: string }[];
+  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean }[];
+}
+
+/** Projekty v poradí ako v sidebare (pripnuté hore), bez skrytých sessions. */
+export function remoteSnapshot(_state: PersistedState, _statusOf: (id: string) => Status, _running: (id: string) => boolean): RemoteSnapshot {
+  throw new Error("not implemented");
 }
 
 export type Status =
