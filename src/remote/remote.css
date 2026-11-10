@@ -1,1 +1,58 @@
-/* Mobilná stránka vzdialeného prístupu (Task 7). */
+/* Mobilná stránka: tmavá téma ako desktop, výška podľa viditeľnej plochy (nad klávesnicou). */
+:root {
+  --bg: #111317;
+  --panel: #16181d;
+  --panel-2: #1c1f26;
+  --line: #262a33;
+  --text: #e6e8ee;
+  --muted: #a0a7b5;
+  --accent: #7cc4ff;
+  --working: #ffcf60;
+  --needs: #ff6b6b;
+  --done: #7ee2a8;
+  --off: #4b5160;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+button { font: inherit; color: inherit; }
+#app { height: 100dvh; display: flex; flex-direction: column; }
+
+.banner { position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 6px 16px; text-align: center; font-size: 14px; background: var(--working); color: #111317; }
+.toast { position: fixed; left: 16px; right: 16px; bottom: 120px; z-index: 10; padding: 10px 14px; border-radius: 8px; background: var(--needs); color: #111317; font-size: 14px; }
+.pair { margin: 0; padding: 32px 16px; color: var(--muted); text-align: center; }
+
+.list { flex: 1; overflow-y: auto; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+.list-title { margin: 0; padding: 16px; font-size: 20px; font-weight: 600; }
+.empty { padding: 0 16px; color: var(--muted); }
+.project { margin: 16px 0 4px; padding: 0 16px; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 16px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+.row:active { background: var(--panel-2); }
+.row.dim { opacity: .55; }
+.row-text { display: flex; flex-direction: column; min-width: 0; }
+.row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-status { font-size: 13px; color: var(--muted); }
+
+.dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--off); }
+.dot.working, .dot.starting { background: var(--working); }
+.dot.needs-you { background: var(--needs); }
+.dot.done, .dot.idle, .dot.running { background: var(--done); }
+
+.session { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: env(safe-area-inset-bottom); }
+.head { display: flex; align-items: center; gap: 8px; padding: 0 16px 0 4px; min-height: 48px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.back { min-width: 40px; min-height: 40px; padding: 0 12px; background: none; border: 0; color: var(--accent); cursor: pointer; }
+.head-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.head-status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+
+.term { flex: 1; min-height: 0; padding: 4px 0 4px 6px; overflow: hidden; }
+
+.keys { display: flex; gap: 6px; padding: 6px 8px; overflow-x: auto; background: var(--panel); border-top: 1px solid var(--line); }
+.key { flex: none; min-width: 44px; min-height: 40px; padding: 0 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.key:active { background: var(--line); }
+
+.compose { display: flex; gap: 6px; padding: 6px 8px; background: var(--panel); }
+.text { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.text:focus { outline: none; border-color: var(--accent); }
+.send { min-width: 72px; min-height: 44px; padding: 0 16px; background: var(--accent); color: #111317; font-weight: 600; border: 0; border-radius: 8px; cursor: pointer; }
