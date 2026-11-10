@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   fileOpenTarget,
+  remoteSnapshot,
   codexHooksFit,
   backgroundStatus,
   droppedFilePaths,
@@ -1052,4 +1053,42 @@ test("file links use preferred editor with system-extension precedence", () => {
   assert.equal(fileOpenTarget("/project/photo.PNG", settings), "system");
   settings.systemOpenExts = "";
   assert.equal(fileOpenTarget("/project/photo.PNG", settings), "external");
+});
+
+test("remote settings default off", () => {
+  const { state } = parseState(null);
+  assert.equal(state.settings.remoteAccess, false);
+  assert.equal(state.settings.remotePort, 47615);
+  assert.equal(state.settings.remoteAddress, "");
+});
+
+test("remote port out of range falls back", () => {
+  for (const port of [70000, 80, 1.5]) {
+    const { state } = parseState(JSON.stringify({ settings: { remotePort: port } }));
+    assert.equal(state.settings.remotePort, 47615);
+  }
+  assert.equal(parseState(JSON.stringify({ settings: { remotePort: 50000 } })).state.settings.remotePort, 50000);
+});
+
+function remoteFixture() {
+  const mk = (id: string, projectId: string, hidden = false) => ({
+    id, projectId, provider: "claude" as const, title: id, agentSessionId: "11111111-1111-4111-8111-111111111111", exitCode: 3, hidden, createdAt: 1, lastUsedAt: 1,
+  });
+  return parseState(JSON.stringify({
+    projects: [{ id: "p1", name: "A", path: "/a" }, { id: "p2", name: "B", path: "/b", pinned: true }],
+    sessions: [mk("s1", "p1"), mk("s2", "p2", true), mk("s3", "p2")],
+  })).state;
+}
+
+test("remoteSnapshot omits hidden sessions and conversation data", () => {
+  const snap = remoteSnapshot(remoteFixture(), () => "idle", (id) => id === "s1");
+  assert.deepEqual(snap.sessions.map((s) => s.id), ["s3", "s1"]);
+  assert.deepEqual(Object.keys(snap.sessions[0]).sort(), ["id", "projectId", "provider", "running", "status", "title"]);
+  assert.equal(snap.sessions[1].running, true);
+  assert.equal(snap.sessions[0].running, false);
+});
+
+test("remoteSnapshot keeps pinned projects first", () => {
+  const snap = remoteSnapshot(remoteFixture(), () => "idle", () => false);
+  assert.deepEqual(snap.projects, [{ id: "p2", name: "B" }, { id: "p1", name: "A" }]);
 });
