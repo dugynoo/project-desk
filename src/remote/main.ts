@@ -12,6 +12,9 @@ type RemoteSession = RemoteSnapshot["sessions"][number];
 
 const TOKEN_KEY = "pd.remote.token";
 const app = document.getElementById("app")!;
+// Zoznam a otvorená session; na úzkej obrazovke sa striedajú, na širokej sú vedľa seba (CSS).
+const listEl = h("div", "list");
+const paneEl = h("div", "pane");
 
 let snapshot: RemoteSnapshot | null = null;
 let openId: string | null = null;
@@ -174,9 +177,13 @@ function render() {
     // Session zmizla zo snímku: späť na zoznam.
     if (!s) return closeSession();
     updateHeader(s);
-    return;
   }
   renderList();
+}
+
+function mount() {
+  if (listEl.parentElement !== app || paneEl.parentElement !== app) app.replaceChildren(listEl, paneEl);
+  app.classList.toggle("open", openId !== null);
 }
 
 function statusOf(session: RemoteSession) {
@@ -207,25 +214,24 @@ function listSignature(): string {
 function fillRow(s: RemoteSession) {
   const r = rowEls.get(s.id);
   if (!r) return;
-  r.row.className = `row${s.running ? "" : " dim"}`;
+  r.row.className = `row${s.running ? "" : " dim"}${s.id === openId ? " active" : ""}`;
   r.dot.className = `dot ${statusOf(s)}`;
   r.title.textContent = s.title;
   r.status.textContent = statusLabel(s);
 }
 
 function renderList() {
-  disposeTerminal();
+  mount();
   const sig = listSignature();
-  if (listSig === sig && app.querySelector(".list")) {
+  if (listSig === sig) {
     for (const s of snapshot?.sessions ?? []) fillRow(s);
     return;
   }
-  const oldScroll = app.querySelector(".list")?.scrollTop ?? 0;
-  app.replaceChildren();
+  const oldScroll = listEl.scrollTop;
   rowEls.clear();
   listSig = sig;
-  const root = h("div", "list");
-  root.append(h("h1", "list-title", t("remote.title")));
+  const root = listEl;
+  root.replaceChildren(h("h1", "list-title", t("remote.title")));
   if (!snapshot || !snapshot.sessions.length) {
     root.append(h("p", "empty", t("remote.empty")));
   } else {
@@ -250,14 +256,13 @@ function renderList() {
       }
     }
   }
-  app.append(root);
   root.scrollTop = oldScroll;
 }
 
 function updateHeader(s: RemoteSession) {
   const project = snapshot?.projects.find((p) => p.id === s.projectId)?.name ?? "";
-  const title = app.querySelector(".head-title");
-  const status = app.querySelector(".head-status");
+  const title = paneEl.querySelector(".head-title");
+  const status = paneEl.querySelector(".head-status");
   if (title) title.textContent = project ? `${project} / ${s.title}` : s.title;
   if (status) status.replaceChildren(statusDot(s), document.createTextNode(statusLabel(s)));
 }
@@ -277,11 +282,12 @@ function sendResize() {
 }
 
 function openSession(id: string) {
-  listSig = null;
   const s = snapshot?.sessions.find((x) => x.id === id);
-  if (!s) return;
+  if (!s || id === openId) return;
+  // Prepnutie na širokej obrazovke: predchádzajúcu session prestaneme sledovať.
+  if (openId) send({ type: "unsubscribe", id: openId });
+  disposeTerminal();
   openId = id;
-  app.replaceChildren();
   const view = h("div", "session");
 
   const head = h("header", "head");
@@ -321,7 +327,8 @@ function openSession(id: string) {
   };
 
   view.append(head, host, keys, form);
-  app.append(view);
+  paneEl.replaceChildren(view);
+  renderList();
   updateHeader(s);
 
   term = new Terminal({
@@ -353,6 +360,8 @@ function disposeTerminal() {
 function closeSession() {
   if (openId) send({ type: "unsubscribe", id: openId });
   openId = null;
+  disposeTerminal();
+  paneEl.replaceChildren(h("p", "pane-empty", t("remote.pick")));
   renderList();
 }
 
@@ -367,6 +376,7 @@ const token = loadToken();
 if (!token) {
   app.append(h("p", "pair", t("remote.pairFirst")));
 } else {
+  paneEl.append(h("p", "pane-empty", t("remote.pick")));
   renderList();
   renderBanner();
   connect(token);
