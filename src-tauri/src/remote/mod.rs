@@ -204,6 +204,7 @@ mod tests {
                 pty: Arc::new(crate::pty::PtyManager::default()),
                 assets: Arc::new(|_: &str| None),
                 events: Arc::new(|_| {}),
+                heartbeat: server::Heartbeat::default(),
             }).await.unwrap()),
             address: "pc.tail1.ts.net".into(),
             token: Some("t0k".into()),

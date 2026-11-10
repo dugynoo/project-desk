@@ -220,6 +220,7 @@ async fn start_remote(app: &tauri::AppHandle, state: &AppState, control: &mut re
             pty: Arc::new(state.pty.clone()),
             assets: remote::assets(app.clone()),
             events: remote::events(app.clone()),
+            heartbeat: remote::server::Heartbeat::default(),
         }).await
     }.await;
     match result {
