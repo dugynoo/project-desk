@@ -16,11 +16,12 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
-body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+/* Banner je v toku nad #app, takže hlavičku session s tlačidlom späť nezakryje. */
+body { display: flex; flex-direction: column; height: 100dvh; font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
 button { font: inherit; color: inherit; }
-#app { height: 100dvh; display: flex; flex-direction: column; }
+#app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-.banner { position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 6px 16px; text-align: center; font-size: 14px; background: var(--working); color: #111317; }
+.banner { flex: none; padding: calc(6px + env(safe-area-inset-top)) 16px 6px; text-align: center; font-size: 14px; background: var(--working); color: #111317; }
 .toast { position: fixed; left: 16px; right: 16px; bottom: 120px; z-index: 10; padding: 10px 14px; border-radius: 8px; background: var(--needs); color: #111317; font-size: 14px; }
 .pair { margin: 0; padding: 32px 16px; color: var(--muted); text-align: center; }
 

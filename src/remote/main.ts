@@ -6,7 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { errorText, setLang, t, type Key } from "../i18n.ts";
 import { pasteSequence, type RemoteSnapshot } from "../model.ts";
-import { PROTOCOL, REMOTE_KEYS, parseServerMsg, reconnectDelay, type ClientMsg, type ServerMsg } from "./protocol.ts";
+import { PROTOCOL, REMOTE_KEYS, closeAction, parseServerMsg, reconnectDelay, type ClientMsg, type ServerMsg } from "./protocol.ts";
 
 type RemoteSession = RemoteSnapshot["sessions"][number];
 
@@ -17,6 +17,10 @@ let snapshot: RemoteSnapshot | null = null;
 let openId: string | null = null;
 let ws: WebSocket | null = null;
 let attempt = 0;
+/** Neúspešné pripojenia za sebou (socket sa ani neotvoril). */
+let failures = 0;
+/** Token neplatí: čakáme na nové spárovanie, nepripájame sa. */
+let stopped = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let connected = false;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -36,9 +40,10 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: s
 function loadToken(): string | null {
   const m = /^#t=(.+)$/.exec(location.hash);
   if (m) {
-    const token = decodeURIComponent(m[1]);
-    try { localStorage.setItem(TOKEN_KEY, token); } catch { /* súkromný režim */ }
     history.replaceState(null, "", location.pathname + location.search);
+    let token: string;
+    try { token = decodeURIComponent(m[1]); } catch { return null; } // poškodený odkaz: znova spárovať
+    try { localStorage.setItem(TOKEN_KEY, token); } catch { /* súkromný režim */ }
     return token;
   }
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
@@ -49,14 +54,26 @@ function send(msg: ClientMsg) {
 }
 
 function connect(token: string) {
+  if (stopped) return;
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  const sock = new WebSocket(`${scheme}//${location.host}/ws`, [PROTOCOL, `auth.${token}`]);
+  let sock: WebSocket;
+  try {
+    sock = new WebSocket(`${scheme}//${location.host}/ws`, [PROTOCOL, `auth.${token}`]);
+  } catch {
+    failures++;
+    scheduleReconnect(token);
+    return;
+  }
   ws = sock;
+  let opened = false;
   sock.onopen = () => {
+    opened = true;
     connected = true;
     attempt = 0;
+    failures = 0;
     renderBanner();
-    if (openId) subscribe(openId); // po znovupripojení znova odoberáme otvorenú session
+    // po znovupripojení znova odoberáme otvorenú session (skrytá stránka až po návrate)
+    if (openId && !document.hidden) subscribe(openId);
   };
   sock.onmessage = (ev) => {
     if (typeof ev.data !== "string") return;
@@ -64,15 +81,44 @@ function connect(token: string) {
     try { msg = parseServerMsg(ev.data); } catch { /* neplatná správa */ }
     if (msg) handle(msg);
   };
-  sock.onclose = () => {
+  sock.onclose = (ev) => {
     if (ws !== sock) return;
     ws = null;
     connected = false;
+    if (!opened) failures++;
+    const action = closeAction(ev.code, opened, failures);
+    if (action === "repair") return showRepair();
     renderBanner();
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => connect(token), reconnectDelay(attempt++));
+    if (action === "retry") return scheduleReconnect(token);
+    // Stránka odpovedá, ale socket nás odmieta: token už neplatí.
+    void serverAnswers().then((up) => (up ? showRepair() : scheduleReconnect(token)));
   };
   sock.onerror = () => sock.close();
+}
+
+function scheduleReconnect(token: string) {
+  if (stopped) return;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => connect(token), reconnectDelay(attempt++));
+}
+
+async function serverAnswers(): Promise<boolean> {
+  try {
+    return (await fetch(location.pathname, { cache: "no-store" })).ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Párovací kód sa zmenil; ďalšie pokusy by len zlyhávali. */
+function showRepair() {
+  stopped = true;
+  clearTimeout(reconnectTimer);
+  disposeTerminal();
+  openId = null;
+  listSig = null;
+  document.querySelector(".banner")?.remove();
+  app.replaceChildren(h("p", "pair", t("remote.repair")));
 }
 
 function handle(msg: ServerMsg) {
@@ -108,6 +154,7 @@ function showToast(text: string) {
 }
 
 function renderBanner() {
+  if (stopped) return;
   let banner = document.querySelector<HTMLElement>(".banner");
   if (connected) {
     banner?.remove();
@@ -308,6 +355,13 @@ function closeSession() {
   openId = null;
   renderList();
 }
+
+// Skrytá stránka (zamknutý telefón, iná appka) sessions nesleduje, inak by na desktope stlmila upozornenia.
+document.addEventListener("visibilitychange", () => {
+  if (!openId) return;
+  if (document.hidden) send({ type: "unsubscribe", id: openId });
+  else subscribe(openId);
+});
 
 const token = loadToken();
 if (!token) {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseServerMsg, reconnectDelay } from "./protocol.ts";
+import { CLOSE_REVOKED, closeAction, parseServerMsg, reconnectDelay } from "./protocol.ts";
 
 test("parseServerMsg rejects unknown type", () => {
   assert.equal(parseServerMsg('{"type":"nope"}'), null);
@@ -17,4 +17,11 @@ test("reconnectDelay caps at 10s", () => {
   assert.equal(reconnectDelay(0), 1000);
   assert.equal(reconnectDelay(2), 4000);
   assert.equal(reconnectDelay(10), 10000);
+});
+
+test("closeAction asks to re-pair on revoke and probes after repeated failed connects", () => {
+  assert.equal(closeAction(CLOSE_REVOKED, true, 1), "repair");
+  assert.equal(closeAction(1006, true, 5), "retry");
+  assert.equal(closeAction(1006, false, 2), "retry");
+  assert.equal(closeAction(1006, false, 3), "probe");
 });

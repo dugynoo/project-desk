@@ -71,3 +71,18 @@ export function parseServerMsg(raw: string): ServerMsg | null {
 export function reconnectDelay(attempt: number): number {
   return Math.min(10000, 1000 * 2 ** Math.max(0, attempt));
 }
+
+/** Zatvárací kód servera pri zneplatnenom tokene (nový párovací kód). */
+export const CLOSE_REVOKED = 4001;
+/** Po toľkých neúspešných pripojeniach za sebou stránka overí, či server vôbec beží. */
+export const FAILS_BEFORE_PROBE = 3;
+
+/**
+ * Čo robiť po zatvorení socketu: `repair` = token neplatí, `probe` = server nás opakovane odmieta
+ * (zlý token, ak stránka sama odpovedá), inak ďalší pokus. `failures` = neúspechy za sebou vrátane tohto.
+ */
+export function closeAction(code: number, opened: boolean, failures: number): "repair" | "probe" | "retry" {
+  if (code === CLOSE_REVOKED) return "repair";
+  if (!opened && failures >= FAILS_BEFORE_PROBE) return "probe";
+  return "retry";
+}
