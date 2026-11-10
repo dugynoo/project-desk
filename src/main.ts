@@ -117,7 +117,6 @@ function toast(msg: string, info = false) {
 const renderStatusSoon = onNextFrame(() => {
   renderSidebar();
   renderPaneHeads();
-  publishRemote();
 });
 
 // Snímok pre mobil: len keď je vzdialený prístup zapnutý, najviac raz za 250 ms.
@@ -135,12 +134,19 @@ function publishRemote() {
   void invoke("remote_publish", { snapshot }).catch(() => {});
 }
 
+/** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
+function clearRemoteWatching() {
+  if (!remoteWatching.size) return;
+  remoteWatching = new Set();
+  renderSidebar();
+}
+
 /** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. */
 function configureRemote() {
   const { remoteAccess, remotePort, remoteAddress } = state.settings;
   invoke("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
-    .then(() => { if (remoteAccess) publishRemote(); })
-    .catch((e: unknown) => toast(errorText(e)));
+    .then(() => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); })
+    .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); });
 }
 
 const agentMonitor = createAgentMonitor({
@@ -773,7 +779,7 @@ const sidebar = createSidebar({
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
-  showImport, showInfo, jumpAttention, showClosedSessions, layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
+  showImport, showInfo, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
@@ -1216,7 +1222,7 @@ const showSettings = createSettings(
   () => state.settings,
   (draft, langChanged) => {
     const remoteChanged = draft.remoteAccess !== state.settings.remoteAccess || draft.remotePort !== state.settings.remotePort || draft.remoteAddress !== state.settings.remoteAddress;
-    state.settings = draft; if (remoteChanged) configureRemote(); applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints(); },
+    state.settings = draft; if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); configureRemote(); } applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints(); },
   modal, toast, checkUpdate, installUpdate,
 );
 const openSettings = () => showSettings(info);
