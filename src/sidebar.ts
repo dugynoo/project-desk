@@ -31,6 +31,8 @@ interface SidebarDependencies {
   layoutChanged(): void;
   showImport(project: Project): void;
   showInfo(session: Session): void;
+  /** Zruší neprečítaný stav relácie (ručný aj z notifikácií). */
+  markRead(id: string): void;
   jumpAttention(): void;
   showClosedSessions(): void;
   showNotifications(): void;
@@ -41,7 +43,7 @@ interface SidebarDependencies {
 export function createSidebar(deps: SidebarDependencies) {
   const { getState, runtimes, unread, statusOf, statusLabel, contextLabel, save,
     renderPaneHeads, select, createSession, start, closeSession, pauseSession, canPause, removeProject,
-    openEditor, openFolderLabel, openFolder, showImport, showInfo, jumpAttention, showClosedSessions } = deps;
+    openEditor, openFolderLabel, openFolder, showImport, showInfo, markRead, jumpAttention, showClosedSessions } = deps;
   const PROVIDER_ICON = deps.providerIcons;
   const session = (id: string) => getState().sessions.find(s => s.id === id);
   let attentionOnly = false;
@@ -51,6 +53,14 @@ export function createSidebar(deps: SidebarDependencies) {
   // preto si rozpísaný text držíme mimo DOM.
   let editing: { id: string; draft: string; selectAll: boolean } | undefined;
   let rerendering = false;
+
+  function markUnread(id: string) {
+    const s = session(id);
+    if (!s) return;
+    s.markedUnread = true;
+    save();
+    renderSidebar();
+  }
 
   function startRename(s: Session, render = true) {
     editing = { id: s.id, draft: s.title, selectAll: true };
@@ -355,7 +365,8 @@ export function createSidebar(deps: SidebarDependencies) {
           item.classList.toggle("is-hidden", s.hidden === true && hiddenCount > 0);
           item.dataset.id = s.id;
           item.classList.toggle("active", s.id === getState().ui.activeSessionId);
-          item.classList.toggle("unread", unread.has(s.id) || getState().notifications.some(n => n.sessionId === s.id && !n.read));
+          const isUnread = s.markedUnread === true || unread.has(s.id) || getState().notifications.some(n => n.sessionId === s.id && !n.read);
+          item.classList.toggle("unread", isUnread);
           const body = el("div", "body");
           body.tabIndex = 0; body.setAttribute("role", "button"); body.dataset.focusId = `session-${s.id}`;
           body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}${s.interrupted ? `, ${t("session.interrupted")}` : ""}`);
@@ -391,6 +402,7 @@ export function createSidebar(deps: SidebarDependencies) {
           const sessionActions = () => [
             { label: t("session.rename"), run: () => startRename(s) },
             { label: t("session.info"), run: () => showInfo(s) },
+            { label: t(isUnread ? "session.markRead" : "session.markUnread"), run: () => isUnread ? markRead(s.id) : markUnread(s.id) },
             { label: t(s.hidden ? "session.unhide" : "session.hide"), run: () => { s.hidden = !s.hidden; save(); renderSidebar(); } },
             ...(canPause(s) ? [{ label: t("session.pause"), run: () => void pauseSession(s) }] : []),
             { label: t(runtimes.get(s.id)?.running ? "session.closeTerminal" : "session.removeFromList"), danger: true, separator: true, run: () => void closeSession(s) },

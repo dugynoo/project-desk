@@ -1,1 +1,1 @@
-- Fix: tables and text in agent output no longer shift or lose their first letters when they contain emoji such as ✍️. The terminal now measures these emoji at the same width as Claude Code.
+- New: right-click a session and choose "Mark as unread" to light up its red dot again. The mark stays until you open the session, also after restarting the app; "Mark as read" clears it.
