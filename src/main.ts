@@ -1,4 +1,4 @@
-import { createTerminalFactory, attachWebgl, fitTerminal, type Runtime } from "./terminal-runtime.ts";
+import { createTerminalFactory, attachWebgl, fitTerminal, reclaimSize, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
@@ -114,10 +114,15 @@ function toast(msg: string, info = false) {
   window.setTimeout(() => t.remove(), 6000);
 }
 
-const renderStatusSoon = onNextFrame(() => {
+const renderSoon = onNextFrame(() => {
   renderSidebar();
   renderPaneHeads();
 });
+/** Mobil dostane stav hneď: requestAnimationFrame pri minimalizovanom okne nemusí bežať. */
+function renderStatusSoon() {
+  publishRemote();
+  renderSoon();
+}
 
 // Snímok pre mobil: len keď je vzdialený prístup zapnutý, najviac raz za 250 ms.
 let lastRemotePublish = -Infinity;
@@ -137,6 +142,10 @@ function publishRemote() {
 /** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
 function clearRemoteWatching() {
   if (!remoteWatching.size) return;
+  for (const id of remoteWatching) {
+    const rt = runtimes.get(id);
+    if (rt) reclaimSize(rt, id);
+  }
   remoteWatching = new Set();
   renderSidebar();
 }
@@ -1387,6 +1396,11 @@ async function main() {
   });
   await listen<{ ids: string[] }>("remote-watching", ({ payload }) => {
     const next = new Set(payload.ids);
+    // Mobil odišiel: desktop si vezme veľkosť späť bez čakania na písanie či fokus.
+    for (const id of remoteWatching) {
+      const rt = runtimes.get(id);
+      if (!next.has(id) && rt) reclaimSize(rt, id);
+    }
     let changed = false;
     for (const id of next) {
       if (remoteWatching.has(id)) continue;
@@ -1407,6 +1421,8 @@ async function main() {
       refreshBranches(true);
       let changed = false;
       for (const id of visibleIds()) {
+        const rt = runtimes.get(id);
+        if (rt) reclaimSize(rt, id);
         unread.delete(id);
         if (readAttention(state, id)) changed = true;
       }
