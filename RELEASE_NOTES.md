@@ -1,1 +1,1 @@
-- New: right-click a session and choose "Mark as unread" to light up its red dot again. The mark stays until you open the session, also after restarting the app; "Mark as read" clears it.
+- New: when Claude Code finishes its turn but its own background commands or agents are still running, the session shows a yellow ring, "Running in background (n)", instead of Done and sends no notification yet. You get Done after Claude reads the results.
