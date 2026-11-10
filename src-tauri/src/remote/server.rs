@@ -10,11 +10,12 @@ use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot, watch};
+use tokio::time::Instant;
 
 use super::hub::{Hub, HubEvent};
 use super::protocol::{self, ClientMsg, ServerMsg};
@@ -53,6 +54,20 @@ pub enum RemoteEvent {
 
 pub type Events = Arc<dyn Fn(RemoteEvent) + Send + Sync>;
 
+/// Ping každých `interval`; klient, od ktorého nič nepríde za `timeout`, sa odpojí.
+/// Peer TCP je lokálny tailscaled, takže stratený mobil by inak socket držal otvorený navždy.
+#[derive(Debug, Clone, Copy)]
+pub struct Heartbeat {
+    pub interval: Duration,
+    pub timeout: Duration,
+}
+
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self { interval: Duration::from_secs(15), timeout: Duration::from_secs(45) }
+    }
+}
+
 pub struct ServerOpts {
     /// 0 = ľubovoľný voľný port (testy).
     pub port: u16,
@@ -62,6 +77,7 @@ pub struct ServerOpts {
     pub pty: Arc<dyn RemotePty>,
     pub assets: Assets,
     pub events: Events,
+    pub heartbeat: Heartbeat,
 }
 
 /// Súkromné polia môže implementácia zmeniť; verejné metódy nie.
@@ -133,6 +149,7 @@ struct Shared {
     pty: Arc<dyn RemotePty>,
     assets: Assets,
     events: Events,
+    heartbeat: Heartbeat,
     watching: Mutex<Watching>,
     next_client: AtomicU64,
     closing: watch::Receiver<bool>,
@@ -173,6 +190,7 @@ pub async fn start(opts: ServerOpts) -> Result<Running, String> {
         pty: opts.pty,
         assets: opts.assets,
         events: opts.events,
+        heartbeat: opts.heartbeat,
         watching: Mutex::default(),
         next_client: AtomicU64::new(0),
         closing,
@@ -193,6 +211,9 @@ pub async fn start(opts: ServerOpts) -> Result<Running, String> {
 /// Statické súbory bez tokenu (neobsahujú dáta); cesta nikdy nevedie na disk.
 async fn asset(State(s): State<Arc<Shared>>, method: Method, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
+    if method == Method::GET && path.is_empty() {
+        return Redirect::temporary("/remote.html").into_response();
+    }
     let lower = path.to_ascii_lowercase();
     let suspicious = path.is_empty()
         || path.contains('\\')
@@ -265,6 +286,9 @@ enum Next {
     Client(Option<Result<Message, axum::Error>>),
     Hub(Result<HubEvent, broadcast::error::RecvError>),
     Closing,
+    Ping,
+    /// Klient neodpovedal ani na ping.
+    Silent,
 }
 
 /// Prečo sa spojenie skončilo.
@@ -292,12 +316,22 @@ impl Conn {
                 return End::Closed;
             }
         }
+        let hb = self.s.heartbeat;
+        let mut ping = tokio::time::interval_at(Instant::now() + hb.interval, hb.interval);
+        ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut seen = Instant::now();
         loop {
             let next = tokio::select! {
                 m = self.socket.recv() => Next::Client(m),
                 e = self.rx.recv() => Next::Hub(e),
                 _ = self.closing.wait_for(|c| *c) => Next::Closing,
+                _ = ping.tick() => Next::Ping,
+                _ = tokio::time::sleep_until(seen + hb.timeout) => Next::Silent,
             };
+            // Akákoľvek správa (aj Pong) znamená, že klient žije.
+            if let Next::Client(Some(Ok(_))) = next {
+                seen = Instant::now();
+            }
             let go_on = match next {
                 Next::Client(Some(Ok(Message::Text(text)))) => match serde_json::from_str::<ClientMsg>(&text) {
                     Ok(msg) => self.on_client(msg).await,
@@ -310,9 +344,10 @@ impl Conn {
                 Next::Hub(Ok(event)) => self.forward(event).await,
                 Next::Hub(Err(broadcast::error::RecvError::Lagged(_))) => {
                     let all = self.subs.iter().cloned().collect();
-                    self.catch_up(all).await
+                    self.catch_up(all, true).await
                 }
-                Next::Hub(Err(broadcast::error::RecvError::Closed)) | Next::Closing => false,
+                Next::Ping => self.send_raw(Message::Ping(Default::default())).await,
+                Next::Hub(Err(broadcast::error::RecvError::Closed)) | Next::Closing | Next::Silent => false,
             };
             if !go_on {
                 return End::Closed;
@@ -329,8 +364,12 @@ impl Conn {
     /// `false` = klienta odpojiť (nečíta, zavrel sa alebo server končí).
     async fn send(&mut self, msg: ServerMsg) -> bool {
         let Ok(text) = serde_json::to_string(&msg) else { return true };
+        self.send_raw(Message::Text(text.into())).await
+    }
+
+    async fn send_raw(&mut self, msg: Message) -> bool {
         tokio::select! {
-            r = self.socket.send(Message::Text(text.into())) => r.is_ok(),
+            r = self.socket.send(msg) => r.is_ok(),
             _ = self.closing.wait_for(|c| *c) => false,
             _ = tokio::time::sleep(SEND_TIMEOUT) => false,
         }
@@ -376,7 +415,7 @@ impl Conn {
                         return false;
                     }
                 }
-                self.catch_up(vec![id]).await
+                self.catch_up(vec![id], false).await
             }
             ClientMsg::Unsubscribe { id } => {
                 self.sizes.remove(&id);
@@ -416,9 +455,11 @@ impl Conn {
         }
     }
 
-    /// Pošle zmeškané udalosti a čerstvú históriu `ids`; pri pretečení frontu históriu všetkých odberov.
-    async fn catch_up(&mut self, ids: Vec<String>) -> bool {
+    /// Pošle zmeškané udalosti a čerstvú históriu `ids`; pri pretečení frontu (`lagged`)
+    /// históriu všetkých odberov a aktuálny snímok, lebo starý sa mohol stratiť.
+    async fn catch_up(&mut self, ids: Vec<String>, lagged: bool) -> bool {
         let mut c = self.s.hub.catch_up(&mut self.rx, &ids);
+        let lagged = lagged || c.lagged;
         if c.lagged && ids.len() < self.subs.len() {
             // Výstup iných odberov sa stratil; ich staré udalosti nahradí história.
             let all: Vec<String> = self.subs.iter().cloned().collect();
@@ -437,7 +478,10 @@ impl Conn {
                 return false;
             }
         }
-        true
+        match self.s.hub.snapshot() {
+            Some(snapshot) if lagged => self.send(ServerMsg::Snapshot { snapshot }).await,
+            _ => true,
+        }
     }
 }
 
@@ -485,6 +529,13 @@ mod tests {
     }
 
     async fn harness() -> Harness {
+        harness_with(Heartbeat::default()).await
+    }
+
+    /// Rýchly heartbeat, aby test nečakal desiatky sekúnd.
+    const FAST: Heartbeat = Heartbeat { interval: Duration::from_millis(100), timeout: Duration::from_millis(400) };
+
+    async fn harness_with(heartbeat: Heartbeat) -> Harness {
         let hub = Arc::new(Hub::default());
         hub.set_enabled(true);
         let pty = Arc::new(FakePty::default());
@@ -497,6 +548,7 @@ mod tests {
             pty: pty.clone(),
             assets: Arc::new(|path: &str| (path == "remote.html").then(|| (b"<html>".to_vec(), "text/html".into()))),
             events: Arc::new(move |e| { let _ = tx.send(e); }),
+            heartbeat,
         }).await.unwrap();
         Harness { running, hub, pty, events }
     }
@@ -645,6 +697,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lagged_client_gets_current_snapshot() {
+        let h = harness().await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+        assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
+        // Snímok sa vo fronte prepíše výstupom; po pretečení ho server pošle znova.
+        h.hub.publish_snapshot(json!({"n": 1}));
+        for i in 0..crate::remote::hub::BROADCAST_CAPACITY * 2 {
+            h.hub.output("s", &format!("{i}\n"));
+        }
+        loop {
+            let msg = next(&mut ws).await.expect("socket closed");
+            if msg["type"] == "snapshot" {
+                assert_eq!(msg["snapshot"], json!({"n": 1}));
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn silent_client_is_dropped_by_heartbeat() {
+        let mut h = harness_with(FAST).await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::Watching { .. })).await, RemoteEvent::Watching { ids: vec!["s".into()] });
+        // Klient už nečíta, takže na ping neodpovie (stratený mobil, zamrznutá stránka).
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::Watching { .. })).await, RemoteEvent::Watching { ids: vec![] });
+        drop(ws);
+    }
+
+    #[tokio::test]
+    async fn answering_client_survives_heartbeat() {
+        let mut h = harness_with(FAST).await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+        assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
+        // Čítanie odpovedá na pingy; spojenie prežije niekoľko timeoutov.
+        let until = tokio::time::Instant::now() + Duration::from_millis(1200);
+        let mut pings = 0;
+        while let Ok(m) = tokio::time::timeout_at(until, ws.next()).await {
+            match m {
+                Some(Ok(WsMessage::Ping(_))) => pings += 1,
+                Some(Ok(_)) => {}
+                other => panic!("connection ended: {other:?}"),
+            }
+        }
+        assert!(pings >= 3, "{pings}");
+        h.hub.output("s", "live");
+        assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "output", "id": "s", "data": "live"}));
+        while let Ok(e) = h.events.try_recv() {
+            assert_ne!(e, RemoteEvent::Watching { ids: vec![] });
+        }
+    }
+
+    #[tokio::test]
+    async fn root_redirects_to_page() {
+        let h = harness().await;
+        let resp = http_get(h.running.port(), "/").await;
+        assert!(resp.starts_with("HTTP/1.1 307"), "{resp}");
+        assert!(resp.to_ascii_lowercase().contains("location: /remote.html"), "{resp}");
+    }
+
+    #[tokio::test]
     async fn new_token_closes_existing_sockets() {
         let h = harness().await;
         let mut ws = connect(&h).await;
@@ -674,6 +789,7 @@ mod tests {
             pty: Arc::new(FakePty::default()),
             assets: Arc::new(|_: &str| None),
             events: Arc::new(|_| {}),
+            heartbeat: Heartbeat::default(),
         }).await.err().unwrap();
         assert!(err.starts_with("remote.portInUse"), "{err}");
     }
