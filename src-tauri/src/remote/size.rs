@@ -28,6 +28,11 @@ impl SizeArbiter {
     pub fn forget(&mut self, id: &str) {
         self.owners.remove(id);
     }
+
+    /// Veľkosť práve určuje mobil (zmena jeho okna ju má nasledovať).
+    pub fn is_remote(&self, id: &str) -> bool {
+        matches!(self.owners.get(id), Some(Owner::Remote { .. }))
+    }
 }
 
 #[cfg(test)]
@@ -53,6 +58,16 @@ mod tests {
         s.remote("a", 40, 20);
         s.desktop("a");
         assert!(s.remote("a", 40, 20));
+    }
+
+    #[test]
+    fn is_remote_follows_last_owner() {
+        let mut s = SizeArbiter::default();
+        assert!(!s.is_remote("a"));
+        s.remote("a", 40, 20);
+        assert!(s.is_remote("a"));
+        s.desktop("a");
+        assert!(!s.is_remote("a"));
     }
 
     #[test]
