@@ -1,1 +1,1 @@
-- Fix: a Codex session no longer stays "Working" after it finishes. A helper task that Codex starts in the background could take over the session's conversation, so Project Desk stopped seeing its progress.
+- Fix: tables and text in agent output no longer shift or lose their first letters when they contain emoji such as ✍️. The terminal now measures these emoji at the same width as Claude Code.
