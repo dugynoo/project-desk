@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
@@ -108,9 +108,9 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     term.loadAddon(fit);
     const search = new SearchAddon();
     term.loadAddon(search);
-    // Agents measure emoji such as ✅ as two cells; the default Unicode 6 widths break their table borders.
-    term.loadAddon(new Unicode11Addon());
-    term.unicode.activeVersion = "11";
+    // Agents measure emoji such as ✅ and ✍️ (base + VS16) as two cells; Unicode 6/11 widths
+    // ignore the variation selector and shift their table borders. The addon activates "15-graphemes".
+    term.loadAddon(new UnicodeGraphemesAddon());
     term.open(host);
 
     const searchBar = createSearchBar(term, search, isAppShortcut);
