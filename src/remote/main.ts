@@ -146,9 +146,37 @@ function statusLabel(session: RemoteSession) {
   return t(`status.${statusOf(session)}` as Key);
 }
 
+// Riadky zoznamu podľa id; pri zmene stavu sa mení len text a trieda, nie prvky.
+const rowEls = new Map<string, { row: HTMLElement; dot: HTMLElement; title: HTMLElement; status: HTMLElement }>();
+let listSig: string | null = null;
+
+function listSignature(): string {
+  if (!snapshot) return "";
+  return snapshot.projects
+    .map((p) => `${p.id}:${p.name}:` + snapshot!.sessions.filter((s) => s.projectId === p.id).map((s) => s.id).join(","))
+    .join("|");
+}
+
+function fillRow(s: RemoteSession) {
+  const r = rowEls.get(s.id);
+  if (!r) return;
+  r.row.className = `row${s.running ? "" : " dim"}`;
+  r.dot.className = `dot ${statusOf(s)}`;
+  r.title.textContent = s.title;
+  r.status.textContent = statusLabel(s);
+}
+
 function renderList() {
   disposeTerminal();
+  const sig = listSignature();
+  if (listSig === sig && app.querySelector(".list")) {
+    for (const s of snapshot?.sessions ?? []) fillRow(s);
+    return;
+  }
+  const oldScroll = app.querySelector(".list")?.scrollTop ?? 0;
   app.replaceChildren();
+  rowEls.clear();
+  listSig = sig;
   const root = h("div", "list");
   root.append(h("h1", "list-title", t("remote.title")));
   if (!snapshot || !snapshot.sessions.length) {
@@ -159,17 +187,24 @@ function renderList() {
       if (!sessions.length) continue;
       root.append(h("h2", "project", p.name));
       for (const s of sessions) {
-        const row = h("button", `row${s.running ? "" : " dim"}`);
+        const row = h("button", "row");
         row.type = "button";
         const text = h("span", "row-text");
-        text.append(h("span", "row-title", s.title), h("span", "row-status", statusLabel(s)));
-        row.append(statusDot(s), text);
+        const title = h("span", "row-title");
+        const status = h("span", "row-status");
+        const dot = h("span", "dot");
+        dot.setAttribute("aria-hidden", "true");
+        text.append(title, status);
+        row.append(dot, text);
         row.onclick = () => openSession(s.id);
         root.append(row);
+        rowEls.set(s.id, { row, dot, title, status });
+        fillRow(s);
       }
     }
   }
   app.append(root);
+  root.scrollTop = oldScroll;
 }
 
 function updateHeader(s: RemoteSession) {
@@ -195,6 +230,7 @@ function sendResize() {
 }
 
 function openSession(id: string) {
+  listSig = null;
   const s = snapshot?.sessions.find((x) => x.id === id);
   if (!s) return;
   openId = id;
