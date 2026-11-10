@@ -85,6 +85,8 @@ impl Hub {
         lock(&self.size).forget(id);
     }
 
+    // Server číta históriu cez `catch_up`; toto ostáva pre testy.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn history(&self, id: &str) -> Option<String> {
         lock(&self.histories).get(id).map(History::replay)
     }
