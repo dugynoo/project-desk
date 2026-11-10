@@ -25,15 +25,56 @@ pub enum ServerMsg {
 
 /// Token z hlavičky `Sec-WebSocket-Protocol` (napr. `"pd.v1, auth.abc"` → `Some("abc")`).
 pub fn token_from_protocols(header: &str) -> Option<&str> {
-    todo!()
+    header.split(',').find_map(|p| p.trim().strip_prefix("auth."))
 }
 
 /// Presná zhoda s jedným z povolených originov.
 pub fn origin_allowed(origin: &str, allowed: &[String]) -> bool {
-    todo!()
+    allowed.iter().any(|a| a == origin)
 }
 
 /// Porovnanie v konštantnom čase.
 pub fn tokens_equal(a: &str, b: &str) -> bool {
-    todo!()
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_input_message() {
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"input","id":"s1","data":"x"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Input { id: "s1".into(), data: "x".into() });
+    }
+
+    #[test]
+    fn rejects_unknown_type() {
+        assert!(serde_json::from_str::<ClientMsg>(r#"{"type":"kill","id":"s1"}"#).is_err());
+    }
+
+    #[test]
+    fn token_from_protocols_finds_auth_entry() {
+        assert_eq!(token_from_protocols("pd.v1, auth.abc"), Some("abc"));
+        assert_eq!(token_from_protocols("pd.v1"), None);
+    }
+
+    #[test]
+    fn origin_allowed_exact_match_only() {
+        let allowed = vec!["https://pc.tail1.ts.net".to_string()];
+        assert!(origin_allowed("https://pc.tail1.ts.net", &allowed));
+        assert!(!origin_allowed("https://pc.tail1.ts.net.evil.com", &allowed));
+        assert!(!origin_allowed("http://pc.tail1.ts.net", &allowed));
+    }
+
+    #[test]
+    fn tokens_equal_rejects_prefix() {
+        assert!(!tokens_equal("abc", "ab"));
+        assert!(tokens_equal("abc", "abc"));
+        assert!(!tokens_equal("abc", "abd"));
+    }
 }
