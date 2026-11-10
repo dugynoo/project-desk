@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
@@ -70,12 +70,18 @@ pub struct Running {
     shutdown: Option<oneshot::Sender<()>>,
     /// Zavrie sa, keď server pustí listener (port je voľný).
     released: Option<oneshot::Receiver<()>>,
+    origins: Arc<RwLock<Vec<String>>>,
 }
 
 impl Running {
     /// Skutočný port (aj pri `ServerOpts.port == 0`).
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Nové povolené originy (napr. Tailscale sa zapol alebo premenoval); platia pre ďalšie spojenia.
+    pub fn set_allowed_origins(&self, origins: Vec<String>) {
+        *self.origins.write().unwrap_or_else(|e| e.into_inner()) = origins;
     }
 
     /// Zavrie listener aj všetky sockety.
@@ -122,7 +128,7 @@ struct Watching {
 
 struct Shared {
     token: String,
-    allowed_origins: Vec<String>,
+    allowed_origins: Arc<RwLock<Vec<String>>>,
     hub: Arc<Hub>,
     pty: Arc<dyn RemotePty>,
     assets: Assets,
@@ -159,9 +165,10 @@ pub async fn start(opts: ServerOpts) -> Result<Running, String> {
     let (shutdown, stop) = oneshot::channel();
     let (released_tx, released) = oneshot::channel();
     let (closing_tx, closing) = watch::channel(false);
+    let origins = Arc::new(RwLock::new(opts.allowed_origins));
     let shared = Arc::new(Shared {
         token: opts.token,
-        allowed_origins: opts.allowed_origins,
+        allowed_origins: origins.clone(),
         hub: opts.hub,
         pty: opts.pty,
         assets: opts.assets,
@@ -180,7 +187,7 @@ pub async fn start(opts: ServerOpts) -> Result<Running, String> {
     tokio::spawn(async move {
         let _ = serve.await;
     });
-    Ok(Running { port, shutdown: Some(shutdown), released: Some(released) })
+    Ok(Running { port, shutdown: Some(shutdown), released: Some(released), origins })
 }
 
 /// Statické súbory bez tokenu (neobsahujú dáta); cesta nikdy nevedie na disk.
@@ -231,7 +238,11 @@ async fn ws(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-    if !origin.is_some_and(|o| protocol::origin_allowed(o, &s.allowed_origins)) {
+    // Zámok len na porovnanie, nikdy cez `.await`.
+    let allowed = origin.is_some_and(|o| {
+        protocol::origin_allowed(o, &s.allowed_origins.read().unwrap_or_else(|e| e.into_inner()))
+    });
+    if !allowed {
         return StatusCode::FORBIDDEN.into_response();
     }
     match upgrade {
@@ -552,6 +563,19 @@ mod tests {
     async fn ws_with_foreign_origin_is_rejected() {
         let h = harness().await;
         assert_eq!(rejected(&h, &format!("pd.v1, auth.{TOKEN}"), "https://evil.example").await, 403);
+    }
+
+    #[tokio::test]
+    async fn ws_with_updated_origin_is_accepted() {
+        let h = harness().await;
+        let other = "https://renamed.tail1.ts.net";
+        let protocols = format!("pd.v1, auth.{TOKEN}");
+        assert_eq!(rejected(&h, &protocols, other).await, 403);
+        h.running.set_allowed_origins(vec![ORIGIN.into(), other.into()]);
+        let (_ws, resp) = tokio_tungstenite::connect_async(request(h.running.port(), &protocols, other)).await.unwrap();
+        assert_eq!(resp.headers().get("Sec-WebSocket-Protocol").unwrap(), "pd.v1");
+        h.running.set_allowed_origins(vec![other.into()]);
+        assert_eq!(rejected(&h, &protocols, ORIGIN).await, 403);
     }
 
     #[tokio::test]

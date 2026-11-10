@@ -264,6 +264,10 @@ async fn remote_status(state: State<'_, AppState>) -> Result<remote::RemoteStatu
     // Vypnutá funkcia nespúšťa ani Tailscale CLI.
     if control.enabled {
         control.tailnet = detect_tailnet(control.port).await;
+        // Bežiaci server musí prijať aj novo zistenú adresu, inak by párovací QR viedol na 403.
+        if let Some(server) = &control.server {
+            server.set_allowed_origins(control.allowed_origins());
+        }
     }
     Ok(control.status())
 }
