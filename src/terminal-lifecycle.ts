@@ -278,7 +278,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
 
   async function pauseSession(s: Session) {
     if (!canPause(s)) return;
-    if (statusOf(s.id) === "working"
+    if ((statusOf(s.id) === "working" || statusOf(s.id) === "background-task")
       && !(await confirmBox(t("pause.title"), t("pause.body", { title: s.title }), t("session.pause")))) return;
     const rt = runtimes.get(s.id);
     if (!rt?.running || rt.closing) return;

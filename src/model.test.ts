@@ -51,6 +51,8 @@ import {
   parseState,
   sessionByNumber,
   statusAfter,
+  statusAfterBackgroundTasks,
+  withBackgroundTasks,
   statusAfterSpawn,
   statusAfterStartupTimeout,
   type Session,
@@ -101,13 +103,26 @@ test("confirmed OS shutdown preserves resume eligibility without disguising stop
   assert.equal(state.sessions.length, 0);
   assert.equal(shouldAutoResume(state.closedSessions[0], true), false, "explicit close wins over shutdown");
 });
+test("Claude waiting on its background tasks is not done until they finish", () => {
+  assert.equal(withBackgroundTasks("done", 2), "background-task");
+  assert.equal(withBackgroundTasks("done", 0), "done");
+  assert.equal(withBackgroundTasks("needs-you", 1), "needs-you", "a question still needs the user");
+  assert.equal(statusAfterBackgroundTasks("done", 1), "background-task", "a poll catches a Stop that came first");
+  assert.equal(statusAfterBackgroundTasks("background-task", 0), "working", "Claude resumes to read the result");
+  assert.equal(statusAfterBackgroundTasks("background-task", 1), undefined);
+  assert.equal(statusAfterBackgroundTasks("working", 3), undefined, "running tasks do not interrupt a turn");
+  assert.equal(attentionEventKind("working", "background-task", false), undefined, "no notification while waiting");
+  assert.equal(attentionEventKind("working", "done", false), "done");
+  assert.equal(statusAfter("background-task", { deskSessionId: "s", event: "Notification", notificationType: "idle_prompt" }), undefined);
+});
+
 test("closing the app interrupts only running agents mid-step and the mark survives restart", () => {
   const state = parseState(JSON.stringify({ projects: [{ id: "p", name: "P", path: "/p" }],
-    sessions: ["work", "ask", "done", "shell", "stopped", "worker"].map(id => ({ id, projectId: "p", title: id,
+    sessions: ["work", "ask", "done", "bg", "shell", "stopped", "worker"].map(id => ({ id, projectId: "p", title: id,
       provider: id === "shell" ? "shell" : "claude", background: id === "worker" })) })).state;
-  const status: Record<string, string> = { work: "working", ask: "needs-you", done: "done", shell: "working", stopped: "working", worker: "working" };
+  const status: Record<string, string> = { work: "working", ask: "needs-you", done: "done", bg: "background-task", shell: "working", stopped: "working", worker: "working" };
   const busy = busyAgents(state.sessions, id => status[id] as never, id => id !== "stopped");
-  assert.deepEqual(busy.map(s => s.id), ["work", "ask"], "both warrant the quit warning");
+  assert.deepEqual(busy.map(s => s.id), ["work", "ask", "bg"], "all warrant the quit warning");
   for (const s of interruptedAgents(state.sessions, id => status[id] as never, id => id !== "stopped")) s.interrupted = true;
   const restored = parseState(JSON.stringify(state)).state;
   assert.deepEqual(restored.sessions.filter(s => s.interrupted).map(s => s.id), ["work"], "an open question is not an interrupted step");

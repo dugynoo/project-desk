@@ -2,7 +2,7 @@
 //! Súbor sa číta od miesta, kde sme naposledy skončili. Z riadkov berieme iba typ
 //! udalosti, model a čísla; text konverzácie sa neukladá ani neposiela do UI.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 const SCAN_BUDGET: u64 = 8 * 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
+/// Horná hranica sledovaných úloh na pozadí; chráni pamäť pri poškodenom súbore.
+const MAX_BACKGROUND_TASKS: usize = 64;
 
 #[derive(Clone, Default, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +40,8 @@ pub struct Poll {
     pub status: Option<String>,
     /// Nové stavové udalosti Codexu od posledného čítania (`task_started`, `task_complete`, `turn_aborted`).
     pub events: Vec<String>,
+    /// Claude: úlohy na pozadí (príkazy, agenti) spustené týmto procesom, ktoré ešte neskončili.
+    pub background_tasks: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,6 +62,8 @@ struct Watch {
     /// Prvé čítanie prejde históriu kvôli súčtom, ale staré udalosti nehlási.
     primed: bool,
     status: Option<String>,
+    /// Claude: ID bežiacich úloh na pozadí (len ID, nič z ich výstupu).
+    background: HashSet<String>,
 }
 
 #[derive(Default)]
@@ -143,6 +149,49 @@ struct ClaudeLine {
     #[serde(rename = "type")]
     kind: String,
     message: Option<ClaudeMessage>,
+    timestamp: Option<String>,
+    #[serde(rename = "isSidechain")]
+    is_sidechain: Option<bool>,
+    /// Výsledok nástroja; čítame len ID spustenej úlohy na pozadí.
+    #[serde(rename = "toolUseResult")]
+    tool_use_result: Option<ToolUseResult>,
+    /// `queue-operation`: Claude si zaradí správu o dokončení úlohy na pozadí.
+    operation: Option<String>,
+    content: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ToolUseResult {
+    #[serde(rename = "backgroundTaskId")]
+    background_task_id: Option<String>,
+    #[serde(rename = "agentId")]
+    agent_id: Option<String>,
+    #[serde(rename = "taskId")]
+    task_id: Option<String>,
+    status: Option<String>,
+    /// Výsledok `TaskStop`: zastavená úloha už správu o dokončení nepošle.
+    #[serde(rename = "task_id")]
+    stopped_task_id: Option<String>,
+    task_type: Option<String>,
+}
+
+fn valid_task_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let start = text.find(open)? + open.len();
+    let len = text[start..].find(close)?;
+    Some(&text[start..start + len])
+}
+
+/// ID úlohy, ktorej Claude práve oznamuje koniec (`<task-notification>` v rade správ).
+fn finished_task(content: &str) -> Option<&str> {
+    if !content.contains("<task-notification>") { return None; }
+    let status = between(content, "<status>", "</status>")?;
+    if !matches!(status, "completed" | "failed" | "killed" | "stopped") { return None; }
+    between(content, "<task-id>", "</task-id>").filter(|id| valid_task_id(id))
 }
 
 #[derive(Deserialize)]
@@ -197,8 +246,29 @@ struct RateLimits { primary: Option<RateLimit> }
 struct RateLimit { used_percent: Option<f64>, window_minutes: Option<u64> }
 
 impl Watch {
-    fn claude_line(&mut self, reader: impl Read) {
+    fn claude_line(&mut self, reader: impl Read, historical: bool) {
         let Ok(l) = serde_json::from_reader::<_, ClaudeLine>(reader) else { return };
+        if l.kind == "queue-operation" && l.operation.as_deref() == Some("enqueue") {
+            if let Some(id) = l.content.as_deref().and_then(finished_task) { self.background.remove(id); }
+            return;
+        }
+        if l.kind == "user" && l.is_sidechain != Some(true) {
+            if let Some(r) = l.tool_use_result {
+                if let Some(id) = r.stopped_task_id.as_deref().filter(|_| r.task_type.is_some()) {
+                    self.background.remove(id);
+                    return;
+                }
+                let launched = r.background_task_id
+                    .or(if r.status.as_deref() == Some("async_launched") { r.agent_id.or(r.task_id) } else { None });
+                // Úlohy predošlého procesu s ním skončili; po obnovení ich nepočítame.
+                let timestamp = l.timestamp.as_deref().and_then(crate::codex::parse_utc_ms);
+                let stale = self.generation != 0 && timestamp.map_or(historical, |at| at < self.generation);
+                if let Some(id) = launched.filter(|id| valid_task_id(id) && !stale) {
+                    if self.background.len() < MAX_BACKGROUND_TASKS { self.background.insert(id); }
+                }
+            }
+            return;
+        }
         let Some(msg) = l.message.filter(|_| l.kind == "assistant") else { return };
         let (Some(id), Some(u)) = (msg.id, msg.usage) else { return };
         if msg.model.as_deref().is_some_and(|m| !m.starts_with('<')) {
@@ -288,7 +358,7 @@ impl Watch {
                 let end = base + i as u64 + 1;
                 let mut reader = (&mut records).take(end - self.line_start);
                 match provider {
-                    Provider::Claude => self.claude_line(&mut reader),
+                    Provider::Claude => self.claude_line(&mut reader, end <= history_end),
                     Provider::Codex => self.codex_line(&mut reader, &mut events, end <= history_end),
                 }
                 // Malformed JSON can return early; keep the next record aligned.
@@ -303,7 +373,7 @@ impl Watch {
     }
 
     fn new(path: PathBuf) -> Self {
-        Watch { path, generation: 0, offset: 0, line_start: 0, history_end: None, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None }
+        Watch { path, generation: 0, offset: 0, line_start: 0, history_end: None, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None, background: HashSet::new() }
     }
 
     fn set_generation(&mut self, generation: u64) {
@@ -345,7 +415,7 @@ impl Watcher {
         w.set_generation(generation);
         let events = w.read_new(provider).ok()?;
         if !w.primed { return None; }
-        Some(Poll { stats: w.stats.clone(), status: w.status.clone(), events })
+        Some(Poll { stats: w.stats.clone(), status: w.status.clone(), events, background_tasks: w.background.len() as u32 })
     }
 }
 
@@ -525,6 +595,61 @@ mod tests {
         assert!(!format!("{:?}", w.stats).contains("tajné"));
     }
 
+    fn launch(at: &str, result: &str) -> String {
+        format!(r#"{{"type":"user","timestamp":"{at}","message":{{"role":"user","content":[{{"type":"tool_result","content":"tajné"}}]}},"toolUseResult":{result}}}"#)
+    }
+    fn finished(id: &str, status: &str) -> String {
+        format!(r#"{{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-10T10:00:09Z","content":"<task-notification>\n<task-id>{id}</task-id>\n<status>{status}</status>\n<summary>tajné</summary>\n</task-notification>"}}"#)
+    }
+
+    #[test]
+    fn claude_counts_background_tasks_until_their_notification() {
+        let path = temp_file("bg.jsonl");
+        let lines = [
+            launch("2026-11-10T10:00:01Z", r#"{"stdout":"","backgroundTaskId":"bqb8ny80g"}"#),
+            launch("2026-11-10T10:00:02Z", r#"{"agentId":"a617685e019838fc7","isAsync":true,"status":"async_launched"}"#),
+            launch("2026-11-10T10:00:03Z", r#"{"agentId":"a1","status":"completed"}"#),
+            launch("2026-11-10T10:00:04Z", r#""plain string result""#),
+            r#"{"type":"user","isSidechain":true,"timestamp":"2026-11-10T10:00:05Z","toolUseResult":{"backgroundTaskId":"sidechain"}}"#.to_owned(),
+        ];
+        append(&path, &format!("{}\n", lines.join("\n")));
+        let mut w = Watch::new(path.clone());
+        w.read_new(Provider::Claude).unwrap();
+        assert_eq!(w.background.len(), 2, "len bash a agent spustené na pozadí z hlavnej konverzácie");
+        append(&path, &format!("{}\n{}\n", finished("bqb8ny80g", "running"), finished("nepoznám", "completed")));
+        w.read_new(Provider::Claude).unwrap();
+        assert_eq!(w.background.len(), 2, "priebežná správa ani cudzia úloha nič nekončí");
+        append(&path, &format!("{}\n{}\n", finished("bqb8ny80g", "completed"), finished("a617685e019838fc7", "killed")));
+        w.read_new(Provider::Claude).unwrap();
+        assert!(w.background.is_empty());
+        append(&path, &format!("{}\n{}\n", launch("2026-11-10T10:00:10Z", r#"{"backgroundTaskId":"b5h2kttf4"}"#),
+            launch("2026-11-10T10:00:11Z", r#"{"message":"tajné","task_id":"b5h2kttf4","task_type":"local_bash","command":"tajné"}"#)));
+        w.read_new(Provider::Claude).unwrap();
+        assert!(w.background.is_empty(), "TaskStop končí úlohu bez správy o dokončení");
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn claude_ignores_background_tasks_of_a_previous_launch() {
+        let path = temp_file("bg-resume.jsonl");
+        append(&path, &format!("{}\n", launch("2026-11-10T10:00:01Z", r#"{"backgroundTaskId":"old"}"#)));
+        let mut w = Watch::new(path.clone());
+        w.set_generation(crate::codex::parse_utc_ms("2026-11-10T11:00:00Z").unwrap());
+        w.read_new(Provider::Claude).unwrap();
+        assert!(w.background.is_empty());
+        append(&path, &format!("{}\n", launch("2026-11-10T11:00:05Z", r#"{"backgroundTaskId":"new"}"#)));
+        w.read_new(Provider::Claude).unwrap();
+        assert_eq!(w.background.iter().collect::<Vec<_>>(), [&"new".to_owned()]);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn finished_task_reads_only_terminal_status_and_valid_id() {
+        assert_eq!(finished_task("<task-notification><task-id>b1</task-id><status>failed</status></task-notification>"), Some("b1"));
+        assert_eq!(finished_task("<task-id>b1</task-id><status>completed</status>"), None);
+        assert_eq!(finished_task("<task-notification><task-id>../x</task-id><status>completed</status>"), None);
+    }
+
     #[test]
     fn codex_restores_working_state_and_waits_for_complete_lines() {
         let path = temp_file("state.jsonl");
@@ -578,7 +703,7 @@ mod tests {
         let w = Watcher::default();
         for (p, var) in [(Provider::Claude, "PD_CLAUDE_ID"), (Provider::Codex, "PD_CODEX_ID")] {
             if let Ok(id) = std::env::var(var) {
-                println!("{p:?}: {:?}", w.poll(p, &id, 0).map(|r| r.stats));
+                println!("{p:?}: {:?}", w.poll(p, &id, 0).map(|r| (r.stats, r.background_tasks)));
             }
         }
     }

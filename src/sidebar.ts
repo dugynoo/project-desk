@@ -12,7 +12,7 @@ interface SidebarDependencies {
   providerIcons: Record<Provider, string>;
   loadBranch(path: string): Promise<string | null>;
   statusOf(id: string): Status;
-  statusLabel(status: Status): string;
+  statusLabel(status: Status, sessionId?: string): string;
   contextLabel(session: Session): string;
   save(): void;
   renderPaneHeads(): void;
@@ -104,7 +104,7 @@ export function createSidebar(deps: SidebarDependencies) {
     const root = $("#attention");
     const count = (status: Status) => getState().sessions.filter((s) => statusOf(s.id) === status).length;
     const summary = el("div", "attention-summary", t("attention.summary", {
-      waiting: count("needs-you"), done: count("done"), working: count("working"),
+      waiting: count("needs-you"), done: count("done"), working: count("working") + count("background-task"),
     }));
     const filter = el("button", attentionOnly ? "on" : "", t("sidebar.attention"));
     filter.id = "btn-attention";
@@ -369,7 +369,7 @@ export function createSidebar(deps: SidebarDependencies) {
           item.classList.toggle("unread", isUnread);
           const body = el("div", "body");
           body.tabIndex = 0; body.setAttribute("role", "button"); body.dataset.focusId = `session-${s.id}`;
-          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st)}${s.interrupted ? `, ${t("session.interrupted")}` : ""}`);
+          body.setAttribute("aria-label", `${s.title}, ${PROVIDER_LABEL[s.provider]}, ${statusLabel(st, s.id)}${s.interrupted ? `, ${t("session.interrupted")}` : ""}`);
           body.setAttribute("aria-pressed", String(s.id === getState().ui.activeSessionId));
           body.onkeydown = e => {
             if (e.target instanceof HTMLInputElement) return;
@@ -387,7 +387,7 @@ export function createSidebar(deps: SidebarDependencies) {
             title.onmouseenter = () => { title.title = title.scrollWidth > title.clientWidth ? s.title : ""; };
             body.append(title);
           }
-          const sub = el("div", "sub", `${statusLabel(st)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`);
+          const sub = el("div", "sub", `${statusLabel(st, s.id)}${s.stopped && s.exitCode != null ? ` (${s.exitCode})` : ""}${contextLabel(s)}`);
           if (s.interrupted) {
             const mark = el("span", "interrupted", ` · ${t("session.interrupted")}`);
             mark.title = t("session.interruptedHint");

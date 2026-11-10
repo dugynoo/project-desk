@@ -102,7 +102,12 @@ const contextLabel = (s: Session) => {
   const ctx = statsOf(s)?.contextTokens;
   return ctx ? t("app.context", { n: formatTokens(ctx) }) : "";
 };
-const statusLabel = (s: Status) => t(`status.${s}` as Key);
+/** S ID relácie pridá pri čakaní na pozadí aj počet bežiacich úloh. */
+const statusLabel = (s: Status, id?: string) => {
+  const label = t(`status.${s}` as Key);
+  const tasks = s === "background-task" && id ? agentMonitor.backgroundTasksOf(id) : 0;
+  return tasks ? `${label} (${tasks})` : label;
+};
 
 /** Správa v rohu; `info` = nie je to chyba. */
 function toast(msg: string, info = false) {
@@ -248,7 +253,7 @@ function renderPaneHeads() {
     const s = session(id);
     if (!s) continue;
     const p = project(s.projectId);
-    rt.head.replaceChildren(el("span", "pane-title", `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id))}${contextLabel(s)}`));
+    rt.head.replaceChildren(el("span", "pane-title", `${PROVIDER_ICON[s.provider]} ${s.title} · ${p?.name ?? ""} · ${statusLabel(statusOf(id), id)}${contextLabel(s)}`));
     if (state.ui.grid && !zoomedId) {
       const index = state.ui.paneSlots.indexOf(id);
       const title = rt.head.querySelector<HTMLElement>(".pane-title")!;

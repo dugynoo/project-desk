@@ -177,3 +177,40 @@ test("Codex resume switches polling to the reported ID and discards an old in-fl
   assert.equal(f.state.sessions[0].hasConversation, true);
   assert.equal(f.changes.at(-1)?.status, "done");
 });
+
+test("Claude Stop waits for a fresh read and stays in background while its tasks run", async () => {
+  let tasks = 1;
+  let current: Status = "working";
+  const f = fixture(async command => command === "agent_poll" ? { stats, status: null, events: [], backgroundTasks: tasks } : null);
+  const s = f.state.sessions[0];
+  s.provider = "claude";
+  const monitor = createAgentMonitor({
+    getState: () => f.state, runtimes: f.runtimes, isClosing: () => false,
+    invoke: async <T>(command: string) => (command === "agent_poll" ? { stats, status: null, events: [], backgroundTasks: tasks } : null) as T,
+    save: () => {}, statusOf: () => current,
+    setStatus: (_id, status, silent) => { current = status; f.changes.push({ status, silent }); },
+    renderStatusSoon: () => {},
+  });
+  monitor.onAgentEvent({ deskSessionId: "s", event: "Stop", agentSessionId: agentId });
+  assert.deepEqual(f.changes, [], "done is decided only after reading the session file");
+  await new Promise(done => setTimeout(done, 0));
+  assert.equal(current, "background-task");
+  assert.equal(monitor.backgroundTasksOf("s"), 1);
+  tasks = 0;
+  await monitor.pollAgents();
+  assert.equal(current, "working", "Claude picks up the finished task");
+  monitor.onAgentEvent({ deskSessionId: "s", event: "Stop", agentSessionId: agentId });
+  await new Promise(done => setTimeout(done, 0));
+  assert.deepEqual(f.changes.at(-1), { status: "done", silent: undefined });
+});
+
+test("a newer hook wins over a delayed Claude Stop", async () => {
+  const read = deferred<unknown>();
+  const f = fixture(async command => command === "agent_poll" ? read.promise : null);
+  f.state.sessions[0].provider = "claude";
+  f.monitor.onAgentEvent({ deskSessionId: "s", event: "Stop", agentSessionId: agentId });
+  f.monitor.onAgentEvent({ deskSessionId: "s", event: "UserPromptSubmit", agentSessionId: agentId });
+  read.resolve({ stats, status: null, events: [], backgroundTasks: 0 });
+  await new Promise(done => setTimeout(done, 0));
+  assert.deepEqual(f.changes.map(c => c.status), ["working"]);
+});

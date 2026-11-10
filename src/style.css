@@ -88,6 +88,8 @@ button.icon.on { color: var(--accent); }
 .dot.working { background: var(--working); animation: pulse 1.2s ease-in-out infinite; }
 .dot.needs-you { background: var(--needs); }
 .dot.done, .dot.idle { background: var(--done); }
+/* Čaká na vlastné úlohy na pozadí: žltá ako práca, ale len obrys a bez pulzovania. */
+.dot.background-task { background: transparent; border: 2px solid var(--working); }
 .dot.sleeping { background: transparent; border: 1px solid var(--off); }
 @keyframes pulse { 50% { opacity: .35; } }
 

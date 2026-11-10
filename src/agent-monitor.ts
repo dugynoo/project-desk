@@ -1,5 +1,6 @@
 import {
   createDiscovery, codexPollEvents, codexStatusAfter, isUuid, observeSession, statusAfter,
+  statusAfterBackgroundTasks, withBackgroundTasks,
   type AgentEvent, type AgentStats, type PersistedState, type Session, type SessionObservation, type Status,
 } from "./model.ts";
 
@@ -26,6 +27,10 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
   const session = (id: string) => getState().sessions.find(s => s.id === id);
   const project = (id: string) => getState().projects.find(p => p.id === id);
   const agentStats = new Map<string, { agentId: string; stats: AgentStats }>();
+  /** Claude: počet úloh na pozadí podľa posledného čítania session súboru. */
+  const backgroundTasks = new Map<string, number>();
+  /** Poradie hookov; odložené „hotovo“ neprepíše novšiu udalosť. */
+  const eventSeq = new Map<string, number>();
   const statsOf = (s: Session) => {
     const entry = agentStats.get(s.id);
     return entry && entry.agentId === s.agentSessionId ? entry.stats : undefined;
@@ -59,6 +64,30 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     });
   }
 
+  type PollResult = { stats: AgentStats; status: string | null; events: string[]; backgroundTasks?: number };
+
+  /** Prečíta session súbor jednej relácie; `undefined`, ak sa medzitým zmenila alebo zavrela. */
+  async function pollSession(s: Session): Promise<(PollResult & { changed: boolean }) | undefined> {
+    const agentId = s.agentSessionId;
+    const runtime = runtimes.get(s.id);
+    const startedAt = s.lastStartAt;
+    if (!isUuid(agentId) || !runtime) return;
+    const r = await invoke<PollResult | null>("agent_poll", { provider: s.provider, agentId, generation: startedAt ?? 0 }).catch(() => null);
+    if (!r || session(s.id) !== s || s.agentSessionId !== agentId || runtimes.get(s.id) !== runtime
+      || !runtime.running || runtime.closing || s.lastStartAt !== startedAt) return;
+    const before = statsOf(s)?.contextTokens;
+    agentStats.set(s.id, { agentId, stats: r.stats });
+    let changed = before !== r.stats.contextTokens;
+    if (s.provider === "claude") {
+      const tasks = r.backgroundTasks ?? 0;
+      if ((backgroundTasks.get(s.id) ?? 0) !== tasks) changed = true;
+      backgroundTasks.set(s.id, tasks);
+      const next = statusAfterBackgroundTasks(statusOf(s.id), tasks);
+      if (next) setStatus(s.id, next, true);
+    }
+    return { ...r, changed };
+  }
+
   // Tokeny a kontext pre Claude aj Codex, pri Codexe aj stav (SessionStart hook oznamuje len ID).
   let polling = false;
   let retainedAgents = "";
@@ -72,14 +101,10 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
         const agentId = s.agentSessionId;
         if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
         const runtime = runtimes.get(s.id)!;
-        const startedAt = s.lastStartAt;
         polledIds.add(agentId);
-        const r = await invoke<{ stats: AgentStats; status: string | null; events: string[] } | null>("agent_poll", { provider: s.provider, agentId, generation: startedAt ?? 0 }).catch(() => null);
-        if (!r || session(s.id) !== s || s.agentSessionId !== agentId || runtimes.get(s.id) !== runtime
-          || !runtime.running || runtime.closing || s.lastStartAt !== startedAt) continue;
-        const before = statsOf(s)?.contextTokens;
-        agentStats.set(s.id, { agentId, stats: r.stats });
-        if (before !== r.stats.contextTokens) changed = true;
+        const r = await pollSession(s);
+        if (!r) continue;
+        if (r.changed) changed = true;
         const observedEvent = r.events.at(-1) ?? r.status;
         if (s.provider === "codex" && observedEvent && codexStatusAfter(observedEvent)) {
           runtime.observation = observeSession(runtime.observation, observedEvent, r.events.length === 0, Date.now());
@@ -138,15 +163,30 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
       const rt = runtimes.get(s.id)!;
       rt.observation = observeSession(rt.observation, ev.event, false, Date.now());
     }
-    if (status) setStatus(s.id, status, ev.event === "SessionStart");
+    if (!status) return;
+    const seq = (eventSeq.get(s.id) ?? 0) + 1;
+    eventSeq.set(s.id, seq);
+    if (status !== "done" || s.provider !== "claude" || ev.event === "SessionStart") {
+      setStatus(s.id, status, ev.event === "SessionStart");
+      return;
+    }
+    // Hook „Stop“ môže predbehnúť pravidelné čítanie súboru: pred „hotovo“ si
+    // overíme, či Claude nenechal bežať úlohy na pozadí.
+    void pollSession(s).then(() => {
+      if (eventSeq.get(s.id) !== seq || !runtimes.get(s.id)?.running) return;
+      setStatus(s.id, withBackgroundTasks(status, backgroundTasks.get(s.id) ?? 0));
+    });
   }
 
   return {
     statsOf, pollAgents, lookupCodexSessions, onAgentEvent,
+    backgroundTasksOf: (id: string) => backgroundTasks.get(id) ?? 0,
     discover: (id: string, path: string) => codexLookup.add(id, path),
     cancelDiscovery: (id: string) => codexLookup.delete(id),
     forget(id: string) {
       agentStats.delete(id);
+      backgroundTasks.delete(id);
+      eventSeq.delete(id);
       codexLookup.delete(id);
     },
   };

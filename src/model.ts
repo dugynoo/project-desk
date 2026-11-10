@@ -438,6 +438,8 @@ export type Status =
   | "working"
   | "needs-you"
   | "done"
+  /** Claude skončil ťah, ale čaká na vlastné úlohy na pozadí; ozve sa sám. */
+  | "background-task"
   | "agent-exited";
 
 /** Native snapshot is used only on reconnect, never as a periodic status poll. */
@@ -568,6 +570,19 @@ export function readAttention(state: PersistedState, sessionId?: string): boolea
     if (!n.read && (sessionId === undefined || n.sessionId === sessionId)) { n.read = true; changed = true; }
   }
   return changed;
+}
+
+/** „Hotovo“ od Claude neplatí, kým bežia jeho úlohy na pozadí (príkazy, agenti). */
+export function withBackgroundTasks(status: Status, tasks: number): Status {
+  return status === "done" && tasks > 0 ? "background-task" : status;
+}
+
+/** Zmena podľa počtu úloh na pozadí zo session súboru. Keď posledná skončí,
+ *  Claude dostane správu o dokončení a pokračuje, preto `working`, nie `done`. */
+export function statusAfterBackgroundTasks(prev: Status, tasks: number): Status | undefined {
+  if (prev === "done" && tasks > 0) return "background-task";
+  if (prev === "background-task" && tasks === 0) return "working";
+  return undefined;
 }
 
 /** Stav podľa udalosti zo session súboru Codexu. */
@@ -797,7 +812,7 @@ export function recordSessionExit(state: PersistedState, id: string, code: numbe
 /** Agents whose current step closing the app would interrupt; detached workers keep running. */
 export function busyAgents(sessions: Session[], statusOf: (id: string) => Status, running: (id: string) => boolean): Session[] {
   return sessions.filter(s => s.provider !== "shell" && !s.background && running(s.id)
-    && (statusOf(s.id) === "working" || statusOf(s.id) === "needs-you"));
+    && (statusOf(s.id) === "working" || statusOf(s.id) === "needs-you" || statusOf(s.id) === "background-task"));
 }
 
 /** Only a step in progress is interrupted; an open question merely warrants the quit warning. */

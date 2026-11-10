@@ -209,6 +209,7 @@ const en = {
   "status.working": "Working",
   "status.needs-you": "Waiting for input",
   "status.done": "Done",
+  "status.background-task": "Running in background",
   "status.agent-exited": "Agent exited · shell running",
 
   "app.saveFailed": "Could not save state: {detail}",
@@ -617,6 +618,7 @@ const sk: Record<Key, string> = {
   "status.working": "Pracuje",
   "status.needs-you": "Čaká na potvrdenie / odpoveď",
   "status.done": "Hotovo",
+  "status.background-task": "Beží na pozadí",
   "status.agent-exited": "Agent skončil · shell beží",
 
   "app.saveFailed": "Stav sa nepodarilo uložiť: {detail}",
@@ -1022,6 +1024,7 @@ const cs: Record<Key, string> = {
   "status.working": "Pracuje",
   "status.needs-you": "Čeká na potvrzení / odpověď",
   "status.done": "Hotovo",
+  "status.background-task": "Běží na pozadí",
   "status.agent-exited": "Agent skončil · shell běží",
 
   "app.saveFailed": "Stav se nepodařilo uložit: {detail}",
