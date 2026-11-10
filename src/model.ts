@@ -288,6 +288,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
     if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
+    const port = state.settings.remotePort;
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) state.settings.remotePort = DEFAULT_SETTINGS.remotePort;
     if (typeof data.settings.editorId !== "string" && typeof data.settings.editorCommand === "string") {
       state.settings.editorId = migrateEditorCommand(data.settings.editorCommand);
     }
@@ -441,8 +443,15 @@ export interface RemoteSnapshot {
 }
 
 /** Projekty v poradí ako v sidebare (pripnuté hore), bez skrytých sessions. */
-export function remoteSnapshot(_state: PersistedState, _statusOf: (id: string) => Status, _running: (id: string) => boolean): RemoteSnapshot {
-  throw new Error("not implemented");
+export function remoteSnapshot(state: PersistedState, statusOf: (id: string) => Status, running: (id: string) => boolean): RemoteSnapshot {
+  const projects = orderedProjects(state.projects);
+  const order = new Map(projects.map((p, i) => [p.id, i]));
+  // Pole po poli, nikdy spread Session: konverzačné dáta nesmú odísť.
+  const sessions = state.sessions
+    .filter((s) => !s.hidden && order.has(s.projectId))
+    .sort((a, b) => order.get(a.projectId)! - order.get(b.projectId)!)
+    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id) }));
+  return { language: state.settings.language, projects: projects.map((p) => ({ id: p.id, name: p.name })), sessions };
 }
 
 export type Status =
