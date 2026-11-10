@@ -37,6 +37,7 @@ struct AppState {
     state_write: Mutex<()>,
     usage: Arc<usage::Watcher>,
     editors: Mutex<Option<Vec<editors::Found>>>,
+    remote: Arc<remote::hub::Hub>,
 }
 
 #[derive(Serialize)]
@@ -180,7 +181,10 @@ fn pty_write(state: State<'_, AppState>, id: String, data: String) -> Result<(),
 
 #[tauri::command]
 fn pty_resize(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    state.pty.resize(&id, cols, rows)
+    state.pty.resize(&id, cols, rows)?;
+    // Okno si veľkosť vzalo späť od mobilu.
+    state.remote.size().desktop(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -368,8 +372,10 @@ pub fn run() {
                     None
                 }
             };
+            let remote = Arc::new(remote::hub::Hub::default());
             app.manage(AppState {
-                pty: PtyManager::default(),
+                pty: PtyManager::with_remote(remote.clone()),
+                remote,
                 hooks,
                 state_file: config_dir.join("state.json"),
                 usage: Arc::default(),
