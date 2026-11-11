@@ -691,20 +691,49 @@ export interface FileRef {
   line?: number;
 }
 
-const FILE_RE = /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/])?(?:[\w.@+-]+[\\/])*[\w@+-][\w.@+-]*\.[A-Za-z][A-Za-z0-9]{0,7}(?::(\d+)(?::\d+)?|\((\d+)(?:,\d+)?\))?/g;
+/** Písmená vrátane diakritiky, číslice a podčiarkovník. */
+const WORD = String.raw`\p{L}\p{M}\p{N}_`;
+const EXT_LINE = String.raw`\.[A-Za-z][A-Za-z0-9]{0,7}(?::(\d+)(?::\d+)?|\((\d+)(?:,\d+)?\))?`;
+const FILE_RE = new RegExp(
+  String.raw`(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/])?(?:[${WORD}.@+-]+[\\/])*[${WORD}@+-][${WORD}.@+-]*${EXT_LINE}`,
+  "gu",
+);
+/** Znak cesty pod koreňom projektu vrátane oddeľovačov; jednu medzeru za sebou pripustíme. */
+const BACKTICK = "`";
+const PATH_CHAR = String.raw`(?:[^\s:*?"<>|'${BACKTICK}()\[\]]| (?! ))`;
 
-/** Kandidáti na cesty k súborom v riadku terminálu (napr. `src/main.ts:120`). Existenciu overí backend. */
-export function findFileRefs(text: string): FileRef[] {
-  const out: FileRef[] = [];
+function fileRef(m: RegExpMatchArray, index = m.index ?? 0): FileRef {
+  const suffix = m[1] ?? m[2];
+  const path = suffix ? m[0].slice(0, m[0].search(/[:(]\d+[\d:,)]*$/)) : m[0];
+  return { index, length: m[0].length, path, line: suffix ? Number(suffix) : undefined };
+}
+
+/** Absolútne cesty pod koreňom projektu; koreň aj súbory môžu obsahovať medzery. */
+function rootedRefs(text: string, root: string): FileRef[] {
+  const base = root.replace(/[\\/]+$/, "");
+  if (!base) return [];
+  const rootRe = base.split(/[\\/]+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(String.raw`[\\/]`);
+  // Jediný lazy kvantifikátor: vyhrá najkratšia cesta končiaca príponou, za ktorou nasleduje koniec slova.
+  const re = new RegExp(
+    String.raw`${rootRe}[\\/]${PATH_CHAR}+?${EXT_LINE}(?=$|[\s,;'"${BACKTICK})\]]|[.:!?](?:\s|$))`,
+    "giu",
+  );
+  return [...text.matchAll(re)].filter(m => !/[\p{L}\p{N}_]$/u.test(text.slice(0, m.index))).map(m => fileRef(m));
+}
+
+/** Kandidáti na cesty k súborom v riadku terminálu (napr. `src/main.ts:120`). Existenciu overí backend.
+ *  S koreňom projektu rozpozná aj jeho absolútne cesty s medzerami. */
+export function findFileRefs(text: string, root?: string): FileRef[] {
+  const out = root ? rootedRefs(text, root) : [];
+  const taken = out.map(r => [r.index, r.index + r.length]);
   for (const m of text.matchAll(FILE_RE)) {
     const index = m.index ?? 0;
+    if (taken.some(([a, b]) => index < b && index + m[0].length > a)) continue;
     // Časť URL nechávame na odkazy z webu.
     if (/[\w-]:\/{0,2}\S*$/.test(text.slice(0, index)) || /^\/\//.test(m[0])) continue;
-    const suffix = m[1] ?? m[2];
-    const path = suffix ? m[0].slice(0, m[0].search(/[:(]\d+[\d:,)]*$/)) : m[0];
-    out.push({ index, length: m[0].length, path, line: suffix ? Number(suffix) : undefined });
+    out.push(fileRef(m, index));
   }
-  return out;
+  return out.sort((a, b) => a.index - b.index);
 }
 
 export interface AgentStats {

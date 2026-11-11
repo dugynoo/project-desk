@@ -629,6 +629,25 @@ test("cesty k súborom v texte terminálu", () => {
   assert.deepEqual(refs("chyba v C:\\p\\lib.rs:12:5"), [["C:\\p\\lib.rs", 12, "C:\\p\\lib.rs:12:5"]]);
   assert.deepEqual(refs("src\\x.ts(40,2): error"), [["src\\x.ts", 40, "src\\x.ts(40,2)"]]);
   assert.deepEqual(refs("pozri https://example.com/a/b.html"), []);
+  assert.deepEqual(refs("hotovo: out/finálne.mp4"), [["out/finálne.mp4", null, "out/finálne.mp4"]]);
+});
+
+test("absolútne cesty s medzerami pod koreňom projektu", () => {
+  const root = "C:\\Users\\a\\new-project video";
+  const refs = (s: string) => findFileRefs(s, root).map((r) => [r.path, r.line ?? null]);
+  assert.deepEqual(refs("Uložené do C:\\Users\\a\\new-project video\\out\\final.mp4."), [
+    ["C:\\Users\\a\\new-project video\\out\\final.mp4", null],
+  ]);
+  assert.deepEqual(refs("pozri C:/Users/a/new-project video/out/finálne video.mp4 a src/x.ts:3"), [
+    ["C:/Users/a/new-project video/out/finálne video.mp4", null],
+    ["src/x.ts", 3],
+  ]);
+  assert.deepEqual(refs("chyba c:\\users\\a\\new-project video\\src\\app.ts:12:4"), [
+    ["c:\\users\\a\\new-project video\\src\\app.ts", 12],
+  ]);
+  // Bez prípony nejde o súbor; zvyšok riadku sa nepridá.
+  assert.deepEqual(refs("adresár C:\\Users\\a\\new-project video\\out je prázdny"), []);
+  assert.deepEqual(findFileRefs("x /p/a b.md", "/p").map((r) => r.path), ["/p/a b.md"]);
 });
 
 test("formátovanie tokenov", () => {

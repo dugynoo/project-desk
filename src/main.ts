@@ -335,7 +335,7 @@ function setupLinks(rt: Runtime, s: Session) {
     provideLinks(y, callback) {
       const p = project(s.projectId);
       const text = rt.term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
-      const refs = p ? findFileRefs(text) : [];
+      const refs = p ? findFileRefs(text, p.path) : [];
       if (!refs.length) return callback(undefined);
       void Promise.all(refs.map((r) => resolveFile(p!.path, r.path))).then((resolved) => {
         const links = refs.flatMap((r, i) => {
