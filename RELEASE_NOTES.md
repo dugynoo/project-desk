@@ -1,1 +1,1 @@
-- New: when Claude Code finishes its turn but its own background commands or agents are still running, the session shows a yellow ring, "Running in background (n)", instead of Done and sends no notification yet. You get Done after Claude reads the results.
+- Fixed: Ctrl+click now opens file paths that contain spaces, such as files in a project folder named "new project", and file names with diacritics.
