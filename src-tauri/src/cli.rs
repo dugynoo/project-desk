@@ -121,23 +121,25 @@ fn shell_command(program: &str, shell: &str, argument: &'static str) -> Option<C
     Some(cmd)
 }
 
-fn probe(command: &str, expected: &str, shell: &str) -> Check {
+const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn probe(command: &str, expected: &str, shell: &str, timeout: Duration) -> Check {
     let Some(program) = executable(command, expected) else { return result("unsupported") };
     let Some(cmd) = shell_command(program, shell, "--version") else { return result("unsupported") };
-    run(cmd, Duration::from_secs(8))
+    run(cmd, timeout)
 }
 
 /// False only when the installed Codex demonstrably lacks `--no-daemon` (older releases);
 /// unknown commands and failed probes keep the configured command unchanged.
-fn codex_lacks_no_daemon(command: &str, shell: &str) -> bool {
+fn codex_lacks_no_daemon(command: &str, shell: &str, timeout: Duration) -> bool {
     let Some(cmd) = executable(command, "codex").and_then(|program| shell_command(program, shell, "--help")) else { return false };
-    let (status, help) = execute(cmd, Duration::from_secs(8), 65_536);
+    let (status, help) = execute(cmd, timeout, 65_536);
     status == "available" && !help.contains("--no-daemon")
 }
 
 #[tauri::command]
 pub async fn codex_no_daemon(command: String, shell: String) -> bool {
-    tauri::async_runtime::spawn_blocking(move || !codex_lacks_no_daemon(&command, &shell)).await.unwrap_or(true)
+    tauri::async_runtime::spawn_blocking(move || !codex_lacks_no_daemon(&command, &shell, PROBE_TIMEOUT)).await.unwrap_or(true)
 }
 
 #[tauri::command]
@@ -146,7 +148,7 @@ pub async fn check_cli(commands: [String; 3], shell: String) -> Vec<Check> {
         let Ok(_guard) = CHECK.try_lock() else { return vec![result("busy"); 3] };
         std::thread::scope(|scope| {
             let jobs: Vec<_> = commands.iter().zip(["claude", "codex", "agy"])
-                .map(|(command, expected)| { let shell = &shell; scope.spawn(move || probe(command, expected, shell)) }).collect();
+                .map(|(command, expected)| { let shell = &shell; scope.spawn(move || probe(command, expected, shell, PROBE_TIMEOUT)) }).collect();
             jobs.into_iter().map(|job| job.join().unwrap_or_else(|_| result("failed"))).collect()
         })
     }).await.unwrap_or_else(|_| vec![result("failed"); 3])
@@ -197,9 +199,11 @@ mod tests {
         #[cfg(unix)]
         { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap(); }
         let shell = if cfg!(windows) { "powershell.exe" } else { "/bin/sh" };
-        let checked = probe(&format!("\"{}\" --resume never-run", path.display()), "claude", shell);
+        // A cold PowerShell start on a busy CI runner can exceed the app's 8 s probe limit.
+        let timeout = Duration::from_secs(60);
+        let checked = probe(&format!("\"{}\" --resume never-run", path.display()), "claude", shell, timeout);
         std::fs::remove_file(&path).unwrap();
-        let missing = probe(&format!("\"{}\"", path.display()), "claude", shell);
+        let missing = probe(&format!("\"{}\"", path.display()), "claude", shell, timeout);
         std::fs::remove_dir(&dir).unwrap();
         assert_eq!(checked.status, "available", "{checked:?}");
         assert_eq!(checked.version, "fixture 1.2.3");
@@ -212,6 +216,7 @@ mod tests {
         let path = dir.join(if cfg!(windows) { "codex.ps1" } else { "codex" });
         let shell = if cfg!(windows) { "powershell.exe" } else { "/bin/sh" };
         let command = format!("\"{}\" resume --no-daemon", path.display());
+        let timeout = Duration::from_secs(60);
         // The flag appears after more than the version probe's 4 KiB, as in real Codex help.
         for (flag, lacks) in [("--no-daemon", false), ("--no-alt-screen", true)] {
             let body = if cfg!(windows) {
@@ -222,11 +227,11 @@ mod tests {
             std::fs::write(&path, body).unwrap();
             #[cfg(unix)]
             { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap(); }
-            assert_eq!(codex_lacks_no_daemon(&command, shell), lacks, "{flag}");
+            assert_eq!(codex_lacks_no_daemon(&command, shell, timeout), lacks, "{flag}");
         }
         std::fs::remove_file(&path).unwrap();
-        assert!(!codex_lacks_no_daemon(&command, shell), "a missing Codex keeps the command");
-        assert!(!codex_lacks_no_daemon("npx codex", shell));
+        assert!(!codex_lacks_no_daemon(&command, shell, timeout), "a missing Codex keeps the command");
+        assert!(!codex_lacks_no_daemon("npx codex", shell, timeout));
         std::fs::remove_dir(&dir).unwrap();
     }
 }
