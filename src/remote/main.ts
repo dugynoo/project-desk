@@ -380,9 +380,13 @@ function updateHeader(s: RemoteSession) {
   }));
 }
 
+/** Terminál chce odber, ale ešte nemal rozmery (skrytý panel); pošle sa pri prvom resize. */
+let pendingSubscribe = false;
+
 function subscribe(id: string) {
   const d = fit?.proposeDimensions();
-  if (!d || isNaN(d.cols) || isNaN(d.rows)) return;
+  pendingSubscribe = !d || isNaN(d.cols) || isNaN(d.rows);
+  if (!d || pendingSubscribe) return;
   send({ type: "subscribe", id, cols: d.cols, rows: d.rows });
 }
 
@@ -391,6 +395,10 @@ function sendResize() {
   const d = fit.proposeDimensions();
   if (!d || isNaN(d.cols) || isNaN(d.rows)) return;
   if (d.cols !== term.cols || d.rows !== term.rows) term.resize(d.cols, d.rows);
+  if (pendingSubscribe) {
+    if (!document.hidden) subscribe(openId);
+    return;
+  }
   send({ type: "resize", id: openId, cols: d.cols, rows: d.rows });
 }
 
@@ -453,8 +461,9 @@ function openSession(id: string) {
   view.append(head, tabs, body, notice, keys, form);
   paneEl.replaceChildren(view);
   mode = s.chat ? "chat" : "terminal";
-  mountBody();
+  // Najprv zobraziť panel (na úzkej obrazovke je dovtedy skrytý), potom merať terminál.
   renderList();
+  mountBody();
   updateHeader(s);
 }
 
@@ -519,6 +528,7 @@ function attach() {
 /** Prestane sledovať otvorenú session a uvoľní terminál. */
 function detach() {
   if (openId) send(mode === "chat" ? { type: "chatClose", id: openId } : { type: "unsubscribe", id: openId });
+  pendingSubscribe = false;
   disposeTerminal();
   chatEl = null;
 }
@@ -545,9 +555,20 @@ function appendChat(items: ChatItem[], reset: boolean) {
   if (reset) el.replaceChildren();
   if (items.length) el.querySelector(".chat-empty")?.remove();
   else if (reset) el.append(h("p", "chat-empty", t("remote.chatEmpty")));
-  for (const item of items) el.append(chatItem(item));
+  for (const item of items) el.append(safeChatItem(item));
   while (el.childElementCount > CHAT_DOM_LIMIT) el.firstElementChild?.remove();
   if (reset || atBottom) el.scrollTop = el.scrollHeight;
+}
+
+/** Správa, ktorú sa nepodarí vykresliť, ostane ako obyčajný text, nezastaví zvyšok chatu. */
+function safeChatItem(item: ChatItem): HTMLElement {
+  try {
+    return chatItem(item);
+  } catch {
+    const row = h("div", `msg ${item.role}`);
+    row.append(h("div", item.role === "user" ? "bubble" : "plain", item.text));
+    return row;
+  }
 }
 
 function chatItem(item: ChatItem): HTMLElement {
@@ -633,6 +654,7 @@ document.addEventListener("visibilitychange", () => {
   if (!openId) return;
   if (document.hidden) {
     send(mode === "chat" ? { type: "chatClose", id: openId } : { type: "unsubscribe", id: openId });
+    pendingSubscribe = false;
   } else {
     attach();
   }

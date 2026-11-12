@@ -124,3 +124,4 @@ button { font: inherit; color: inherit; }
 .text { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
 .text:focus { outline: none; border-color: var(--accent); }
 .send { min-width: 72px; min-height: 44px; padding: 0 16px; background: var(--accent); color: #111317; font-weight: 600; border: 0; border-radius: 8px; cursor: pointer; }
+.msg .plain { white-space: pre-wrap; }

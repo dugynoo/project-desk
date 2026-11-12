@@ -20,6 +20,8 @@ const MAX_TEXT: usize = 32 * 1024;
 const MAX_TOOL: usize = 200;
 /// Najviac toľko nových bajtov za jedno čítanie; zvyšok príde pri ďalšom.
 const READ_BUDGET: u64 = 8 * 1024 * 1024;
+/// Pri otvorení chatu sa číta najviac toľko bajtov od konca súboru.
+const RESET_TAIL: u64 = 4 * 1024 * 1024;
 /// Chýbajúci súbor (agent ešte nič nenapísal) sa hľadá najviac takto často.
 const LOCATE_EVERY: Duration = Duration::from_secs(3);
 
@@ -113,7 +115,8 @@ impl ChatReader {
             return self.read_all();
         }
         let Some(path) = self.path.clone() else { return ChatUpdate::default() };
-        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        // Chyba čítania veľkosti nie je skrátený súbor: skúsi sa pri ďalšom volaní.
+        let Ok(len) = std::fs::metadata(&path).map(|m| m.len()) else { return ChatUpdate { reset: first, items: Vec::new() } };
         if len < self.offset {
             // Súbor sa skrátil alebo prepísal: začneme odznova.
             return self.read_all();
@@ -123,13 +126,31 @@ impl ChatReader {
         update
     }
 
-    /// Celý súbor, z neho posledných `RESET_ITEMS` položiek.
+    /// Koniec súboru (najviac `RESET_TAIL`), z neho posledných `RESET_ITEMS` položiek.
     fn read_all(&mut self) -> ChatUpdate {
         self.offset = 0;
         self.partial.clear();
         let Some(path) = self.path.clone() else { return ChatUpdate { reset: true, items: Vec::new() } };
-        let Ok(file) = File::open(&path) else { return ChatUpdate { reset: true, items: Vec::new() } };
+        let Ok(mut file) = File::open(&path) else {
+            // Ďalšie volanie súbor nájde a načíta znova ako reset, nie od nuly ako prírastok.
+            self.path = None;
+            return ChatUpdate { reset: true, items: Vec::new() };
+        };
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let start = len.saturating_sub(RESET_TAIL);
+        if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
+            return ChatUpdate { reset: true, items: Vec::new() };
+        }
+        self.offset = start;
         let mut reader = BufReader::with_capacity(64 * 1024, file);
+        if start > 0 {
+            // Prvý riadok je odrezaný uprostred: preskočí sa.
+            let mut skipped = Vec::new();
+            match reader.read_until(b'\n', &mut skipped) {
+                Ok(n) if skipped.last() == Some(&b'\n') => self.offset += n as u64,
+                _ => return ChatUpdate { reset: true, items: Vec::new() },
+            }
+        }
         let mut items = VecDeque::new();
         let mut line = Vec::new();
         loop {
@@ -452,6 +473,26 @@ mod tests {
         let u = r.poll_with(|| None);
         assert!(u.reset);
         assert_eq!(u.items, vec![ChatItem::new(Role::User, "new")]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn reset_reads_only_the_tail_of_a_large_file() {
+        let (path, mut file) = temp_file("tail");
+        let filler = user(&"x".repeat(1000));
+        let count = (RESET_TAIL as usize / filler.len()) + 50;
+        for _ in 0..count {
+            file.write_all(filler.as_bytes()).unwrap();
+        }
+        file.write_all(user("last").as_bytes()).unwrap();
+        let mut r = ChatReader::new(ChatSource { provider: Provider::Claude, agent_id: "x".into() });
+        let p = path.clone();
+        let u = r.poll_with(move || Some(p));
+        assert!(u.reset);
+        assert_eq!(u.items.last(), Some(&ChatItem::new(Role::User, "last")));
+        assert!(u.items.iter().all(|i| i.text.len() == 1000 || i.text == "last"));
+        file.write_all(user("next").as_bytes()).unwrap();
+        assert_eq!(r.poll_with(|| None).items, vec![ChatItem::new(Role::User, "next")]);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 

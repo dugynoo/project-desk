@@ -21,16 +21,23 @@ const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const ORDERED = /^\s*(\d{1,9})[.)]\s+(.*)$/;
 const HR = /^ {0,3}([-*_])(\s*\1){2,}\s*$/;
+/** Hlbšie vnorené citácie ostanú textom (ochrana zásobníka). */
+const MAX_QUOTE_DEPTH = 8;
+/** Dlhší úsek ostane textom: hľadanie uzatváracích značiek je kvadratické. */
+const MAX_INLINE = 4000;
+const LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/y;
+const BARE_URL = /https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/y;
 const TABLE_SEP = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
 
 /** Bloky textu; neznáme konštrukcie ostanú ako obyčajný text. */
-export function parseMarkdown(src: string): Block[] {
+export function parseMarkdown(src: string, depth = 0): Block[] {
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const out: Block[] = [];
   let i = 0;
   const isBlank = (l: string) => l.trim() === "";
+  const isQuote = (l: string) => depth < MAX_QUOTE_DEPTH && /^\s*>/.test(l);
   const startsBlock = (l: string) =>
-    FENCE.test(l) || HEADING.test(l) || BULLET.test(l) || ORDERED.test(l) || HR.test(l) || /^\s*>/.test(l);
+    FENCE.test(l) || HEADING.test(l) || BULLET.test(l) || ORDERED.test(l) || HR.test(l) || isQuote(l);
 
   while (i < lines.length) {
     const line = lines[i];
@@ -56,10 +63,10 @@ export function parseMarkdown(src: string): Block[] {
 
     if (HR.test(line)) { out.push({ t: "hr" }); i++; continue; }
 
-    if (/^\s*>/.test(line)) {
+    if (isQuote(line)) {
       const body: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) body.push(lines[i++].replace(/^\s*>\s?/, ""));
-      out.push({ t: "quote", c: parseMarkdown(body.join("\n")) });
+      out.push({ t: "quote", c: parseMarkdown(body.join("\n"), depth + 1) });
       continue;
     }
 
@@ -105,6 +112,7 @@ function cells(line: string): string[] {
 
 /** Inline kód, tučné, kurzíva a http(s) odkazy; ostatné je text. */
 export function parseInline(src: string): Inline[] {
+  if (src.length > MAX_INLINE) return [{ t: "text", v: src }];
   const out: Inline[] = [];
   let text = "";
   const flush = () => { if (text) { out.push({ t: "text", v: text }); text = ""; } };
@@ -113,7 +121,9 @@ export function parseInline(src: string): Inline[] {
     const ch = src[i];
     if (ch === "\\" && i + 1 < src.length && /[\\`*_[\]()#|>-]/.test(src[i + 1])) { text += src[i + 1]; i += 2; continue; }
     if (ch === "`") {
-      const run = /^`+/.exec(src.slice(i))![0];
+      let n = i;
+      while (src[n] === "`") n++;
+      const run = src.slice(i, n);
       const end = src.indexOf(run, i + run.length);
       if (end > 0) {
         flush();
@@ -141,7 +151,8 @@ export function parseInline(src: string): Inline[] {
       }
     }
     if (ch === "[") {
-      const m = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/.exec(src.slice(i));
+      LINK.lastIndex = i;
+      const m = LINK.exec(src);
       if (m) {
         flush();
         out.push({ t: "a", href: m[2], c: parseInline(m[1]) });
@@ -150,7 +161,8 @@ export function parseInline(src: string): Inline[] {
       }
     }
     if (ch === "h") {
-      const m = /^https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/.exec(src.slice(i));
+      BARE_URL.lastIndex = i;
+      const m = BARE_URL.exec(src);
       if (m && !/\w/.test(src[i - 1] ?? "")) {
         flush();
         out.push({ t: "a", href: m[0], c: [{ t: "text", v: m[0] }] });

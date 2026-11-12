@@ -68,3 +68,12 @@ test("blocks: heading, list, code, quote, table, paragraph", () => {
 test("unclosed fence runs to the end", () => {
   assert.deepEqual(parseMarkdown("```\na\nb"), [{ t: "code", lang: "", v: "a\nb" }]);
 });
+
+test("deep quotes and long text do not blow up", () => {
+  const deep = parseMarkdown(">".repeat(5000) + " x");
+  let depth = 0;
+  for (let b = deep[0]; b?.t === "quote"; b = b.c[0]) depth++;
+  assert.equal(depth, 8);
+  const long = "*a ".repeat(3000);
+  assert.deepEqual(parseInline(long), [{ t: "text", v: long }]);
+});

@@ -161,6 +161,8 @@ impl axum::serve::Listener for Tracked {
 #[derive(Default)]
 struct Watching {
     clients: HashMap<u64, BTreeSet<String>>,
+    /// Otvorené terminály každého klienta (podmnožina `clients`).
+    terminals: HashMap<u64, BTreeSet<String>>,
     last: BTreeSet<String>,
 }
 
@@ -179,11 +181,18 @@ struct Shared {
 
 impl Shared {
     /// Zjednotenie odberov všetkých klientov; desktop dostane `Watching` pri každej zmene.
-    fn set_watching(&self, client: u64, ids: Option<&BTreeSet<String>>) {
+    /// `ids` = (všetko sledované, z toho terminály); `None` = klient odišiel.
+    fn set_watching(&self, client: u64, ids: Option<(&BTreeSet<String>, &BTreeSet<String>)>) {
         let mut w = self.watching.lock().unwrap_or_else(|e| e.into_inner());
         match ids {
-            Some(ids) => w.clients.insert(client, ids.clone()),
-            None => w.clients.remove(&client),
+            Some((all, terminals)) => {
+                w.clients.insert(client, all.clone());
+                w.terminals.insert(client, terminals.clone());
+            }
+            None => {
+                w.clients.remove(&client);
+                w.terminals.remove(&client);
+            }
         };
         let union: BTreeSet<String> = w.clients.values().flatten().cloned().collect();
         if union != w.last {
@@ -444,11 +453,19 @@ impl Conn {
     /// Sledované sessions = otvorené terminály aj chaty.
     fn watching_changed(&self) {
         let ids: BTreeSet<String> = self.subs.iter().chain(self.chats.keys()).cloned().collect();
-        self.s.set_watching(self.id, Some(&ids));
+        self.s.set_watching(self.id, Some((&ids, &self.subs)));
     }
 
-    /// Terminál zavretý: veľkosť, ktorú určoval mobil, sa vráti desktopu.
+    /// Terminál zavretý: veľkosť, ktorú určoval mobil, sa vráti desktopu,
+    /// ak ho nemá otvorený iný mobil (ten si veľkosť drží ďalej).
     fn release_size(&self, id: &str) {
+        let others = {
+            let w = self.s.watching.lock().unwrap_or_else(|e| e.into_inner());
+            w.terminals.iter().any(|(client, ids)| *client != self.id && ids.contains(id))
+        };
+        if others {
+            return;
+        }
         let mut size = self.s.hub.size();
         if size.is_remote(id) {
             size.forget(id);
@@ -478,12 +495,11 @@ impl Conn {
             .await
             else {
                 self.chats.remove(&id);
+                self.watching_changed();
                 continue;
             };
-            // Zavretý počas čítania: výsledok zahodíme.
-            match self.chats.get_mut(&id) {
-                Some(slot) => *slot = Some(reader),
-                None => continue,
+            if let Some(slot) = self.chats.get_mut(&id) {
+                *slot = Some(reader);
             }
             if (update.reset || !update.items.is_empty())
                 && !self.send(ServerMsg::Chat { id, reset: update.reset, items: update.items }).await
@@ -827,6 +843,22 @@ mod tests {
         send(&mut ws, json!({"type": "unsubscribe", "id": "s"})).await;
         assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeReleased { .. })).await, RemoteEvent::SizeReleased { id: "s".into() });
         assert!(!h.hub.size().is_remote("s"));
+    }
+
+    #[tokio::test]
+    async fn other_phone_keeps_the_size_when_one_closes_the_terminal() {
+        let h = harness().await;
+        let mut a = connect(&h).await;
+        let mut b = connect(&h).await;
+        for ws in [&mut a, &mut b] {
+            send(ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+            // História = odber je zaregistrovaný.
+            while next(ws).await.unwrap()["type"] != "history" {}
+        }
+        send(&mut a, json!({"type": "unsubscribe", "id": "s"})).await;
+        send(&mut a, json!({"type": "pause", "id": "s"})).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(h.hub.size().is_remote("s"));
     }
 
     #[tokio::test]
