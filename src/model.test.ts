@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  appWheelSteps,
   fileOpenTarget,
   remoteSnapshot,
   codexHooksFit,
@@ -1122,4 +1123,15 @@ test("remoteSnapshot omits hidden sessions and conversation data", () => {
 test("remoteSnapshot keeps pinned projects first", () => {
   const snap = remoteSnapshot(remoteFixture(), () => "idle", () => false);
   assert.deepEqual(snap.projects, [{ id: "p2", name: "B" }, { id: "p1", name: "A" }]);
+});
+
+test("app-owned scrolling moves three lines per mouse notch and keeps trackpad deltas fine", () => {
+  assert.equal(appWheelSteps(0, 0), 0);
+  assert.equal(appWheelSteps(100, 0), 3);
+  assert.equal(appWheelSteps(-100, 0), 3);
+  assert.equal(appWheelSteps(200, 0), 6);
+  assert.equal(appWheelSteps(4, 0), 1);
+  assert.equal(appWheelSteps(-3, 1), 3);
+  assert.equal(appWheelSteps(1, 2), 10);
+  assert.equal(appWheelSteps(5000, 0), 10);
 });

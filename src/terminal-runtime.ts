@@ -8,7 +8,7 @@ import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
 import { errorText } from "./i18n.ts";
-import { copiedText, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
+import { appWheelSteps, copiedText, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
   outputId?: string;
@@ -140,6 +140,25 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
         }
       });
     };
+
+    // In the alternate screen or with mouse tracking (Codex TUI, vim), xterm.js 6 turns each wheel event
+    // into a single arrow key or wheel report, so one mouse notch moves just one line. Replay the event
+    // so the app receives a native terminal's three steps per notch.
+    const replayedWheel = new WeakSet<WheelEvent>();
+    term.attachCustomWheelEventHandler((e) => {
+      if (replayedWheel.has(e) || e.shiftKey) return true;
+      if (term.buffer.active.type !== "alternate" && term.modes.mouseTrackingMode === "none") return true;
+      const target = e.target instanceof Element ? e.target : host;
+      for (let i = 1; i < appWheelSteps(e.deltaY, e.deltaMode); i++) {
+        const copy = new WheelEvent("wheel", {
+          deltaY: e.deltaY, deltaMode: e.deltaMode, clientX: e.clientX, clientY: e.clientY,
+          ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey, bubbles: true, cancelable: true,
+        });
+        replayedWheel.add(copy);
+        target.dispatchEvent(copy);
+      }
+      return true;
+    });
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
