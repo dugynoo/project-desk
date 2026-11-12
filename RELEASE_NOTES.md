@@ -1,1 +1,4 @@
-- Fixed: the mouse wheel scrolls Codex and other full-screen terminal apps three lines per notch instead of one.
+- New: control Project Desk from your phone. Turn on **Remote access** in ⚙ Settings, scan the QR code and open your sessions in the phone's browser over your private Tailscale network. It is off by default and needs Tailscale on both devices.
+- Claude and Codex sessions open on the phone as a chat with formatted replies and tool steps; a Terminal tab gives the live terminal for choices and permissions.
+- Pause and restart sessions from the phone (hold a session in the list or use the buttons at the top).
+- After saving remote access settings, the dialog stays open and shows the pairing link and QR code.
