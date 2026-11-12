@@ -1,1 +1,1 @@
-- Fixed: Ctrl+click now opens file paths that contain spaces, such as files in a project folder named "new project", and file names with diacritics.
+- Fixed: the mouse wheel scrolls Codex and other full-screen terminal apps three lines per notch instead of one.
