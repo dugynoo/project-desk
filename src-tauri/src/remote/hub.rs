@@ -15,6 +15,8 @@ pub const BROADCAST_CAPACITY: usize = 1024;
 pub enum HubEvent {
     Output { id: String, data: String },
     Snapshot(serde_json::Value),
+    /// Session dostala nový proces (Spustiť znova): mobil, ktorý ju sleduje, si vezme veľkosť a začne odznova.
+    Started { id: String },
     /// Párovací kód sa zmenil: server zavrie všetky sockety.
     Revoked,
 }
@@ -78,6 +80,16 @@ impl Hub {
         histories.entry(id.to_owned()).or_insert_with(|| History::new(HISTORY_BYTES)).push(text);
         // Broadcast nikdy neblokuje; posielame pod zámkom, aby `catch_up` videl históriu a front v zhode.
         let _ = self.sender.send(HubEvent::Output { id: id.to_owned(), data: text.to_owned() });
+    }
+
+    /// Volá PTY pred prvým výstupom nového procesu; stará história ani nárok na veľkosť neplatia.
+    pub fn started(&self, id: &str) {
+        let mut histories = lock(&self.histories);
+        histories.remove(id);
+        lock(&self.size).forget(id);
+        if self.enabled.load(Ordering::SeqCst) {
+            let _ = self.sender.send(HubEvent::Started { id: id.to_owned() });
+        }
     }
 
     pub fn forget(&self, id: &str) {
@@ -164,6 +176,18 @@ mod tests {
         hub.output("s", "x");
         assert_eq!(hub.history("s").as_deref(), Some("x"));
         assert_eq!(rx.try_recv().unwrap(), HubEvent::Output { id: "s".into(), data: "x".into() });
+    }
+
+    #[test]
+    fn started_resets_history_and_size_and_broadcasts() {
+        let hub = enabled();
+        hub.output("s", "old");
+        hub.size().remote("s", 40, 20);
+        let mut rx = hub.subscribe();
+        hub.started("s");
+        assert_eq!(hub.history("s"), None);
+        assert!(hub.size().remote("s", 40, 20));
+        assert_eq!(rx.try_recv().unwrap(), HubEvent::Started { id: "s".into() });
     }
 
     #[test]

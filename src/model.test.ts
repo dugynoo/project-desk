@@ -1113,15 +1113,17 @@ function remoteFixture() {
 }
 
 test("remoteSnapshot omits hidden sessions and conversation data", () => {
-  const snap = remoteSnapshot(remoteFixture(), () => "idle", (id) => id === "s1");
+  const snap = remoteSnapshot(remoteFixture(), () => "idle", (id) => id === "s1", (id) => id === "s1");
   assert.deepEqual(snap.sessions.map((s) => s.id), ["s3", "s1"]);
-  assert.deepEqual(Object.keys(snap.sessions[0]).sort(), ["id", "projectId", "provider", "running", "status", "title"]);
+  assert.deepEqual(Object.keys(snap.sessions[0]).sort(), ["canPause", "id", "projectId", "provider", "running", "status", "title"]);
   assert.equal(snap.sessions[1].running, true);
+  assert.equal(snap.sessions[1].canPause, true);
+  assert.equal(snap.sessions[0].canPause, false);
   assert.equal(snap.sessions[0].running, false);
 });
 
 test("remoteSnapshot keeps pinned projects first", () => {
-  const snap = remoteSnapshot(remoteFixture(), () => "idle", () => false);
+  const snap = remoteSnapshot(remoteFixture(), () => "idle", () => false, () => false);
   assert.deepEqual(snap.projects, [{ id: "p2", name: "B" }, { id: "p1", name: "A" }]);
 });
 

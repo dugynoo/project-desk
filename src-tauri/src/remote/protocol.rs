@@ -12,6 +12,10 @@ pub enum ClientMsg {
     Unsubscribe { id: String },
     Input { id: String, data: String },
     Resize { id: String, cols: u16, rows: u16 },
+    /// Ako ⏸ na desktope; potvrdenie pri pracujúcom agentovi rieši mobil.
+    Pause { id: String },
+    /// Ako ↻ Spustiť znova na desktope.
+    Start { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -50,6 +54,14 @@ mod tests {
     fn parses_input_message() {
         let m: ClientMsg = serde_json::from_str(r#"{"type":"input","id":"s1","data":"x"}"#).unwrap();
         assert_eq!(m, ClientMsg::Input { id: "s1".into(), data: "x".into() });
+    }
+
+    #[test]
+    fn parses_session_actions() {
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"pause","id":"s1"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Pause { id: "s1".into() });
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"start","id":"s1"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Start { id: "s1".into() });
     }
 
     #[test]

@@ -13,7 +13,8 @@ interface SettingsInfo { platform: string; hooksEnabled: boolean; stateFile: str
 
 export function createSettings(
   getSettings: () => Settings,
-  commit: (settings: Settings, languageChanged: boolean) => void,
+  /** Pri zmene vzdialeného prístupu vráti nový stav servera (`null` pri chybe, už oznámenej). */
+  commit: (settings: Settings, languageChanged: boolean) => Promise<RemoteStatus | null> | undefined,
   modal: ReturnType<typeof createDialogs>["modal"],
   toast: (message: string) => void,
   checkUpdate: (manual: boolean) => Promise<boolean>,
@@ -169,11 +170,12 @@ export function createSettings(
     };
     invoke<RemoteStatus>("remote_status").then(render).catch(e => { if (!signal.aborted) statusBox.replaceChildren(el("div", "note", errorText(e))); });
 
-    return (): { error: string; field: HTMLInputElement } | Pick<Settings, "remoteAccess" | "remotePort" | "remoteAddress"> => {
+    const read = (): { error: string; field: HTMLInputElement } | Pick<Settings, "remoteAccess" | "remotePort" | "remoteAddress"> => {
       const value = Number(port.value);
       if (!port.value || !Number.isInteger(value) || value < 1024 || value > 65535) return { error: t("err.remote.badPort"), field: port };
       return { remoteAccess: enable.checked, remotePort: value, remoteAddress: address.value.trim() };
     };
+    return { read, render };
   }
 
   function openSettings(info: SettingsInfo, keyboard = false) {
@@ -358,9 +360,11 @@ export function createSettings(
           if (!editorFont.value || !editorFont.checkValidity()) {
             activate(3); editorFont.focus(); editorFont.reportValidity(); return;
           }
-          const remoteValue = remote();
+          const remoteValue = remote.read();
           if ("field" in remoteValue) { activate(4); remoteValue.field.focus(); return toast(remoteValue.error); }
-          const draft = settingsDraft(st, {
+          // Po uložení so zapnutým vzdialeným prístupom okno ostane otvorené, preto základ znova.
+          const base = getSettings();
+          const draft = settingsDraft(base, {
             ...remoteValue,
             fontSize: Number(fontSize.value),
             fileEditor: fileEditor.value as Settings["fileEditor"],
@@ -382,8 +386,14 @@ export function createSettings(
             language: language.value,
           }, editor());
           if (typeof draft === "string") { activate(3); editors.querySelector("input")?.focus(); return toast(draft); }
-          const langChanged = st.language !== draft.language;
-          commit(draft, langChanged);
+          const langChanged = base.language !== draft.language;
+          const remoteSaved = commit(draft, langChanged);
+          // Zapnutý vzdialený prístup: namiesto zatvorenia ukážeme QR kód na spárovanie.
+          if (remoteSaved && draft.remoteAccess && !langChanged) {
+            activate(4);
+            void remoteSaved.then(r => { if (r) remote.render(r); });
+            return;
+          }
           close();
         };
         activate(0);

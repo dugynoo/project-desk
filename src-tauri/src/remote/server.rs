@@ -45,11 +45,28 @@ impl RemotePty for crate::pty::PtyManager {
 /// Statický súbor mobilnej stránky podľa cesty (bez úvodného `/`, s prípadným `?query`): obsah a MIME typ.
 pub type Assets = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
 
-/// Udalosti pre desktop: `remote-watching` `{ ids }` a `remote-size` `{ id }`.
+/// Udalosti pre desktop: `remote-watching` `{ ids }`, `remote-size` `{ id }` a `remote-action` `{ id, action }`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteEvent {
     Watching { ids: Vec<String> },
     SizeTaken { id: String },
+    Action { id: String, action: SessionAction },
+}
+
+/// Akcia nad session, ktorú vykoná desktop (životný cyklus sessions žije vo webview).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAction {
+    Pause,
+    Start,
+}
+
+impl SessionAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SessionAction::Pause => "pause",
+            SessionAction::Start => "start",
+        }
+    }
 }
 
 pub type Events = Arc<dyn Fn(RemoteEvent) + Send + Sync>;
@@ -380,6 +397,19 @@ impl Conn {
             HubEvent::Output { id, data } if self.subs.contains(&id) => self.send(ServerMsg::Output { id, data }).await,
             HubEvent::Output { .. } => true,
             HubEvent::Snapshot(snapshot) => self.send(ServerMsg::Snapshot { snapshot }).await,
+            HubEvent::Started { id } if self.subs.contains(&id) => {
+                // Nový proces naštartoval s veľkosťou desktopu; mobil, ktorý ho má otvorený, si ju vezme.
+                if let Some(&(cols, rows)) = self.sizes.get(&id) {
+                    if let Err(code) = self.claim(&id, cols, rows) {
+                        if !self.error(&id, code).await {
+                            return false;
+                        }
+                    }
+                }
+                // Prázdna história vyčistí terminál od výstupu predchádzajúceho behu.
+                self.send(ServerMsg::History { id, data: String::new() }).await
+            }
+            HubEvent::Started { .. } => true,
             HubEvent::Revoked => false,
         }
     }
@@ -450,6 +480,14 @@ impl Conn {
                         return self.error(&id, code).await;
                     }
                 }
+                true
+            }
+            ClientMsg::Pause { id } => {
+                (self.s.events)(RemoteEvent::Action { id, action: SessionAction::Pause });
+                true
+            }
+            ClientMsg::Start { id } => {
+                (self.s.events)(RemoteEvent::Action { id, action: SessionAction::Start });
                 true
             }
         }
@@ -658,6 +696,30 @@ mod tests {
         assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeTaken { .. })).await, RemoteEvent::SizeTaken { id: "s".into() });
         assert_eq!(h.pty.resizes.lock().unwrap().len(), 2);
         assert_eq!(*h.pty.writes.lock().unwrap(), vec![("s".to_string(), "x".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn restarted_session_resets_watcher_and_takes_its_size() {
+        let mut h = harness().await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+        assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeTaken { .. })).await, RemoteEvent::SizeTaken { id: "s".into() });
+        h.hub.started("s");
+        assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "history", "id": "s", "data": ""}));
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeTaken { .. })).await, RemoteEvent::SizeTaken { id: "s".into() });
+        assert_eq!(*h.pty.resizes.lock().unwrap(), vec![("s".to_string(), 40, 20), ("s".to_string(), 40, 20)]);
+    }
+
+    #[tokio::test]
+    async fn session_actions_reach_desktop() {
+        let mut h = harness().await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "pause", "id": "s"})).await;
+        let is_action = |e: &RemoteEvent| matches!(e, RemoteEvent::Action { .. });
+        assert_eq!(event(&mut h, is_action).await, RemoteEvent::Action { id: "s".into(), action: SessionAction::Pause });
+        send(&mut ws, json!({"type": "start", "id": "s"})).await;
+        assert_eq!(event(&mut h, is_action).await, RemoteEvent::Action { id: "s".into(), action: SessionAction::Start });
     }
 
     #[tokio::test]

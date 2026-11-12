@@ -356,6 +356,7 @@ impl PtyManager {
             return Err(error);
         }
 
+        self.remote.started(&req.id);
         let outputs = self.outputs.clone();
         let output_id = req.output_id;
         let (remote, tap_id, sessions) = (self.remote.clone(), req.id.clone(), self.sessions.clone());

@@ -80,7 +80,8 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     return supported;
   }
 
-  async function start(s: Session) {
+  /** `focus = false`: spustené z mobilu; fokus by desktopu vrátil veľkosť terminálu. */
+  async function start(s: Session, focus = true) {
     const p = project(s.projectId);
     if (!p || pendingStarts.has(s.id) || runtimes.get(s.id)?.running || isClosing()) return;
     if (s.provider === "codex" && s.started && !isUuid(s.agentSessionId)) {
@@ -188,7 +189,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       s.background = false;
       rt.term.writeln(t("background.untrusted"));
       save();
-      return start(s);
+      return start(s, focus);
     }
     if (!session(s.id)) return;
     // An instant exit is handled by onExit, but the process did start: a later Start resumes it.
@@ -206,7 +207,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     save();
     renderSidebar();
     renderPaneHeads();
-    if (s.id === getState().ui.activeSessionId && editingId() !== s.id) rt.term.focus();
+    if (focus && s.id === getState().ui.activeSessionId && editingId() !== s.id) rt.term.focus();
   }
 
   function forgetRuntime(id: string) {
@@ -276,9 +277,10 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     return s.provider !== "shell" && !s.background && !pendingStarts.has(s.id) && runtimes.get(s.id)?.running === true;
   }
 
-  async function pauseSession(s: Session) {
+  /** `confirm = false`: potvrdil to už niekto inde (mobil). */
+  async function pauseSession(s: Session, confirm = true) {
     if (!canPause(s)) return;
-    if (statusOf(s.id) === "working"
+    if (confirm && statusOf(s.id) === "working"
       && !(await confirmBox(t("pause.title"), t("pause.body", { title: s.title }), t("session.pause")))) return;
     const rt = runtimes.get(s.id);
     if (!rt?.running || rt.closing) return;

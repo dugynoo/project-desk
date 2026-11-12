@@ -8,7 +8,9 @@ export type ClientMsg =
   | { type: "subscribe"; id: string; cols: number; rows: number }
   | { type: "unsubscribe"; id: string }
   | { type: "input"; id: string; data: string }
-  | { type: "resize"; id: string; cols: number; rows: number };
+  | { type: "resize"; id: string; cols: number; rows: number }
+  | { type: "pause"; id: string }
+  | { type: "start"; id: string };
 
 export type ServerMsg =
   | { type: "snapshot"; snapshot: RemoteSnapshot }

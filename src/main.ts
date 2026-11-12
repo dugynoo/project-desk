@@ -8,6 +8,7 @@ import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { normalizeFontSize, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
+import type { RemoteStatus } from "./remote/protocol.ts";
 import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
@@ -135,7 +136,10 @@ function publishRemote() {
     return;
   }
   lastRemotePublish = performance.now();
-  const snapshot = remoteSnapshot(state, statusOf, id => runtimes.get(id)?.running === true);
+  const snapshot = remoteSnapshot(state, statusOf, id => runtimes.get(id)?.running === true, id => {
+    const s = session(id);
+    return s ? canPause(s) : false;
+  });
   void invoke("remote_publish", { snapshot }).catch(() => {});
 }
 
@@ -150,12 +154,12 @@ function clearRemoteWatching() {
   renderSidebar();
 }
 
-/** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. */
-function configureRemote() {
+/** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. `null` = chyba (oznámená). */
+function configureRemote(): Promise<RemoteStatus | null> {
   const { remoteAccess, remotePort, remoteAddress } = state.settings;
-  invoke("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
-    .then(() => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); })
-    .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); });
+  return invoke<RemoteStatus>("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
+    .then((status) => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); return status; })
+    .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); return null; });
 }
 
 const agentMonitor = createAgentMonitor({
@@ -1240,7 +1244,12 @@ const showSettings = createSettings(
   () => state.settings,
   (draft, langChanged) => {
     const remoteChanged = draft.remoteAccess !== state.settings.remoteAccess || draft.remotePort !== state.settings.remotePort || draft.remoteAddress !== state.settings.remoteAddress;
-    state.settings = draft; if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); configureRemote(); } applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints(); },
+    state.settings = draft;
+    let remote: Promise<RemoteStatus | null> | undefined;
+    if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); remote = configureRemote(); }
+    applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints();
+    return remote;
+  },
   modal, toast, checkUpdate, installUpdate,
 );
 const openSettings = () => showSettings(info);
@@ -1418,6 +1427,13 @@ async function main() {
     remoteWatching = next;
     if (changed) save();
     renderSidebar();
+  });
+  // Mobil potvrdil pozastavenie sám; spustenie znova je to isté ako ↻ na desktope.
+  await listen<{ id: string; action: string }>("remote-action", ({ payload }) => {
+    const s = session(payload.id);
+    if (!s) return;
+    if (payload.action === "pause") void pauseSession(s, false);
+    else if (payload.action === "start" && !runtimes.get(s.id)?.running) void start(s, false);
   });
   await listen<{ id: string }>("remote-size", ({ payload }) => {
     const rt = runtimes.get(payload.id);

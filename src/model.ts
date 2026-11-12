@@ -442,18 +442,24 @@ export function agentCommand(
 export interface RemoteSnapshot {
   language: string;
   projects: { id: string; name: string }[];
-  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean }[];
+  /** `canPause`: mobil môže agenta pozastaviť (ako ⏸ na desktope); zastavenú session môže spustiť znova. */
+  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean; canPause: boolean }[];
 }
 
 /** Projekty v poradí ako v sidebare (pripnuté hore), bez skrytých sessions. */
-export function remoteSnapshot(state: PersistedState, statusOf: (id: string) => Status, running: (id: string) => boolean): RemoteSnapshot {
+export function remoteSnapshot(
+  state: PersistedState,
+  statusOf: (id: string) => Status,
+  running: (id: string) => boolean,
+  canPause: (id: string) => boolean,
+): RemoteSnapshot {
   const projects = orderedProjects(state.projects);
   const order = new Map(projects.map((p, i) => [p.id, i]));
   // Pole po poli, nikdy spread Session: konverzačné dáta nesmú odísť.
   const sessions = state.sessions
     .filter((s) => !s.hidden && order.has(s.projectId))
     .sort((a, b) => order.get(a.projectId)! - order.get(b.projectId)!)
-    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id) }));
+    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id), canPause: canPause(s.id) }));
   return { language: state.settings.language, projects: projects.map((p) => ({ id: p.id, name: p.name })), sessions };
 }
 

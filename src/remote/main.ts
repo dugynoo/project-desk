@@ -128,6 +128,8 @@ function handle(msg: ServerMsg) {
   switch (msg.type) {
     case "snapshot":
       snapshot = msg.snapshot;
+      // Ponuka patrí starému stavu (napr. ⏸ pri session, ktorá už skončila).
+      closeSheet();
       setLang(snapshot.language);
       document.documentElement.lang = snapshot.language;
       render();
@@ -250,6 +252,7 @@ function renderList() {
         text.append(title, status);
         row.append(dot, text);
         row.onclick = () => openSession(s.id);
+        onLongPress(row, s.id);
         root.append(row);
         rowEls.set(s.id, { row, dot, title, status });
         fillRow(s);
@@ -259,12 +262,97 @@ function renderList() {
   root.scrollTop = oldScroll;
 }
 
+/** Ako ⏸ a ↻ na desktope; pozastavenie pracujúceho agenta treba potvrdiť. */
+function sessionActions(s: RemoteSession): { icon: string; label: string; run: () => void }[] {
+  if (s.canPause) {
+    return [{
+      icon: "⏸",
+      label: t("session.pause"),
+      run: () => {
+        if (s.status === "working" && !confirm(t("pause.body", { title: s.title }))) return;
+        send({ type: "pause", id: s.id });
+      },
+    }];
+  }
+  if (!s.running) return [{ icon: "↻", label: t("session.restart"), run: () => send({ type: "start", id: s.id }) }];
+  return [];
+}
+
+function closeSheet() {
+  document.querySelector(".sheet-backdrop")?.remove();
+}
+
+/** Ponuka po podržaní riadku (alebo pravom kliknutí). */
+function openSheet(id: string) {
+  const s = snapshot?.sessions.find((x) => x.id === id);
+  const actions = s ? sessionActions(s) : [];
+  closeSheet();
+  if (!s || !actions.length) return;
+  const backdrop = h("div", "sheet-backdrop");
+  const sheet = h("div", "sheet");
+  sheet.setAttribute("role", "dialog");
+  sheet.append(h("div", "sheet-title", s.title));
+  for (const a of actions) {
+    const b = h("button", "sheet-item", `${a.icon}  ${a.label}`);
+    b.type = "button";
+    b.onclick = () => { closeSheet(); a.run(); };
+    sheet.append(b);
+  }
+  const cancel = h("button", "sheet-item sheet-cancel", t("common.cancel"));
+  cancel.type = "button";
+  cancel.onclick = closeSheet;
+  sheet.append(cancel);
+  backdrop.onclick = (e) => { if (e.target === backdrop) closeSheet(); };
+  backdrop.append(sheet);
+  document.body.append(backdrop);
+}
+
+const LONG_PRESS_MS = 500;
+
+/** Podržanie otvorí ponuku a nasledujúci klik session neotvorí. */
+function onLongPress(row: HTMLElement, id: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let fired = false;
+  let x = 0, y = 0;
+  const cancel = () => clearTimeout(timer);
+  row.addEventListener("pointerdown", (e) => {
+    fired = false;
+    x = e.clientX; y = e.clientY;
+    cancel();
+    timer = setTimeout(() => { fired = true; openSheet(id); }, LONG_PRESS_MS);
+  });
+  row.addEventListener("pointermove", (e) => { if (Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
+  row.addEventListener("pointerup", cancel);
+  row.addEventListener("pointercancel", cancel);
+  // Android a myš: kontextové menu; vlastná ponuka namiesto systémovej.
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cancel();
+    fired = true;
+    openSheet(id);
+  });
+  row.addEventListener("click", (e) => {
+    if (!fired) return;
+    fired = false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+}
+
 function updateHeader(s: RemoteSession) {
   const project = snapshot?.projects.find((p) => p.id === s.projectId)?.name ?? "";
   const title = paneEl.querySelector(".head-title");
   const status = paneEl.querySelector(".head-status");
   if (title) title.textContent = project ? `${project} / ${s.title}` : s.title;
   if (status) status.replaceChildren(statusDot(s), document.createTextNode(statusLabel(s)));
+  paneEl.querySelector(".head-actions")?.replaceChildren(...sessionActions(s).map((a) => {
+    const b = h("button", "head-action", a.icon);
+    b.type = "button";
+    b.title = a.label;
+    b.setAttribute("aria-label", a.label);
+    b.onclick = a.run;
+    return b;
+  }));
 }
 
 function subscribe(id: string) {
@@ -294,7 +382,7 @@ function openSession(id: string) {
   const back = h("button", "back", `‹ ${t("remote.back")}`);
   back.type = "button";
   back.onclick = closeSession;
-  head.append(back, h("div", "head-title"), h("div", "head-status"));
+  head.append(back, h("div", "head-title"), h("div", "head-status"), h("div", "head-actions"));
 
   const host = h("div", "term");
   const keys = h("div", "keys");

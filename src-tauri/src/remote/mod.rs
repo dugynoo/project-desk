@@ -99,6 +99,9 @@ pub fn events(app: AppHandle) -> server::Events {
         let _ = match event {
             RemoteEvent::Watching { ids } => app.emit("remote-watching", serde_json::json!({ "ids": ids })),
             RemoteEvent::SizeTaken { id } => app.emit("remote-size", serde_json::json!({ "id": id })),
+            RemoteEvent::Action { id, action } => {
+                app.emit("remote-action", serde_json::json!({ "id": id, "action": action.as_str() }))
+            }
         };
     })
 }
