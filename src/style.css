@@ -348,3 +348,9 @@ button.icon { min-width: 24px; min-height: 24px; }
 .markdown-preview ul, .markdown-preview ol { padding-left: 1.6em; }
 .editor-divider { flex: 0 0 5px; cursor: col-resize; background: var(--line); touch-action: none; }
 .editor-divider:hover, .editor-divider:focus-visible { background: var(--accent); }
+
+/* Vzdialený prístup: QR na bielom podklade, aby ho mobil prečítal aj v tmavej téme. */
+.remote-status { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.remote-status .note { margin-top: 0; }
+.remote-status button { align-self: flex-start; }
+.remote-qr { width: 200px; height: 200px; background: #fff; border-radius: 6px; }

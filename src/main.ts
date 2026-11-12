@@ -1,4 +1,4 @@
-import { createTerminalFactory, attachWebgl, fitTerminal, type Runtime } from "./terminal-runtime.ts";
+import { createTerminalFactory, attachWebgl, fitTerminal, reclaimSize, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
@@ -8,6 +8,7 @@ import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { normalizeFontSize, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
+import type { RemoteStatus } from "./remote/protocol.ts";
 import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
@@ -30,6 +31,8 @@ import {
   attentionEventKind,
   recordAttention,
   readAttention,
+  remoteChatSources,
+  remoteSnapshot,
   sessionDiagnostics,
   type PaneLayout,
   restoreSession,
@@ -82,6 +85,8 @@ const runtimes = new Map<string, Runtime>();
 const statuses = new Map<string, Status>();
 const unread = new Set<string>();
 let windowFocused = true;
+/** Relácie, ktoré má práve otvorené mobil. */
+let remoteWatching = new Set<string>();
 
 // ---------- perzistencia ----------
 
@@ -116,10 +121,52 @@ function toast(msg: string, info = false) {
   window.setTimeout(() => t.remove(), 6000);
 }
 
-const renderStatusSoon = onNextFrame(() => {
+const renderSoon = onNextFrame(() => {
   renderSidebar();
   renderPaneHeads();
 });
+/** Mobil dostane stav hneď: requestAnimationFrame pri minimalizovanom okne nemusí bežať. */
+function renderStatusSoon() {
+  publishRemote();
+  renderSoon();
+}
+
+// Snímok pre mobil: len keď je vzdialený prístup zapnutý, najviac raz za 250 ms.
+let lastRemotePublish = -Infinity;
+let remotePublishTimer: number | undefined;
+function publishRemote() {
+  if (!state.settings.remoteAccess) return;
+  const wait = 250 - (performance.now() - lastRemotePublish);
+  if (wait > 0) {
+    remotePublishTimer ??= window.setTimeout(() => { remotePublishTimer = undefined; publishRemote(); }, wait);
+    return;
+  }
+  lastRemotePublish = performance.now();
+  const snapshot = remoteSnapshot(state, statusOf, id => runtimes.get(id)?.running === true, id => {
+    const s = session(id);
+    return s ? canPause(s) : false;
+  });
+  void invoke("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
+}
+
+/** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
+function clearRemoteWatching() {
+  if (!remoteWatching.size) return;
+  for (const id of remoteWatching) {
+    const rt = runtimes.get(id);
+    if (rt) reclaimSize(rt, id);
+  }
+  remoteWatching = new Set();
+  renderSidebar();
+}
+
+/** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. `null` = chyba (oznámená). */
+function configureRemote(): Promise<RemoteStatus | null> {
+  const { remoteAccess, remotePort, remoteAddress } = state.settings;
+  return invoke<RemoteStatus>("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
+    .then((status) => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); return status; })
+    .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); return null; });
+}
 
 const agentMonitor = createAgentMonitor({
   getState: () => state, runtimes, isClosing: () => closingWindow,
@@ -155,7 +202,7 @@ function setStatus(id: string, next: Status, silent = false) {
 
 /** Používateľ práve reláciu vidí (je v zobrazení a okno má fokus). */
 function isWatched(id: string) {
-  return windowFocused && visibleIds().includes(id);
+  return (windowFocused && visibleIds().includes(id)) || remoteWatching.has(id);
 }
 
 const notify = createSystemNotifications({
@@ -760,7 +807,7 @@ const sidebar = createSidebar({
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
-  showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
+  showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
@@ -1201,7 +1248,14 @@ function applyLanguage() {
 const { checkUpdate, installUpdate } = createUpdates(confirmBox, toast, flushForRestart, () => info.automaticUpdates);
 const showSettings = createSettings(
   () => state.settings,
-  (draft, langChanged) => { state.settings = draft; applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints(); },
+  (draft, langChanged) => {
+    const remoteChanged = draft.remoteAccess !== state.settings.remoteAccess || draft.remotePort !== state.settings.remotePort || draft.remoteAddress !== state.settings.remoteAddress;
+    state.settings = draft;
+    let remote: Promise<RemoteStatus | null> | undefined;
+    if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); remote = configureRemote(); }
+    applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints();
+    return remote;
+  },
   modal, toast, checkUpdate, installUpdate,
 );
 const openSettings = () => showSettings(info);
@@ -1364,12 +1418,46 @@ async function main() {
     try { await saves.flush(); await win.destroy(); }
     catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
   });
+  await listen<{ ids: string[] }>("remote-watching", ({ payload }) => {
+    const next = new Set(payload.ids);
+    // Mobil odišiel: desktop si vezme veľkosť späť bez čakania na písanie či fokus.
+    for (const id of remoteWatching) {
+      const rt = runtimes.get(id);
+      if (!next.has(id) && rt) reclaimSize(rt, id);
+    }
+    let changed = false;
+    for (const id of next) {
+      if (remoteWatching.has(id)) continue;
+      if (markSessionRead(id)) changed = true;
+    }
+    remoteWatching = next;
+    if (changed) save();
+    renderSidebar();
+  });
+  // Mobil potvrdil pozastavenie sám; spustenie znova je to isté ako ↻ na desktope.
+  await listen<{ id: string; action: string }>("remote-action", ({ payload }) => {
+    const s = session(payload.id);
+    if (!s) return;
+    if (payload.action === "pause") void pauseSession(s, false);
+    else if (payload.action === "start" && !runtimes.get(s.id)?.running) void start(s, false);
+  });
+  // Mobil zavrel terminál (napr. prepol na chat): desktop si veľkosť vezme hneď.
+  await listen<{ id: string }>("remote-size-released", ({ payload }) => {
+    const rt = runtimes.get(payload.id);
+    if (rt) reclaimSize(rt, payload.id);
+  });
+  await listen<{ id: string }>("remote-size", ({ payload }) => {
+    const rt = runtimes.get(payload.id);
+    if (rt) rt.remoteSized = true;
+  });
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
       refreshBranches(true);
       let changed = false;
       for (const id of visibleIds()) {
+        const rt = runtimes.get(id);
+        if (rt) reclaimSize(rt, id);
         if (markSessionRead(id, false)) changed = true;
       }
       if (changed) save();
@@ -1379,6 +1467,7 @@ async function main() {
 
   renderSidebar();
   layout();
+  configureRemote();
   window.setInterval(() => void lookupCodexSessions(), 3000);
   window.setInterval(() => void pollAgents(), 2000);
   if (info.updates) {

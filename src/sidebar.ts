@@ -35,6 +35,8 @@ interface SidebarDependencies {
   markRead(id: string): void;
   jumpAttention(): void;
   showClosedSessions(): void;
+  /** Každé prekreslenie zoznamu (zmena relácií, názvov, poradia); main z neho publikuje snímok pre mobil. */
+  rendered?(): void;
   showNotifications(): void;
   refreshNotifications(): void;
 }
@@ -273,6 +275,7 @@ export function createSidebar(deps: SidebarDependencies) {
     branches.refresh(paths, revisit);
   }
   function renderSidebar() {
+    deps.rendered?.();
     renderRail();
     refreshBranches();
     if (drag || sidebarMenuOpen) return;

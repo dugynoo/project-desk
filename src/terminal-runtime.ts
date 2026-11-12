@@ -22,6 +22,8 @@ export interface Runtime extends MonitoredRuntime {
   head: HTMLElement;
   /** Odložená zmena šírky, pozri fitTerminal. */
   colsTimer?: ReturnType<typeof setTimeout>;
+  /** Mobil prebral veľkosť PTY; desktop ju vráti pri vlastnej aktivite. */
+  remoteSized?: boolean;
   /** Odkaz pod myšou, pre menu na pravom kliku. */
   hoverLink?: { url: string } | { file: string; line?: number };
 }
@@ -46,6 +48,13 @@ export function attachWebgl(rt: Runtime) {
     gl?.dispose();
     rt.webgl = undefined; // DOM renderer stačí
   }
+}
+
+/** Desktop si vezme veľkosť PTY späť od mobilu (rozmery sú tie z desktopového xtermu). */
+export function reclaimSize(rt: Runtime, id: string) {
+  if (!rt.remoteSized) return;
+  rt.remoteSized = false;
+  if (rt.running) void invoke("pty_resize", { id, cols: rt.term.cols, rows: rt.term.rows }).catch(() => {});
 }
 
 /**
@@ -153,6 +162,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
+      reclaimSize(rt, s.id);
       const mod = e.ctrlKey || e.metaKey;
       if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
       // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
@@ -179,7 +189,9 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     term.onData((data) => {
       writeInput(data);
     });
+    // Zmena rozmerov na desktope (aj z fitTerminal) posiela veľkosť sama, takže vráti aj nárok od mobilu.
     term.onResize(({ cols, rows }) => {
+      rt.remoteSized = false;
       if (rt.running) void invoke("pty_resize", { id: s.id, cols, rows }).catch(() => {});
     });
     term.onBell(() => {
@@ -192,6 +204,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
       }
     });
     term.textarea?.addEventListener("focus", () => {
+      reclaimSize(rt, s.id);
       if (getState().ui.activeSessionId !== s.id) select(s.id, false);
     });
     head.addEventListener("click", event => {

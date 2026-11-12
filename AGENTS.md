@@ -89,6 +89,9 @@ when available. Report checks run and any platform or manual checks not performe
   `--dangerously-bypass-hook-trust`, which would also run untrusted repository hooks.
 - Session-file watchers and hook payloads expose only required metadata, events,
   and usage statistics. Do not persist or forward conversation text through them.
+  The one exception is the remote chat (`src-tauri/src/remote/chat.rs`): it reads
+  conversation text only when a paired phone opens the chat with remote access on,
+  sends it only to that authenticated WebSocket, and never stores it.
 - Never interpolate project/session names, paths, or pasted text into shell
   commands. Preserve UUID validation, environment-variable indirection, and
   bracketed-paste sanitization. Launch editors with separate argument arrays.

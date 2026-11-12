@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod hook_relay;
 mod job;
 mod pty;
+mod remote;
 mod persistence;
 mod usage;
 mod shutdown;
@@ -36,6 +37,9 @@ struct AppState {
     state_write: Mutex<()>,
     usage: Arc<usage::Watcher>,
     editors: Mutex<Option<Vec<editors::Found>>>,
+    remote: Arc<remote::hub::Hub>,
+    /// Async zámok: `remote_configure` čaká na uvoľnenie portu a štart servera.
+    remote_server: tokio::sync::Mutex<remote::Control>,
 }
 
 #[derive(Serialize)]
@@ -179,7 +183,122 @@ fn pty_write(state: State<'_, AppState>, id: String, data: String) -> Result<(),
 
 #[tauri::command]
 fn pty_resize(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> Result<(), String> {
-    state.pty.resize(&id, cols, rows)
+    state.pty.resize(&id, cols, rows)?;
+    // Okno si veľkosť vzalo späť od mobilu.
+    state.remote.size().desktop(&id);
+    Ok(())
+}
+
+fn remote_dir(state: &AppState) -> Result<PathBuf, String> {
+    state.state_file.parent().map(Path::to_path_buf).ok_or_else(|| "remote.startFailed: missing config directory".into())
+}
+
+/// Tailscale CLI môže trvať sekundy; nikdy nie na vlákne IPC.
+async fn detect_tailnet(port: u16) -> Option<remote::tailscale::Tailnet> {
+    tauri::async_runtime::spawn_blocking(move || remote::tailscale::detect(port)).await.ok().flatten()
+}
+
+/// Spustí server s aktuálnym nastavením; pri chybe ostane hub vypnutý a zvyšok appky beží ďalej.
+async fn start_remote(app: &tauri::AppHandle, state: &AppState, control: &mut remote::Control) -> Result<(), String> {
+    let result = async {
+        let token = match control.token.clone() {
+            Some(token) => token,
+            None => {
+                let dir = remote_dir(state)?;
+                let token = tauri::async_runtime::spawn_blocking(move || remote::config::load_or_create_token(&dir))
+                    .await.map_err(|e| format!("remote.startFailed: {e}"))?
+                    .map_err(|e| format!("remote.startFailed: {e}"))?;
+                control.token = Some(token.clone());
+                token
+            }
+        };
+        remote::server::start(remote::server::ServerOpts {
+            port: control.port,
+            token,
+            allowed_origins: control.allowed_origins(),
+            hub: state.remote.clone(),
+            pty: Arc::new(state.pty.clone()),
+            assets: remote::assets(app.clone()),
+            events: remote::events(app.clone()),
+            heartbeat: remote::server::Heartbeat::default(),
+        }).await
+    }.await;
+    match result {
+        Ok(running) => {
+            control.server = Some(running);
+            Ok(())
+        }
+        Err(e) => {
+            state.remote.set_enabled(false);
+            Err(e)
+        }
+    }
+}
+
+/// Zastaví starý server a pri `enabled` spustí nový; bezpečné volať opakovane.
+#[tauri::command]
+async fn remote_configure(app: tauri::AppHandle, state: State<'_, AppState>, enabled: bool, port: u16, address: String) -> Result<remote::RemoteStatus, String> {
+    if enabled && port < 1024 {
+        return Err("remote.badPort".into());
+    }
+    let mut control = state.remote_server.lock().await;
+    if let Some(old) = control.server.take() {
+        old.stop_and_wait().await;
+    }
+    control.enabled = enabled;
+    control.port = port;
+    control.address = address;
+    // Vypnutie zmaže históriu a vypnutý hub nič nezaznamená.
+    state.remote.set_enabled(enabled);
+    if !enabled {
+        control.tailnet = None;
+        return Ok(control.status());
+    }
+    control.tailnet = detect_tailnet(port).await;
+    start_remote(&app, &state, &mut control).await?;
+    Ok(control.status())
+}
+
+#[tauri::command]
+async fn remote_status(state: State<'_, AppState>) -> Result<remote::RemoteStatus, String> {
+    let mut control = state.remote_server.lock().await;
+    // Vypnutá funkcia nespúšťa ani Tailscale CLI.
+    if control.enabled {
+        control.tailnet = detect_tailnet(control.port).await;
+        // Bežiaci server musí prijať aj novo zistenú adresu, inak by párovací QR viedol na 403.
+        if let Some(server) = &control.server {
+            server.set_allowed_origins(control.allowed_origins());
+        }
+    }
+    Ok(control.status())
+}
+
+/// Nový párovací token: staré sockety sa zavrú a server ďalej prijíma len nový.
+#[tauri::command]
+async fn remote_new_token(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<remote::RemoteStatus, String> {
+    let mut control = state.remote_server.lock().await;
+    let dir = remote_dir(&state)?;
+    let token = tauri::async_runtime::spawn_blocking(move || remote::config::new_token(&dir))
+        .await.map_err(|e| format!("remote.startFailed: {e}"))?
+        .map_err(|e| format!("remote.startFailed: {e}"))?;
+    control.token = Some(token);
+    state.remote.revoke();
+    if let Some(old) = control.server.take() {
+        old.stop_and_wait().await;
+        start_remote(&app, &state, &mut control).await?;
+    }
+    Ok(control.status())
+}
+
+#[tauri::command]
+fn remote_publish(
+    state: State<'_, AppState>,
+    snapshot: serde_json::Value,
+    chat_sources: std::collections::HashMap<String, remote::chat::ChatSource>,
+) {
+    // Zdroje pred snímkom: mobil po novom snímku hneď otvára chat.
+    state.remote.set_chat_sources(chat_sources);
+    state.remote.publish_snapshot(snapshot);
 }
 
 #[tauri::command]
@@ -367,8 +486,11 @@ pub fn run() {
                     None
                 }
             };
+            let remote = Arc::new(remote::hub::Hub::default());
             app.manage(AppState {
-                pty: PtyManager::default(),
+                pty: PtyManager::with_remote(remote.clone()),
+                remote,
+                remote_server: tokio::sync::Mutex::default(),
                 hooks,
                 state_file: config_dir.join("state.json"),
                 usage: Arc::default(),
@@ -409,7 +531,11 @@ pub fn run() {
             recover_codex_session,
             list_conversations,
             agent_poll,
-            agent_retain
+            agent_retain,
+            remote_configure,
+            remote_status,
+            remote_new_token,
+            remote_publish
         ])
         .build(tauri::generate_context!())
         .expect("Project Desk failed to start");

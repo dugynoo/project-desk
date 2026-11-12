@@ -35,12 +35,16 @@ tauri-plugin-process = "2"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-single-instance = "2"
 tempfile = "3.27.0"
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["net", "sync", "time", "macros", "rt-multi-thread"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]
 toml = "1"
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

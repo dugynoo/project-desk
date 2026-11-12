@@ -100,6 +100,11 @@ export interface Settings {
   autoResume: boolean;
   /** Prípony, ktoré Ctrl+klik otvorí v predvolenej aplikácii systému namiesto editora. */
   systemOpenExts: string;
+  /** Vzdialený prístup z mobilu (loopback server + `tailscale serve`). */
+  remoteAccess: boolean;
+  remotePort: number;
+  /** Ručne zadaná adresa v tailnete; "" = zistiť z Tailscale. */
+  remoteAddress: string;
 }
 
 /** Nainštalovaný editor z backendu (`list_editors`). */
@@ -162,6 +167,9 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: true,
   autoResume: true,
   systemOpenExts: "html htm pdf png jpg jpeg gif webp svg",
+  remoteAccess: false,
+  remotePort: 47615,
+  remoteAddress: "",
 };
 
 /** Predvolené hodnoty z rev 1; ak ich používateľ nezmenil, prejdú na nové. */
@@ -283,6 +291,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
     if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
+    const port = state.settings.remotePort;
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) state.settings.remotePort = DEFAULT_SETTINGS.remotePort;
     if (typeof data.settings.editorId !== "string" && typeof data.settings.editorCommand === "string") {
       state.settings.editorId = migrateEditorCommand(data.settings.editorCommand);
     }
@@ -426,6 +436,47 @@ export function agentCommand(
   if (isUuid(id)) parts.push(s.hasConversation ? `--resume ${id}` : `--session-id ${id}`);
   if (hooksEnabled) parts.push(`--settings ${envRef(platform, "PROJECT_DESK_HOOK_SETTINGS")}`);
   return parts.join(" ");
+}
+
+/** Zjednodušený stav pre mobil: bez konverzačných dát. */
+export interface RemoteSnapshot {
+  language: string;
+  projects: { id: string; name: string }[];
+  /**
+   * `canPause`: mobil môže agenta pozastaviť (ako ⏸ na desktope); zastavenú session môže spustiť znova.
+   * `chat`: konverzácia sa dá čítať ako chat (zdroj pozná len server, pozri `remoteChatSources`).
+   */
+  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean; canPause: boolean; chat: boolean }[];
+}
+
+export type ChatProvider = "claude" | "codex";
+
+/** Odkiaľ server číta chat; ostáva na serveri, mobil dostane len `chat: true`. */
+export function remoteChatSources(state: PersistedState): Record<string, { provider: ChatProvider; agentId: string }> {
+  const out: Record<string, { provider: ChatProvider; agentId: string }> = {};
+  for (const s of state.sessions) {
+    if (s.hidden || (s.provider !== "claude" && s.provider !== "codex") || !isUuid(s.agentSessionId)) continue;
+    out[s.id] = { provider: s.provider, agentId: s.agentSessionId };
+  }
+  return out;
+}
+
+/** Projekty v poradí ako v sidebare (pripnuté hore), bez skrytých sessions. */
+export function remoteSnapshot(
+  state: PersistedState,
+  statusOf: (id: string) => Status,
+  running: (id: string) => boolean,
+  canPause: (id: string) => boolean,
+): RemoteSnapshot {
+  const projects = orderedProjects(state.projects);
+  const order = new Map(projects.map((p, i) => [p.id, i]));
+  // Pole po poli, nikdy spread Session: konverzačné dáta nesmú odísť.
+  const sessions = state.sessions
+    .filter((s) => !s.hidden && order.has(s.projectId))
+    .sort((a, b) => order.get(a.projectId)! - order.get(b.projectId)!)
+    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id), canPause: canPause(s.id),
+      chat: (s.provider === "claude" || s.provider === "codex") && isUuid(s.agentSessionId) }));
+  return { language: state.settings.language, projects: projects.map((p) => ({ id: p.id, name: p.name })), sessions };
 }
 
 export type Status =

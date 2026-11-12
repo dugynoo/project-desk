@@ -11,6 +11,8 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter};
 
+use crate::remote::hub::Hub;
+
 // Bound transport + parser backlog, with one acknowledgement per ~64 KiB.
 // Limits count UTF-8 bytes on the backend; the frontend echoes offsets unchanged.
 const OUTPUT_HIGH: u64 = 256 * 1024;
@@ -175,6 +177,8 @@ pub struct PtyManager {
     /// Pri ukončení aplikácie nehlásime exit, aby UI nezmazalo relácie, ktoré majú po reštarte pokračovať.
     shutting_down: Arc<AtomicBool>,
     preparing_shutdown: Arc<AtomicBool>,
+    /// Odbočka výstupu pre vzdialený prístup; vypnutý hub nič neukladá.
+    remote: Arc<Hub>,
 }
 
 #[derive(Clone, Serialize)]
@@ -211,6 +215,28 @@ pub struct SpawnRequest {
 
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 }
+}
+
+/// Premenné, ktorými Claude Code (a jeho pluginy) označuje vlastné procesy. Patria rodičovskej
+/// session, nie sessions v aplikácii; nastavenia používateľa (`CLAUDE_CONFIG_DIR`...) ostávajú.
+const INHERITED_AGENT_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "CLAUDE_JOB_DIR",
+    "CODEX_COMPANION_SESSION_ID",
+    "CODEX_COMPANION_TRANSCRIPT_PATH",
+];
+
+fn strip_agent_markers(cmd: &mut CommandBuilder) {
+    for key in INHERITED_AGENT_MARKERS {
+        cmd.env_remove(key);
+    }
 }
 
 /// Zostaví príkaz pre shell. Názvy projektov a úloh sa sem nikdy nedostanú,
@@ -277,7 +303,7 @@ pub fn take_utf8(pending: &mut Vec<u8>) -> String {
 /// Forwards PTY output until EOF. After the frontend stops listening it keeps
 /// reading and discards: macOS holds an exiting session leader until its output
 /// is read, and older Windows block ClosePseudoConsole until the pipe drains.
-fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut send: impl FnMut(OutputChunk) -> bool) {
+fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut tap: impl FnMut(&str), mut send: impl FnMut(OutputChunk) -> bool) {
     let mut buf = [0u8; 16 * 1024];
     let mut pending = Vec::new();
     let mut forwarding = true;
@@ -289,6 +315,8 @@ fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut send: impl FnMut(Ou
                 pending.extend_from_slice(&buf[..n]);
                 let text = take_utf8(&mut pending);
                 if text.is_empty() { continue; }
+                // Pred desktopovým backpressure: mobil nečaká na ack okna.
+                tap(&text);
                 forwarding = flow.reserve(text.len()).is_some_and(|ack| send(OutputChunk { data: text, ack }));
             }
         }
@@ -296,7 +324,21 @@ fn pump_output(mut reader: impl Read, flow: &OutputFlow, mut send: impl FnMut(Ou
 }
 
 impl PtyManager {
+    pub fn with_remote(hub: Arc<Hub>) -> PtyManager {
+        PtyManager { remote: hub, ..PtyManager::default() }
+    }
+
     pub fn spawn(&self, app: AppHandle, req: SpawnRequest, output: Channel<OutputChunk>) -> Result<(), String> {
+        self.spawn_with(req, move |chunk| output.send(chunk).is_ok(), move |event| { let _ = app.emit("pty-exit", event); })
+    }
+
+    /// `send` dostáva výstup pre okno, `exit` sa volá po ukončení procesu (nie pri vypínaní appky).
+    fn spawn_with(
+        &self,
+        req: SpawnRequest,
+        send: impl FnMut(OutputChunk) -> bool + Send + 'static,
+        exit: impl FnOnce(ExitEvent) + Send + 'static,
+    ) -> Result<(), String> {
         // Open and fork without the registry lock: ConPTY and process creation can be slow,
         // and input, resizes and kills of other sessions must not wait for them.
         if self.sessions.lock().map_err(|e| e.to_string())?.contains_key(&req.id)
@@ -317,6 +359,9 @@ impl PtyManager {
         cmd.cwd(&req.cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // App spustená z inej Claude Code session (napr. `npm run app:dev` z agenta) by tieto značky
+        // podedila a Claude v sessions by bral seba ako vnorenú: bez prepisu konverzácie, teda bez chatu.
+        strip_agent_markers(&mut cmd);
         for (k, v) in &req.env {
             cmd.env(k, v);
         }
@@ -336,11 +381,15 @@ impl PtyManager {
             return Err(error);
         }
 
+        self.remote.started(&req.id);
         let outputs = self.outputs.clone();
         let output_id = req.output_id;
+        let (remote, tap_id, sessions) = (self.remote.clone(), req.id.clone(), self.sessions.clone());
         thread::spawn(move || {
-            pump_output(reader, &flow, |chunk| output.send(chunk).is_ok());
+            pump_output(reader, &flow, |text| remote.output(&tap_id, text), send);
             if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
+            // Dobehnutý výstup po ukončení nesmie nechať históriu mŕtvej session v pamäti.
+            if sessions.lock().is_ok_and(|map| !map.contains_key(&tap_id)) { remote.forget(&tap_id); }
         });
 
         thread::spawn(move || {
@@ -353,6 +402,7 @@ impl PtyManager {
         let registry = self.sessions.clone();
         let shutting_down = self.shutting_down.clone();
         let preparing_shutdown = self.preparing_shutdown.clone();
+        let remote = self.remote.clone();
         thread::spawn(move || {
             let code = child.wait().ok().map(|s| s.exit_code());
             // Capture immediately: Windows can terminate console processes before
@@ -363,8 +413,10 @@ impl PtyManager {
             if let Ok(mut map) = registry.lock() {
                 map.remove(&id);
             }
+            // Pred `pty-exit`: po ňom môže okno spustiť session s rovnakým id a jej históriu nezmažeme.
+            remote.forget(&id);
             if !shutting_down.load(Ordering::SeqCst) {
-                let _ = app.emit("pty-exit", ExitEvent { id, code, system_shutdown });
+                exit(ExitEvent { id, code, system_shutdown });
             }
         });
         Ok(())
@@ -438,6 +490,18 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[test]
+    fn parent_claude_session_markers_are_not_inherited() {
+        let mut cmd = portable_pty::CommandBuilder::new("x");
+        cmd.env("CLAUDE_CODE_CHILD_SESSION", "1");
+        cmd.env("CLAUDECODE", "1");
+        cmd.env("CLAUDE_CONFIG_DIR", "c");
+        super::strip_agent_markers(&mut cmd);
+        assert!(cmd.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+        assert!(cmd.get_env("CLAUDECODE").is_none());
+        assert_eq!(cmd.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()), Some("c"));
+    }
 
     #[test]
     fn input_limits_include_in_flight_bytes_and_reject_whole_pastes() {
@@ -575,12 +639,12 @@ mod tests {
         let flow = OutputFlow::default();
         let mut source = Source { left: 5000, read: 0 };
         let mut sent = 0;
-        pump_output(&mut source, &flow, |_| { sent += 1; flow.cancel(); true });
+        pump_output(&mut source, &flow, |_| {}, |_| { sent += 1; flow.cancel(); true });
         assert_eq!((sent, source.read), (1, 5000));
 
         let mut source = Source { left: 5000, read: 0 };
         let mut sent = 0;
-        pump_output(&mut source, &OutputFlow::default(), |_| { sent += 1; false });
+        pump_output(&mut source, &OutputFlow::default(), |_| {}, |_| { sent += 1; false });
         assert_eq!((sent, source.read), (1, 5000));
     }
 
@@ -649,6 +713,59 @@ mod tests {
         assert_eq!(runs(true, "1"), 1);
         if !cfg!(windows) { assert!(super::rerun_after_update("codex", Some("/usr/bin/fish")).is_none()); }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn remote_tap_sees_output() {
+        use super::{PtyManager, SpawnRequest};
+        use crate::remote::hub::Hub;
+        use std::sync::{mpsc, Arc};
+        use std::time::{Duration, Instant};
+        let hub = Arc::new(Hub::default());
+        hub.set_enabled(true);
+        let manager = PtyManager::with_remote(hub.clone());
+        // Proces ostane bežať, lebo po ukončení hub históriu zabudne.
+        let (program, args) = if cfg!(windows) {
+            ("powershell.exe", vec!["-NoProfile", "-NonInteractive", "-Command", "Write-Output remote-ok; Start-Sleep -Seconds 30"])
+        } else {
+            ("/bin/sh", vec!["-c", "echo remote-ok; sleep 30"])
+        };
+        let req = SpawnRequest {
+            direct: Some((program.into(), args.into_iter().map(String::from).collect())),
+            id: "remote-tap".into(),
+            output_id: "remote-tap-out".into(),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+            command: None,
+            shell: None,
+            env: vec![],
+            cols: 80,
+            rows: 24,
+        };
+        let (exited, exit) = mpsc::channel();
+        manager.spawn_with(req, |_| true, move |_| { let _ = exited.send(()); }).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut answered = false;
+        let seen = loop {
+            let history = hub.history("remote-tap").unwrap_or_default();
+            // ConPTY čaká na odpoveď na dotaz o kurzore, ktorú inak dá xterm v okne.
+            if !answered && history.contains("\x1b[6n") {
+                manager.write("remote-tap", "\x1b[1;1R").unwrap();
+                answered = true;
+            }
+            let seen = history.contains("remote-ok");
+            if seen || Instant::now() > deadline { break seen; }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let history = hub.history("remote-tap");
+        manager.kill("remote-tap").unwrap();
+        exit.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(seen, "{history:?}");
+        // Po ukončení sa história zahodí.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while hub.history("remote-tap").is_some() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(hub.history("remote-tap"), None);
     }
 
     #[test]
