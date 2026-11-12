@@ -291,7 +291,13 @@ async fn remote_new_token(app: tauri::AppHandle, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
-fn remote_publish(state: State<'_, AppState>, snapshot: serde_json::Value) {
+fn remote_publish(
+    state: State<'_, AppState>,
+    snapshot: serde_json::Value,
+    chat_sources: std::collections::HashMap<String, remote::chat::ChatSource>,
+) {
+    // Zdroje pred snímkom: mobil po novom snímku hneď otvára chat.
+    state.remote.set_chat_sources(chat_sources);
     state.remote.publish_snapshot(snapshot);
 }
 

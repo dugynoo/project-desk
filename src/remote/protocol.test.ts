@@ -13,6 +13,16 @@ test("parseServerMsg accepts output", () => {
   assert.deepEqual(parseServerMsg('{"type":"error","id":null,"code":"x"}'), { type: "error", id: null, code: "x" });
 });
 
+test("parseServerMsg accepts chat and drops malformed items", () => {
+  const raw = JSON.stringify({ type: "chat", id: "a", reset: true, items: [
+    { role: "user", text: "hi" }, { role: "tool", text: "npm test", name: "Bash" }, { role: "x", text: "?" }, { role: "assistant" },
+  ] });
+  assert.deepEqual(parseServerMsg(raw), { type: "chat", id: "a", reset: true, items: [
+    { role: "user", text: "hi" }, { role: "tool", text: "npm test", name: "Bash" },
+  ] });
+  assert.equal(parseServerMsg('{"type":"chat","id":"a","items":[]}'), null);
+});
+
 test("reconnectDelay caps at 10s", () => {
   assert.equal(reconnectDelay(0), 1000);
   assert.equal(reconnectDelay(2), 4000);

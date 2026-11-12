@@ -6,7 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { errorText, setLang, t, type Key } from "../i18n.ts";
 import { pasteSequence, type RemoteSnapshot } from "../model.ts";
-import { PROTOCOL, REMOTE_KEYS, closeAction, parseServerMsg, reconnectDelay, type ClientMsg, type ServerMsg } from "./protocol.ts";
+import { PROTOCOL, REMOTE_KEYS, closeAction, parseServerMsg, reconnectDelay, type ChatItem, type ClientMsg, type ServerMsg } from "./protocol.ts";
+import { parseMarkdown, type Block, type Inline } from "./markdown.ts";
 
 type RemoteSession = RemoteSnapshot["sessions"][number];
 
@@ -31,6 +32,13 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
+
+/** Chat číta session súbor a veľkosť PTY nemení; terminál je živý PTY ako na desktope. */
+type Mode = "chat" | "terminal";
+let mode: Mode = "terminal";
+let chatEl: HTMLElement | null = null;
+/** Najviac toľko správ v DOM; staršie sa odstránia zhora. */
+const CHAT_DOM_LIMIT = 600;
 
 function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -76,7 +84,7 @@ function connect(token: string) {
     failures = 0;
     renderBanner();
     // po znovupripojení znova odoberáme otvorenú session (skrytá stránka až po návrate)
-    if (openId && !document.hidden) subscribe(openId);
+    if (openId && !document.hidden) attach();
   };
   sock.onmessage = (ev) => {
     if (typeof ev.data !== "string") return;
@@ -143,7 +151,15 @@ function handle(msg: ServerMsg) {
     case "output":
       if (msg.id === openId) term?.write(msg.data);
       break;
+    case "chat":
+      if (msg.id === openId && mode === "chat") appendChat(msg.items, msg.reset);
+      break;
     case "error":
+      // Chat sa nedá čítať (napr. konverzácia ešte nemá súbor): ostáva terminál.
+      if (msg.code === "remote.chatUnavailable" && msg.id === openId && mode === "chat") {
+        setMode("terminal");
+        break;
+      }
       showToast(errorText(msg.code));
       break;
   }
@@ -345,6 +361,15 @@ function updateHeader(s: RemoteSession) {
   const status = paneEl.querySelector(".head-status");
   if (title) title.textContent = project ? `${project} / ${s.title}` : s.title;
   if (status) status.replaceChildren(statusDot(s), document.createTextNode(statusLabel(s)));
+  const tabs = paneEl.querySelector<HTMLElement>(".tabs");
+  if (tabs) {
+    tabs.hidden = !s.chat;
+    for (const b of tabs.querySelectorAll<HTMLButtonElement>("button")) b.setAttribute("aria-selected", String(b.dataset.mode === mode));
+  }
+  // Konverzácia sa zmenila tak, že chat už nemá zdroj: zostane terminál.
+  if (!s.chat && mode === "chat") setMode("terminal");
+  const notice = paneEl.querySelector<HTMLElement>(".notice");
+  if (notice) notice.hidden = !(mode === "chat" && statusOf(s) === "needs-you");
   paneEl.querySelector(".head-actions")?.replaceChildren(...sessionActions(s).map((a) => {
     const b = h("button", "head-action", a.icon);
     b.type = "button";
@@ -373,8 +398,7 @@ function openSession(id: string) {
   const s = snapshot?.sessions.find((x) => x.id === id);
   if (!s || id === openId) return;
   // Prepnutie na širokej obrazovke: predchádzajúcu session prestaneme sledovať.
-  if (openId) send({ type: "unsubscribe", id: openId });
-  disposeTerminal();
+  detach();
   openId = id;
   const view = h("div", "session");
 
@@ -384,16 +408,27 @@ function openSession(id: string) {
   back.onclick = closeSession;
   head.append(back, h("div", "head-title"), h("div", "head-status"), h("div", "head-actions"));
 
-  const host = h("div", "term");
-  const keys = h("div", "keys");
-  for (const k of REMOTE_KEYS) {
-    const b = h("button", "key", t(`remote.keys.${k.id}` as Key));
+  const tabs = h("div", "tabs");
+  tabs.setAttribute("role", "tablist");
+  for (const m of ["chat", "terminal"] as const) {
+    const b = h("button", "tab", t(m === "chat" ? "remote.tabChat" : "remote.tabTerminal"));
     b.type = "button";
-    // mousedown nesmie zobrať fokus poľu, inak sa zavrie klávesnica
-    b.onmousedown = (e) => e.preventDefault();
-    b.onclick = () => send({ type: "input", id, data: k.seq });
-    keys.append(b);
+    b.dataset.mode = m;
+    b.setAttribute("role", "tab");
+    b.onclick = () => setMode(m);
+    tabs.append(b);
   }
+
+  // Agent čaká na voľbu alebo povolenie, ktoré chat neukáže.
+  const notice = h("div", "notice");
+  notice.hidden = true;
+  const noticeBtn = h("button", "notice-btn", t("remote.openTerminal"));
+  noticeBtn.type = "button";
+  noticeBtn.onclick = () => setMode("terminal");
+  notice.append(h("span", "", t("remote.chatNeedsYou")), noticeBtn);
+
+  const body = h("div", "body");
+  const keys = h("div", "keys");
 
   const form = h("form", "compose");
   const input = h("input", "text");
@@ -412,29 +447,80 @@ function openSession(id: string) {
     if (input.value) send({ type: "input", id, data: pasteSequence(input.value) });
     send({ type: "input", id, data: "\r" });
     input.value = "";
+    if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
   };
 
-  view.append(head, host, keys, form);
+  view.append(head, tabs, body, notice, keys, form);
   paneEl.replaceChildren(view);
+  mode = s.chat ? "chat" : "terminal";
+  mountBody();
   renderList();
   updateHeader(s);
+}
 
-  term = new Terminal({
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
-    fontSize: 13,
-    scrollback: 5000,
-    allowProposedApi: true,
-    disableStdin: true,
-    theme: { background: "#111317", foreground: "#e6e8ee", cursor: "#7cc4ff", selectionBackground: "#2d3a52" },
-  });
-  fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(new UnicodeGraphemesAddon());
-  term.open(host);
-  fit.fit();
-  subscribe(id);
-  resizeObserver = new ResizeObserver(() => sendResize());
-  resizeObserver.observe(host);
+/** Obsah podľa režimu: chat alebo terminál, a k nemu klávesy. */
+function mountBody() {
+  const id = openId;
+  const body = paneEl.querySelector<HTMLElement>(".body");
+  const keys = paneEl.querySelector<HTMLElement>(".keys");
+  if (!id || !body || !keys) return;
+  // V chate stačí Esc (prerušenie); šípky a Tab patria k terminálu.
+  keys.replaceChildren(...REMOTE_KEYS.filter((k) => mode === "terminal" || k.id === "esc").map((k) => {
+    const b = h("button", "key", t(`remote.keys.${k.id}` as Key));
+    b.type = "button";
+    // mousedown nesmie zobrať fokus poľu, inak sa zavrie klávesnica
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = () => send({ type: "input", id, data: k.seq });
+    return b;
+  }));
+  if (mode === "chat") {
+    chatEl = h("div", "chat");
+    chatEl.setAttribute("role", "log");
+    chatEl.append(h("p", "chat-empty", t("remote.chatEmpty")));
+    body.replaceChildren(chatEl);
+  } else {
+    const host = h("div", "term");
+    body.replaceChildren(host);
+    term = new Terminal({
+      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
+      fontSize: 13,
+      scrollback: 5000,
+      allowProposedApi: true,
+      disableStdin: true,
+      theme: { background: "#111317", foreground: "#e6e8ee", cursor: "#7cc4ff", selectionBackground: "#2d3a52" },
+    });
+    fit = new FitAddon();
+    term.loadAddon(fit);
+    term.loadAddon(new UnicodeGraphemesAddon());
+    term.open(host);
+    fit.fit();
+    resizeObserver = new ResizeObserver(() => sendResize());
+    resizeObserver.observe(host);
+  }
+  if (!document.hidden) attach();
+}
+
+function setMode(next: Mode) {
+  if (!openId || next === mode) return;
+  detach();
+  mode = next;
+  mountBody();
+  const s = snapshot?.sessions.find((x) => x.id === openId);
+  if (s) updateHeader(s);
+}
+
+/** Začne sledovať otvorenú session podľa režimu (aj po znovupripojení či návrate na stránku). */
+function attach() {
+  if (!openId) return;
+  if (mode === "chat") send({ type: "chatOpen", id: openId });
+  else subscribe(openId);
+}
+
+/** Prestane sledovať otvorenú session a uvoľní terminál. */
+function detach() {
+  if (openId) send(mode === "chat" ? { type: "chatClose", id: openId } : { type: "unsubscribe", id: openId });
+  disposeTerminal();
+  chatEl = null;
 }
 
 function disposeTerminal() {
@@ -446,18 +532,110 @@ function disposeTerminal() {
 }
 
 function closeSession() {
-  if (openId) send({ type: "unsubscribe", id: openId });
+  detach();
   openId = null;
-  disposeTerminal();
   paneEl.replaceChildren(h("p", "pane-empty", t("remote.pick")));
   renderList();
+}
+
+function appendChat(items: ChatItem[], reset: boolean) {
+  const el = chatEl;
+  if (!el) return;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  if (reset) el.replaceChildren();
+  if (items.length) el.querySelector(".chat-empty")?.remove();
+  else if (reset) el.append(h("p", "chat-empty", t("remote.chatEmpty")));
+  for (const item of items) el.append(chatItem(item));
+  while (el.childElementCount > CHAT_DOM_LIMIT) el.firstElementChild?.remove();
+  if (reset || atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function chatItem(item: ChatItem): HTMLElement {
+  if (item.role === "user") {
+    const row = h("div", "msg user");
+    row.append(h("div", "bubble", item.text));
+    return row;
+  }
+  if (item.role === "tool") {
+    const row = h("div", "msg tool");
+    row.append(h("span", "tool-name", `⚙ ${item.name ?? ""}`), h("span", "tool-text", item.text));
+    return row;
+  }
+  const row = h("div", "msg assistant md");
+  row.append(...parseMarkdown(item.text).map(blockNode));
+  return row;
+}
+
+function blockNode(b: Block): HTMLElement {
+  switch (b.t) {
+    case "h": return withInline(h(`h${Math.min(b.level + 2, 6)}` as "h3"), b.c);
+    case "p": return withInline(h("p"), b.c);
+    case "code": {
+      const pre = h("pre");
+      pre.append(h("code", "", b.v));
+      return pre;
+    }
+    case "list": {
+      const list = h(b.ordered ? "ol" : "ul");
+      if (b.ordered && b.start !== 1) (list as HTMLOListElement).start = b.start;
+      for (const item of b.items) list.append(withInline(h("li"), item));
+      return list;
+    }
+    case "quote": {
+      const q = h("blockquote");
+      q.append(...b.c.map(blockNode));
+      return q;
+    }
+    case "table": {
+      const wrap = h("div", "table-wrap");
+      const table = h("table");
+      const head = h("tr");
+      for (const c of b.head) head.append(withInline(h("th"), c));
+      const thead = h("thead");
+      thead.append(head);
+      const tbody = h("tbody");
+      for (const r of b.rows) {
+        const tr = h("tr");
+        for (const c of r) tr.append(withInline(h("td"), c));
+        tbody.append(tr);
+      }
+      table.append(thead, tbody);
+      wrap.append(table);
+      return wrap;
+    }
+    case "hr": return h("hr");
+  }
+}
+
+function withInline<E extends HTMLElement>(e: E, parts: Inline[]): E {
+  e.append(...parts.map(inlineNode));
+  return e;
+}
+
+function inlineNode(p: Inline): Node {
+  switch (p.t) {
+    case "text": return document.createTextNode(p.v);
+    case "code": return h("code", "", p.v);
+    case "b": return withInline(h("strong"), p.c);
+    case "i": return withInline(h("em"), p.c);
+    case "a": {
+      const a = withInline(h("a"), p.c);
+      a.href = p.href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      return a;
+    }
+  }
 }
 
 // Skrytá stránka (zamknutý telefón, iná appka) sessions nesleduje, inak by na desktope stlmila upozornenia.
 document.addEventListener("visibilitychange", () => {
   if (!openId) return;
-  if (document.hidden) send({ type: "unsubscribe", id: openId });
-  else subscribe(openId);
+  if (document.hidden) {
+    send(mode === "chat" ? { type: "chatClose", id: openId } : { type: "unsubscribe", id: openId });
+  } else {
+    attach();
+  }
 });
 
 const token = loadToken();

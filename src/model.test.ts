@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   appWheelSteps,
   fileOpenTarget,
+  remoteChatSources,
   remoteSnapshot,
   codexHooksFit,
   backgroundStatus,
@@ -1115,11 +1116,21 @@ function remoteFixture() {
 test("remoteSnapshot omits hidden sessions and conversation data", () => {
   const snap = remoteSnapshot(remoteFixture(), () => "idle", (id) => id === "s1", (id) => id === "s1");
   assert.deepEqual(snap.sessions.map((s) => s.id), ["s3", "s1"]);
-  assert.deepEqual(Object.keys(snap.sessions[0]).sort(), ["canPause", "id", "projectId", "provider", "running", "status", "title"]);
+  assert.deepEqual(Object.keys(snap.sessions[0]).sort(), ["canPause", "chat", "id", "projectId", "provider", "running", "status", "title"]);
+  assert.equal(snap.sessions[0].chat, true);
   assert.equal(snap.sessions[1].running, true);
   assert.equal(snap.sessions[1].canPause, true);
   assert.equal(snap.sessions[0].canPause, false);
   assert.equal(snap.sessions[0].running, false);
+});
+
+test("remoteChatSources maps visible agent sessions to their conversation", () => {
+  const state = remoteFixture();
+  state.sessions.push({ ...state.sessions[0], id: "sh", provider: "shell" });
+  assert.deepEqual(remoteChatSources(state), {
+    s1: { provider: "claude", agentId: "11111111-1111-4111-8111-111111111111" },
+    s3: { provider: "claude", agentId: "11111111-1111-4111-8111-111111111111" },
+  });
 });
 
 test("remoteSnapshot keeps pinned projects first", () => {

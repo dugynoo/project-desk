@@ -1,5 +1,6 @@
 //! Vzdialený prístup z mobilu: história výstupu, arbitráž veľkosti, loopback server a čítanie Tailscale.
 
+pub mod chat;
 pub mod config;
 pub mod history;
 pub mod hub;
@@ -99,6 +100,7 @@ pub fn events(app: AppHandle) -> server::Events {
         let _ = match event {
             RemoteEvent::Watching { ids } => app.emit("remote-watching", serde_json::json!({ "ids": ids })),
             RemoteEvent::SizeTaken { id } => app.emit("remote-size", serde_json::json!({ "id": id })),
+            RemoteEvent::SizeReleased { id } => app.emit("remote-size-released", serde_json::json!({ "id": id })),
             RemoteEvent::Action { id, action } => {
                 app.emit("remote-action", serde_json::json!({ "id": id, "action": action.as_str() }))
             }

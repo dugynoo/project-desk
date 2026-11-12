@@ -179,7 +179,9 @@ Optional and **off by default**. When enabled, you can watch and control your se
 
 **New pairing code** replaces the token, so every paired phone is disconnected and the old link stops working.
 
-On the phone you get the session list with status, a live terminal, and typing with a key row (Esc, Tab, arrows, Ctrl+C, new line, Enter). Not available yet: creating, closing or resuming sessions, and file or editor actions.
+On the phone you get the session list with status. Claude Code and Codex sessions open as a **chat**: your messages, the agent's formatted replies, and the tools it ran, read from the agent's own conversation file. The **Terminal** tab shows the live terminal with a key row (Esc, Tab, arrows, Ctrl+C, new line, Enter), and the chat points you there when the agent waits for a choice. Other sessions open straight in the terminal. From the session header or by long-pressing a session you can pause an agent or start a stopped session again. Not available yet: creating or closing sessions, and file or editor actions.
+
+The chat reads conversation text only while a paired phone has it open, sends it only to that phone over the Tailscale connection, and stores nothing.
 
 Security: the server listens on `127.0.0.1` only and Tailscale forwards your tailnet to it; every request needs the random token. Never expose the port publicly (no router port forwarding, no Tailscale Funnel).
 

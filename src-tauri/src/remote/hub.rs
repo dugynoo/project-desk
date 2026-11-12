@@ -6,6 +6,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use tokio::sync::broadcast;
 
+use super::chat::ChatSource;
 use super::history::{History, HISTORY_BYTES};
 use super::size::SizeArbiter;
 
@@ -28,6 +29,8 @@ pub struct Hub {
     sender: broadcast::Sender<HubEvent>,
     snapshot: Mutex<Option<serde_json::Value>>,
     size: Mutex<SizeArbiter>,
+    /// Odkiaľ číta chat každá session; len pre server, mobilu sa neposiela.
+    chat_sources: Mutex<HashMap<String, ChatSource>>,
 }
 
 impl Default for Hub {
@@ -38,6 +41,7 @@ impl Default for Hub {
             sender: broadcast::channel(BROADCAST_CAPACITY).0,
             snapshot: Mutex::default(),
             size: Mutex::default(),
+            chat_sources: Mutex::default(),
         }
     }
 }
@@ -65,6 +69,7 @@ impl Hub {
             histories.clear();
             *lock(&self.snapshot) = None;
             *lock(&self.size) = SizeArbiter::default();
+            lock(&self.chat_sources).clear();
         }
     }
 
@@ -113,6 +118,16 @@ impl Hub {
         }
         *lock(&self.snapshot) = Some(v.clone());
         let _ = self.sender.send(HubEvent::Snapshot(v));
+    }
+
+    pub fn set_chat_sources(&self, sources: HashMap<String, ChatSource>) {
+        if self.enabled.load(Ordering::SeqCst) {
+            *lock(&self.chat_sources) = sources;
+        }
+    }
+
+    pub fn chat_source(&self, id: &str) -> Option<ChatSource> {
+        lock(&self.chat_sources).get(id).cloned()
     }
 
     pub fn snapshot(&self) -> Option<serde_json::Value> {

@@ -95,7 +95,7 @@ fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
 }
 
-fn claude_projects() -> Option<PathBuf> {
+pub(crate) fn claude_projects() -> Option<PathBuf> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(|| home().map(|h| h.join(".claude")))?;
     Some(dir.join("projects"))
 }
@@ -110,13 +110,13 @@ fn sorted_dirs_desc(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Claude: `projects/<priečinok projektu>/<id>.jsonl`.
-fn find_claude(root: &Path, id: &str) -> Option<PathBuf> {
+pub(crate) fn find_claude(root: &Path, id: &str) -> Option<PathBuf> {
     let name = format!("{id}.jsonl");
     sorted_dirs_desc(root).into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
 /// Codex: `sessions/RRRR/MM/DD/rollout-<čas>-<id>.jsonl`, najnovšie dni najprv.
-fn find_codex(root: &Path, id: &str) -> Option<PathBuf> {
+pub(crate) fn find_codex(root: &Path, id: &str) -> Option<PathBuf> {
     let suffix = format!("-{id}.jsonl");
     for year in sorted_dirs_desc(root) {
         for month in sorted_dirs_desc(&year) {
@@ -134,7 +134,7 @@ fn find_codex(root: &Path, id: &str) -> Option<PathBuf> {
     None
 }
 
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 

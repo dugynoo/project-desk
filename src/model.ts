@@ -442,8 +442,23 @@ export function agentCommand(
 export interface RemoteSnapshot {
   language: string;
   projects: { id: string; name: string }[];
-  /** `canPause`: mobil môže agenta pozastaviť (ako ⏸ na desktope); zastavenú session môže spustiť znova. */
-  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean; canPause: boolean }[];
+  /**
+   * `canPause`: mobil môže agenta pozastaviť (ako ⏸ na desktope); zastavenú session môže spustiť znova.
+   * `chat`: konverzácia sa dá čítať ako chat (zdroj pozná len server, pozri `remoteChatSources`).
+   */
+  sessions: { id: string; projectId: string; title: string; provider: Provider; status: Status; running: boolean; canPause: boolean; chat: boolean }[];
+}
+
+export type ChatProvider = "claude" | "codex";
+
+/** Odkiaľ server číta chat; ostáva na serveri, mobil dostane len `chat: true`. */
+export function remoteChatSources(state: PersistedState): Record<string, { provider: ChatProvider; agentId: string }> {
+  const out: Record<string, { provider: ChatProvider; agentId: string }> = {};
+  for (const s of state.sessions) {
+    if (s.hidden || (s.provider !== "claude" && s.provider !== "codex") || !isUuid(s.agentSessionId)) continue;
+    out[s.id] = { provider: s.provider, agentId: s.agentSessionId };
+  }
+  return out;
 }
 
 /** Projekty v poradí ako v sidebare (pripnuté hore), bez skrytých sessions. */
@@ -459,7 +474,8 @@ export function remoteSnapshot(
   const sessions = state.sessions
     .filter((s) => !s.hidden && order.has(s.projectId))
     .sort((a, b) => order.get(a.projectId)! - order.get(b.projectId)!)
-    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id), canPause: canPause(s.id) }));
+    .map((s) => ({ id: s.id, projectId: s.projectId, title: s.title, provider: s.provider, status: statusOf(s.id), running: running(s.id), canPause: canPause(s.id),
+      chat: (s.provider === "claude" || s.provider === "codex") && isUuid(s.agentSessionId) }));
   return { language: state.settings.language, projects: projects.map((p) => ({ id: p.id, name: p.name })), sessions };
 }
 

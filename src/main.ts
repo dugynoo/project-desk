@@ -31,6 +31,7 @@ import {
   attentionEventKind,
   recordAttention,
   readAttention,
+  remoteChatSources,
   remoteSnapshot,
   sessionDiagnostics,
   type PaneLayout,
@@ -140,7 +141,7 @@ function publishRemote() {
     const s = session(id);
     return s ? canPause(s) : false;
   });
-  void invoke("remote_publish", { snapshot }).catch(() => {});
+  void invoke("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
 }
 
 /** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
@@ -1434,6 +1435,11 @@ async function main() {
     if (!s) return;
     if (payload.action === "pause") void pauseSession(s, false);
     else if (payload.action === "start" && !runtimes.get(s.id)?.running) void start(s, false);
+  });
+  // Mobil zavrel terminál (napr. prepol na chat): desktop si veľkosť vezme hneď.
+  await listen<{ id: string }>("remote-size-released", ({ payload }) => {
+    const rt = runtimes.get(payload.id);
+    if (rt) reclaimSize(rt, payload.id);
   });
   await listen<{ id: string }>("remote-size", ({ payload }) => {
     const rt = runtimes.get(payload.id);

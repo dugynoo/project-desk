@@ -17,6 +17,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::Instant;
 
+use super::chat::ChatReader;
 use super::hub::{Hub, HubEvent};
 use super::protocol::{self, ClientMsg, ServerMsg};
 
@@ -24,6 +25,8 @@ use super::protocol::{self, ClientMsg, ServerMsg};
 const MAX_MESSAGE: usize = 2 * 1024 * 1024;
 /// Klient, ktorý toľko nečíta, sa odpojí (po pripojení dostane čerstvú históriu).
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// Ako často sa čítajú nové riadky otvorených chatov.
+const CHAT_POLL: Duration = Duration::from_secs(1);
 /// Zatvárací kód pri zneplatnenom tokene.
 const CLOSE_REVOKED: u16 = 4001;
 
@@ -50,6 +53,8 @@ pub type Assets = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
 pub enum RemoteEvent {
     Watching { ids: Vec<String> },
     SizeTaken { id: String },
+    /// Mobil zavrel terminál a veľkosť bola jeho: desktop si ju vezme späť.
+    SizeReleased { id: String },
     Action { id: String, action: SessionAction },
 }
 
@@ -291,7 +296,7 @@ async fn ws(
                 let rx = s.hub.subscribe();
                 let closing = s.closing.clone();
                 let id = s.next_client.fetch_add(1, Ordering::Relaxed);
-                let mut conn = Conn { s, id, socket, rx, closing, subs: BTreeSet::new(), sizes: HashMap::new() };
+                let mut conn = Conn { s, id, socket, rx, closing, subs: BTreeSet::new(), sizes: HashMap::new(), chats: HashMap::new() };
                 let end = conn.run().await;
                 conn.finish(end).await;
             }),
@@ -304,6 +309,7 @@ enum Next {
     Hub(Result<HubEvent, broadcast::error::RecvError>),
     Closing,
     Ping,
+    ChatPoll,
     /// Klient neodpovedal ani na ping.
     Silent,
 }
@@ -324,6 +330,8 @@ struct Conn {
     subs: BTreeSet<String>,
     /// Posledná veľkosť terminálu klienta pre každú odoberanú session.
     sizes: HashMap<String, (u16, u16)>,
+    /// Otvorené chaty; `None` = čítačka práve beží v `spawn_blocking`.
+    chats: HashMap<String, Option<ChatReader>>,
 }
 
 impl Conn {
@@ -337,12 +345,15 @@ impl Conn {
         let mut ping = tokio::time::interval_at(Instant::now() + hb.interval, hb.interval);
         ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut seen = Instant::now();
+        let mut chat_poll = tokio::time::interval(CHAT_POLL);
+        chat_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let next = tokio::select! {
                 m = self.socket.recv() => Next::Client(m),
                 e = self.rx.recv() => Next::Hub(e),
                 _ = self.closing.wait_for(|c| *c) => Next::Closing,
                 _ = ping.tick() => Next::Ping,
+                _ = chat_poll.tick(), if !self.chats.is_empty() => Next::ChatPoll,
                 _ = tokio::time::sleep_until(seen + hb.timeout) => Next::Silent,
             };
             // Akákoľvek správa (aj Pong) znamená, že klient žije.
@@ -364,6 +375,7 @@ impl Conn {
                     self.catch_up(all, true).await
                 }
                 Next::Ping => self.send_raw(Message::Ping(Default::default())).await,
+                Next::ChatPoll => self.poll_chats().await,
                 Next::Hub(Err(broadcast::error::RecvError::Closed)) | Next::Closing | Next::Silent => false,
             };
             if !go_on {
@@ -429,6 +441,59 @@ impl Conn {
         Ok(())
     }
 
+    /// Sledované sessions = otvorené terminály aj chaty.
+    fn watching_changed(&self) {
+        let ids: BTreeSet<String> = self.subs.iter().chain(self.chats.keys()).cloned().collect();
+        self.s.set_watching(self.id, Some(&ids));
+    }
+
+    /// Terminál zavretý: veľkosť, ktorú určoval mobil, sa vráti desktopu.
+    fn release_size(&self, id: &str) {
+        let mut size = self.s.hub.size();
+        if size.is_remote(id) {
+            size.forget(id);
+            drop(size);
+            (self.s.events)(RemoteEvent::SizeReleased { id: id.to_owned() });
+        }
+    }
+
+    /// Nové riadky otvorených chatov; zmenený zdroj (napr. `/clear`) začne odznova.
+    async fn poll_chats(&mut self) -> bool {
+        let ids: Vec<String> = self.chats.keys().cloned().collect();
+        for id in ids {
+            let Some(Some(mut reader)) = self.chats.get_mut(&id).map(Option::take) else { continue };
+            match self.s.hub.chat_source(&id) {
+                Some(source) if &source != reader.source() => reader = ChatReader::new(source),
+                Some(_) => {}
+                None => {
+                    self.chats.remove(&id);
+                    self.watching_changed();
+                    continue;
+                }
+            }
+            let Ok((reader, update)) = tokio::task::spawn_blocking(move || {
+                let update = reader.poll();
+                (reader, update)
+            })
+            .await
+            else {
+                self.chats.remove(&id);
+                continue;
+            };
+            // Zavretý počas čítania: výsledok zahodíme.
+            match self.chats.get_mut(&id) {
+                Some(slot) => *slot = Some(reader),
+                None => continue,
+            }
+            if (update.reset || !update.items.is_empty())
+                && !self.send(ServerMsg::Chat { id, reset: update.reset, items: update.items }).await
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     async fn error(&mut self, id: &str, code: String) -> bool {
         self.send(ServerMsg::Error { id: Some(id.to_owned()), code }).await
     }
@@ -438,7 +503,7 @@ impl Conn {
             ClientMsg::Subscribe { id, cols, rows } => {
                 self.sizes.insert(id.clone(), (cols, rows));
                 if self.subs.insert(id.clone()) {
-                    self.s.set_watching(self.id, Some(&self.subs));
+                    self.watching_changed();
                 }
                 if let Err(code) = self.claim(&id, cols, rows) {
                     if !self.error(&id, code).await {
@@ -450,7 +515,26 @@ impl Conn {
             ClientMsg::Unsubscribe { id } => {
                 self.sizes.remove(&id);
                 if self.subs.remove(&id) {
-                    self.s.set_watching(self.id, Some(&self.subs));
+                    self.watching_changed();
+                    self.release_size(&id);
+                }
+                true
+            }
+            ClientMsg::ChatOpen { id } => {
+                if self.chats.contains_key(&id) {
+                    return true;
+                }
+                let Some(source) = self.s.hub.chat_source(&id) else {
+                    return self.error(&id, "remote.chatUnavailable".into()).await;
+                };
+                self.chats.insert(id, Some(ChatReader::new(source)));
+                self.watching_changed();
+                // Prvý obsah hneď, nie až o sekundu.
+                self.poll_chats().await
+            }
+            ClientMsg::ChatClose { id } => {
+                if self.chats.remove(&id).is_some() {
+                    self.watching_changed();
                 }
                 true
             }
@@ -709,6 +793,40 @@ mod tests {
         assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "history", "id": "s", "data": ""}));
         assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeTaken { .. })).await, RemoteEvent::SizeTaken { id: "s".into() });
         assert_eq!(*h.pty.resizes.lock().unwrap(), vec![("s".to_string(), 40, 20), ("s".to_string(), 40, 20)]);
+    }
+
+    #[tokio::test]
+    async fn chat_without_source_is_an_error() {
+        let h = harness().await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "chatOpen", "id": "s"})).await;
+        assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "error", "id": "s", "code": "remote.chatUnavailable"}));
+    }
+
+    #[tokio::test]
+    async fn chat_counts_as_watching_and_starts_with_reset() {
+        use crate::remote::chat::{ChatSource, Provider};
+        let mut h = harness().await;
+        // Neplatné id: súbor sa nehľadá, chat je prázdny.
+        h.hub.set_chat_sources([("s".to_string(), ChatSource { provider: Provider::Claude, agent_id: "x".into() })].into());
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "chatOpen", "id": "s"})).await;
+        assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "chat", "id": "s", "reset": true, "items": []}));
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::Watching { .. })).await, RemoteEvent::Watching { ids: vec!["s".into()] });
+        send(&mut ws, json!({"type": "chatClose", "id": "s"})).await;
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::Watching { .. })).await, RemoteEvent::Watching { ids: vec![] });
+        assert!(h.pty.resizes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn closing_terminal_returns_size_to_desktop() {
+        let mut h = harness().await;
+        let mut ws = connect(&h).await;
+        send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeTaken { .. })).await, RemoteEvent::SizeTaken { id: "s".into() });
+        send(&mut ws, json!({"type": "unsubscribe", "id": "s"})).await;
+        assert_eq!(event(&mut h, |e| matches!(e, RemoteEvent::SizeReleased { .. })).await, RemoteEvent::SizeReleased { id: "s".into() });
+        assert!(!h.hub.size().is_remote("s"));
     }
 
     #[tokio::test]

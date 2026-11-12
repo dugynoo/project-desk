@@ -217,6 +217,28 @@ fn size(cols: u16, rows: u16) -> PtySize {
     PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 }
 }
 
+/// Premenné, ktorými Claude Code (a jeho pluginy) označuje vlastné procesy. Patria rodičovskej
+/// session, nie sessions v aplikácii; nastavenia používateľa (`CLAUDE_CONFIG_DIR`...) ostávajú.
+const INHERITED_AGENT_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "CLAUDE_JOB_DIR",
+    "CODEX_COMPANION_SESSION_ID",
+    "CODEX_COMPANION_TRANSCRIPT_PATH",
+];
+
+fn strip_agent_markers(cmd: &mut CommandBuilder) {
+    for key in INHERITED_AGENT_MARKERS {
+        cmd.env_remove(key);
+    }
+}
+
 /// Zostaví príkaz pre shell. Názvy projektov a úloh sa sem nikdy nedostanú,
 /// `command` pochádza iba z nastavení aplikácie a cwd sa nastavuje cez option.
 fn build_command(shell: Option<&str>, command: Option<&str>) -> CommandBuilder {
@@ -337,6 +359,9 @@ impl PtyManager {
         cmd.cwd(&req.cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // App spustená z inej Claude Code session (napr. `npm run app:dev` z agenta) by tieto značky
+        // podedila a Claude v sessions by bral seba ako vnorenú: bez prepisu konverzácie, teda bez chatu.
+        strip_agent_markers(&mut cmd);
         for (k, v) in &req.env {
             cmd.env(k, v);
         }
@@ -465,6 +490,18 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+
+    #[test]
+    fn parent_claude_session_markers_are_not_inherited() {
+        let mut cmd = portable_pty::CommandBuilder::new("x");
+        cmd.env("CLAUDE_CODE_CHILD_SESSION", "1");
+        cmd.env("CLAUDECODE", "1");
+        cmd.env("CLAUDE_CONFIG_DIR", "c");
+        super::strip_agent_markers(&mut cmd);
+        assert!(cmd.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+        assert!(cmd.get_env("CLAUDECODE").is_none());
+        assert_eq!(cmd.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()), Some("c"));
+    }
 
     #[test]
     fn input_limits_include_in_flight_bytes_and_reject_whole_pastes() {

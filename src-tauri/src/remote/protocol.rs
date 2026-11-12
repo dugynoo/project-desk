@@ -16,6 +16,9 @@ pub enum ClientMsg {
     Pause { id: String },
     /// Ako ↻ Spustiť znova na desktope.
     Start { id: String },
+    /// Chat zo session súboru (`chat.rs`); veľkosť PTY nemení.
+    ChatOpen { id: String },
+    ChatClose { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -25,6 +28,8 @@ pub enum ServerMsg {
     History { id: String, data: String },
     Output { id: String, data: String },
     Error { id: Option<String>, code: String },
+    /// `reset` = mobil zahodí doterajší chat a zobrazí `items`.
+    Chat { id: String, reset: bool, items: Vec<super::chat::ChatItem> },
 }
 
 /// Token z hlavičky `Sec-WebSocket-Protocol` (napr. `"pd.v1, auth.abc"` → `Some("abc")`).
@@ -62,6 +67,14 @@ mod tests {
         assert_eq!(m, ClientMsg::Pause { id: "s1".into() });
         let m: ClientMsg = serde_json::from_str(r#"{"type":"start","id":"s1"}"#).unwrap();
         assert_eq!(m, ClientMsg::Start { id: "s1".into() });
+    }
+
+    #[test]
+    fn parses_chat_messages() {
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"chatOpen","id":"s1"}"#).unwrap();
+        assert_eq!(m, ClientMsg::ChatOpen { id: "s1".into() });
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"chatClose","id":"s1"}"#).unwrap();
+        assert_eq!(m, ClientMsg::ChatClose { id: "s1".into() });
     }
 
     #[test]

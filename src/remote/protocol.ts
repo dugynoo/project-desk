@@ -1,6 +1,14 @@
 // Správy medzi mobilom a loopback serverom; zrkadlí src-tauri/src/remote/protocol.rs.
 import type { RemoteSnapshot } from "../model.ts";
 
+/** Položka chatu zo session súboru (`src-tauri/src/remote/chat.rs`). */
+export interface ChatItem {
+  role: "user" | "assistant" | "tool";
+  text: string;
+  /** Názov nástroja pri `role: "tool"`. */
+  name?: string;
+}
+
 /** Subprotokol WebSocketu; druhý záznam je `auth.<token>`. */
 export const PROTOCOL = "pd.v1";
 
@@ -10,13 +18,16 @@ export type ClientMsg =
   | { type: "input"; id: string; data: string }
   | { type: "resize"; id: string; cols: number; rows: number }
   | { type: "pause"; id: string }
-  | { type: "start"; id: string };
+  | { type: "start"; id: string }
+  | { type: "chatOpen"; id: string }
+  | { type: "chatClose"; id: string };
 
 export type ServerMsg =
   | { type: "snapshot"; snapshot: RemoteSnapshot }
   | { type: "history"; id: string; data: string }
   | { type: "output"; id: string; data: string }
-  | { type: "error"; id: string | null; code: string };
+  | { type: "error"; id: string | null; code: string }
+  | { type: "chat"; id: string; reset: boolean; items: ChatItem[] };
 
 /** Stav z `remote_status` / `remote_configure` / `remote_new_token` pre nastavenia na desktope. */
 export interface RemoteStatus {
@@ -64,9 +75,20 @@ export function parseServerMsg(raw: string): ServerMsg | null {
       return isStr(o.id) && isStr(o.data) ? { type: o.type, id: o.id, data: o.data } : null;
     case "error":
       return (o.id === null || isStr(o.id)) && isStr(o.code) ? { type: "error", id: o.id, code: o.code } : null;
+    case "chat": {
+      if (!isStr(o.id) || typeof o.reset !== "boolean" || !Array.isArray(o.items)) return null;
+      const items = o.items.filter(isChatItem);
+      return { type: "chat", id: o.id, reset: o.reset, items };
+    }
     default:
       return null;
   }
+}
+
+function isChatItem(v: unknown): v is ChatItem {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (o.role === "user" || o.role === "assistant" || o.role === "tool") && isStr(o.text) && (o.name === undefined || isStr(o.name));
 }
 
 /** 1000 × 2^attempt ms, najviac 10 000. */
