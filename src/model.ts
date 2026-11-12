@@ -1048,3 +1048,14 @@ export function linkEditorMode(file: string, settings: Pick<Settings, "markdownO
 export function fileOpenTarget(file: string, settings: Settings): "system" | "builtin" | "external" {
   return opensInSystem(file, settings.systemOpenExts) ? "system" : settings.fileEditor;
 }
+
+/** Wheel steps for apps that own the scroll (alternate screen or mouse tracking), where xterm.js
+ * sends one arrow key or wheel report per DOM event. A mouse notch scrolls three lines like native
+ * terminals; small trackpad deltas stay single steps so xterm keeps accumulating them. */
+export function appWheelSteps(deltaY: number, deltaMode: number): number {
+  const size = Math.abs(deltaY);
+  if (size === 0) return 0;
+  if (deltaMode === 1) return Math.min(10, Math.max(1, Math.round(size)));
+  if (deltaMode === 2) return 10;
+  return size < 50 ? 1 : Math.min(10, Math.max(3, Math.round(size / 100) * 3));
+}
