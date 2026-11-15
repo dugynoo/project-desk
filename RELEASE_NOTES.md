@@ -1,4 +1,3 @@
-- New: control Project Desk from your phone. Turn on **Remote access** in ⚙ Settings, scan the QR code and open your sessions in the phone's browser over your private Tailscale network. It is off by default and needs Tailscale on both devices.
-- Claude and Codex sessions open on the phone as a chat with formatted replies and tool steps; a Terminal tab gives the live terminal for choices and permissions.
-- Pause and restart sessions from the phone (hold a session in the list or use the buttons at the top).
-- After saving remote access settings, the dialog stays open and shows the pairing link and QR code.
+- New: after Claude Code or Codex updates, idle sessions restart on the new version and continue the same conversation. Sessions that are working, waiting for you, or open on screen wait until they are idle. Turn it off in ⚙ Settings → Agents.
+- Phone: collapse and expand projects in the session list; a collapsed project shows its session count and a dot when a session needs you.
+- Fixed: a session started while the window was resizing (for example, maximizing right after launch) could keep drawing at the old, narrower width.
