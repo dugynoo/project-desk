@@ -12,6 +12,7 @@ import { parseMarkdown, type Block, type Inline } from "./markdown.ts";
 type RemoteSession = RemoteSnapshot["sessions"][number];
 
 const TOKEN_KEY = "pd.remote.token";
+const COLLAPSED_KEY = "pd.remote.collapsed";
 const app = document.getElementById("app")!;
 // Zoznam a otvorená session; na úzkej obrazovke sa striedajú, na širokej sú vedľa seba (CSS).
 const listEl = h("div", "list");
@@ -220,13 +221,35 @@ function statusLabel(session: RemoteSession) {
 
 // Riadky zoznamu podľa id; pri zmene stavu sa mení len text a trieda, nie prvky.
 const rowEls = new Map<string, { row: HTMLElement; dot: HTMLElement; title: HTMLElement; status: HTMLElement }>();
+/** Bodka pri zbalenom projekte: niektorá jeho session čaká na teba. */
+const groupDots = new Map<string, HTMLElement>();
 let listSig: string | null = null;
+
+// Zbalené projekty si pamätá telefón (nezávisle od desktopu).
+const collapsed = new Set<string>(loadCollapsed());
+function loadCollapsed(): string[] {
+  try {
+    const v: unknown = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch { return []; }
+}
+function toggleProject(id: string) {
+  if (!collapsed.delete(id)) collapsed.add(id);
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])); } catch { /* súkromný režim */ }
+  renderList();
+}
 
 function listSignature(): string {
   if (!snapshot) return "";
   return snapshot.projects
-    .map((p) => `${p.id}:${p.name}:` + snapshot!.sessions.filter((s) => s.projectId === p.id).map((s) => s.id).join(","))
+    .map((p) => `${p.id}:${p.name}:${collapsed.has(p.id) ? "-" : "+"}:` + snapshot!.sessions.filter((s) => s.projectId === p.id).map((s) => s.id).join(","))
     .join("|");
+}
+
+function fillGroupDots() {
+  for (const [id, dot] of groupDots) {
+    dot.hidden = !snapshot?.sessions.some((s) => s.projectId === id && statusOf(s) === "needs-you");
+  }
 }
 
 function fillRow(s: RemoteSession) {
@@ -243,10 +266,12 @@ function renderList() {
   const sig = listSignature();
   if (listSig === sig) {
     for (const s of snapshot?.sessions ?? []) fillRow(s);
+    fillGroupDots();
     return;
   }
   const oldScroll = listEl.scrollTop;
   rowEls.clear();
+  groupDots.clear();
   listSig = sig;
   const root = listEl;
   root.replaceChildren(h("h1", "list-title", t("remote.title")));
@@ -256,7 +281,23 @@ function renderList() {
     for (const p of snapshot.projects) {
       const sessions = snapshot.sessions.filter((s) => s.projectId === p.id);
       if (!sessions.length) continue;
-      root.append(h("h2", "project", p.name));
+      const isCollapsed = collapsed.has(p.id);
+      const head = h("h2", "project");
+      const toggle = h("button", "project-toggle");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", String(!isCollapsed));
+      toggle.append(h("span", "chevron", isCollapsed ? "▸" : "▾"), h("span", "project-name", p.name));
+      if (isCollapsed) {
+        toggle.append(h("span", "project-count", String(sessions.length)));
+        const dot = h("span", "dot needs-you");
+        dot.setAttribute("aria-hidden", "true");
+        toggle.append(dot);
+        groupDots.set(p.id, dot);
+      }
+      toggle.onclick = () => toggleProject(p.id);
+      head.append(toggle);
+      root.append(head);
+      if (isCollapsed) continue;
       for (const s of sessions) {
         const row = h("button", "row");
         row.type = "button";
@@ -275,6 +316,7 @@ function renderList() {
       }
     }
   }
+  fillGroupDots();
   root.scrollTop = oldScroll;
 }
 
