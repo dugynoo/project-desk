@@ -23,6 +23,11 @@ test("parseServerMsg accepts chat and drops malformed items", () => {
   assert.equal(parseServerMsg('{"type":"chat","id":"a","items":[]}'), null);
 });
 
+test("parseServerMsg accepts imageAttached", () => {
+  assert.deepEqual(parseServerMsg('{"type":"imageAttached","id":"s1"}'), { type: "imageAttached", id: "s1" });
+  assert.equal(parseServerMsg('{"type":"imageAttached"}'), null);
+});
+
 test("reconnectDelay caps at 10s", () => {
   assert.equal(reconnectDelay(0), 1000);
   assert.equal(reconnectDelay(2), 4000);

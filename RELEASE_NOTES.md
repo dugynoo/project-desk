@@ -1,3 +1,2 @@
-- New: after Claude Code or Codex updates, idle sessions restart on the new version and continue the same conversation. Sessions that are working, waiting for you, or open on screen wait until they are idle. Turn it off in ⚙ Settings → Agents.
-- Phone: collapse and expand projects in the session list; a collapsed project shows its session count and a dot when a session needs you.
-- Fixed: a session started while the window was resizing (for example, maximizing right after launch) could keep drawing at the old, narrower width.
+- Phone: the + button next to the message field sends a photo or screenshot to the agent, like dropping an image on the terminal.
+- Phone: a /compact key in the chat asks Claude Code or Codex to summarize the conversation and free up context.

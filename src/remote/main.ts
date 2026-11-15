@@ -163,6 +163,9 @@ function handle(msg: ServerMsg) {
       }
       showToast(errorText(msg.code));
       break;
+    case "imageAttached":
+      if (msg.id === openId) showToast(t("remote.imageAttached"));
+      break;
   }
 }
 
@@ -490,7 +493,26 @@ function openSession(id: string) {
   input.spellcheck = false;
   const sendBtn = h("button", "send", t("remote.send"));
   sendBtn.type = "submit";
-  form.append(input, sendBtn);
+  // Obrázok: agent dostane cestu k nemu ako pri pretiahnutí súboru; text a Enter pošle používateľ.
+  const file = h("input");
+  file.type = "file";
+  file.accept = "image/*";
+  file.hidden = true;
+  file.onchange = () => {
+    const picked = file.files?.[0];
+    file.value = "";
+    if (!picked) return;
+    showToast(t("remote.imageSending"));
+    jpegBase64(picked)
+      .then((data) => send({ type: "image", id, data }))
+      .catch(() => showToast(errorText("remote.imageInvalid")));
+  };
+  const attach = h("button", "attach", "+");
+  attach.type = "button";
+  attach.title = t("remote.attachImage");
+  attach.setAttribute("aria-label", t("remote.attachImage"));
+  attach.onclick = () => file.click();
+  form.append(file, attach, input, sendBtn);
   form.onsubmit = (e) => {
     e.preventDefault();
     // Text ide ako bracketed paste, Enter zvlášť; prázdny text pošle len Enter.
@@ -509,6 +531,39 @@ function openSession(id: string) {
   updateHeader(s);
 }
 
+/** Server prijme JPEG do 1,5 MiB: obrázok sa zmenšuje, kým sa nezmestí. */
+const IMAGE_LIMIT = 1_400_000;
+async function jpegBase64(file: Blob): Promise<string> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  try {
+    for (const [side, quality] of [[2000, 0.85], [1600, 0.8], [1280, 0.75], [1024, 0.7], [800, 0.6]]) {
+      const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) break;
+      // Priehľadnosť (PNG) na bielom pozadí, nie čiernom.
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/jpeg", quality));
+      if (blob && blob.size <= IMAGE_LIMIT) {
+        const url = await new Promise<string>((done, fail) => {
+          const r = new FileReader();
+          r.onload = () => done(String(r.result));
+          r.onerror = () => fail(r.error);
+          r.readAsDataURL(blob);
+        });
+        return url.slice(url.indexOf(",") + 1);
+      }
+    }
+  } finally {
+    bitmap.close();
+  }
+  throw new Error("image too large");
+}
+
 /** Obsah podľa režimu: chat alebo terminál, a k nemu klávesy. */
 function mountBody() {
   const id = openId;
@@ -524,6 +579,19 @@ function mountBody() {
     b.onclick = () => send({ type: "input", id, data: k.seq });
     return b;
   }));
+  // V chate skratka na zhrnutie konverzácie; príkaz sa napíše ako z klávesnice, aby ho agent spoznal.
+  const s = snapshot?.sessions.find((x) => x.id === id);
+  if (mode === "chat" && (s?.provider === "claude" || s?.provider === "codex")) {
+    const b = h("button", "key", "/compact");
+    b.type = "button";
+    b.title = t("remote.compact");
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = () => {
+      send({ type: "input", id, data: "/compact" });
+      send({ type: "input", id, data: "\r" });
+    };
+    keys.append(b);
+  }
   if (mode === "chat") {
     chatEl = h("div", "chat");
     chatEl.setAttribute("role", "log");

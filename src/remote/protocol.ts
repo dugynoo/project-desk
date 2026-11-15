@@ -20,14 +20,16 @@ export type ClientMsg =
   | { type: "pause"; id: string }
   | { type: "start"; id: string }
   | { type: "chatOpen"; id: string }
-  | { type: "chatClose"; id: string };
+  | { type: "chatClose"; id: string }
+  | { type: "image"; id: string; data: string };
 
 export type ServerMsg =
   | { type: "snapshot"; snapshot: RemoteSnapshot }
   | { type: "history"; id: string; data: string }
   | { type: "output"; id: string; data: string }
   | { type: "error"; id: string | null; code: string }
-  | { type: "chat"; id: string; reset: boolean; items: ChatItem[] };
+  | { type: "chat"; id: string; reset: boolean; items: ChatItem[] }
+  | { type: "imageAttached"; id: string };
 
 /** Stav z `remote_status` / `remote_configure` / `remote_new_token` pre nastavenia na desktope. */
 export interface RemoteStatus {
@@ -73,6 +75,8 @@ export function parseServerMsg(raw: string): ServerMsg | null {
     case "history":
     case "output":
       return isStr(o.id) && isStr(o.data) ? { type: o.type, id: o.id, data: o.data } : null;
+    case "imageAttached":
+      return isStr(o.id) ? { type: "imageAttached", id: o.id } : null;
     case "error":
       return (o.id === null || isStr(o.id)) && isStr(o.code) ? { type: "error", id: o.id, code: o.code } : null;
     case "chat": {

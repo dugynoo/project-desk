@@ -458,6 +458,13 @@ const en = {
   "remote.keys.ctrlC": "Ctrl+C",
   "remote.keys.shiftEnter": "New line",
   "remote.keys.enter": "Enter",
+  "remote.attachImage": "Add image",
+  "remote.imageSending": "Sending image…",
+  "remote.imageAttached": "Image added. Write a message and send.",
+  "remote.compact": "Summarize the conversation to free up context (/compact)",
+  "err.remote.imageInvalid": "This image cannot be sent.",
+  "err.remote.imageTooLarge": "The image is too large.",
+  "err.remote.imageFailed": "The image could not be saved on the PC.",
 };
 
 export type Key = keyof typeof en;
@@ -908,6 +915,13 @@ const sk: Record<Key, string> = {
   "remote.keys.ctrlC": "Ctrl+C",
   "remote.keys.shiftEnter": "Nový riadok",
   "remote.keys.enter": "Enter",
+  "remote.attachImage": "Pridať obrázok",
+  "remote.imageSending": "Posielam obrázok…",
+  "remote.imageAttached": "Obrázok pridaný. Napíš správu a odošli.",
+  "remote.compact": "Zhrnúť konverzáciu a uvoľniť kontext (/compact)",
+  "err.remote.imageInvalid": "Tento obrázok sa nedá poslať.",
+  "err.remote.imageTooLarge": "Obrázok je príliš veľký.",
+  "err.remote.imageFailed": "Obrázok sa nepodarilo uložiť v počítači.",
 };
 
 const cs: Record<Key, string> = {
@@ -1355,6 +1369,13 @@ const cs: Record<Key, string> = {
   "remote.keys.ctrlC": "Ctrl+C",
   "remote.keys.shiftEnter": "Nový řádek",
   "remote.keys.enter": "Enter",
+  "remote.attachImage": "Přidat obrázek",
+  "remote.imageSending": "Posílám obrázek…",
+  "remote.imageAttached": "Obrázek přidán. Napiš zprávu a odešli.",
+  "remote.compact": "Shrnout konverzaci a uvolnit kontext (/compact)",
+  "err.remote.imageInvalid": "Tento obrázek nelze poslat.",
+  "err.remote.imageTooLarge": "Obrázek je příliš velký.",
+  "err.remote.imageFailed": "Obrázek se nepodařilo uložit v počítači.",
 };
 
 const DICTS: Record<Lang, Record<Key, string>> = { en, sk, cs };

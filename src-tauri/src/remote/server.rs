@@ -568,6 +568,26 @@ impl Conn {
                     Err(code) => self.error(&id, code).await,
                 }
             }
+            ClientMsg::Image { id, data } => {
+                let dir = super::upload::dir();
+                let saved = tokio::task::spawn_blocking(move || super::upload::save_image(&dir, &data)).await;
+                let path = match saved {
+                    Ok(Ok(path)) => path,
+                    Ok(Err(code)) => return self.error(&id, code.into()).await,
+                    Err(_) => return self.error(&id, "remote.imageFailed".into()).await,
+                };
+                let Some(paste) = super::upload::paste_for(&path) else {
+                    let _ = std::fs::remove_file(&path);
+                    return self.error(&id, "remote.imageFailed".into()).await;
+                };
+                match self.s.pty.write(&id, &paste) {
+                    Ok(()) => self.send(ServerMsg::ImageAttached { id }).await,
+                    Err(code) => {
+                        let _ = std::fs::remove_file(&path);
+                        self.error(&id, code).await
+                    }
+                }
+            }
             ClientMsg::Resize { id, cols, rows } => {
                 if !self.subs.contains(&id) {
                     return true;

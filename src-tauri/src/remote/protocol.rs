@@ -19,6 +19,8 @@ pub enum ClientMsg {
     /// Chat zo session súboru (`chat.rs`); veľkosť PTY nemení.
     ChatOpen { id: String },
     ChatClose { id: String },
+    /// JPEG v base64 (`upload.rs`); agentovi sa vloží cesta k nemu, bez Enteru.
+    Image { id: String, data: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -30,6 +32,8 @@ pub enum ServerMsg {
     Error { id: Option<String>, code: String },
     /// `reset` = mobil zahodí doterajší chat a zobrazí `items`.
     Chat { id: String, reset: bool, items: Vec<super::chat::ChatItem> },
+    /// Obrázok je vložený do vstupu agenta.
+    ImageAttached { id: String },
 }
 
 /// Token z hlavičky `Sec-WebSocket-Protocol` (napr. `"pd.v1, auth.abc"` → `Some("abc")`).
@@ -75,6 +79,10 @@ mod tests {
         assert_eq!(m, ClientMsg::ChatOpen { id: "s1".into() });
         let m: ClientMsg = serde_json::from_str(r#"{"type":"chatClose","id":"s1"}"#).unwrap();
         assert_eq!(m, ClientMsg::ChatClose { id: "s1".into() });
+        let m: ClientMsg = serde_json::from_str(r#"{"type":"image","id":"s1","data":"/9j/"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Image { id: "s1".into(), data: "/9j/".into() });
+        let json = serde_json::to_string(&ServerMsg::ImageAttached { id: "s1".into() }).unwrap();
+        assert_eq!(json, r#"{"type":"imageAttached","id":"s1"}"#);
     }
 
     #[test]

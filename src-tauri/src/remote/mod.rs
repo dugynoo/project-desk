@@ -8,6 +8,7 @@ pub mod protocol;
 pub mod server;
 pub mod size;
 pub mod tailscale;
+pub mod upload;
 
 use std::sync::Arc;
 
