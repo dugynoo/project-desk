@@ -20,6 +20,8 @@ export interface LifecycleRuntime extends MonitoredRuntime {
   pane: { remove(): void };
   /** Exit requested by Pause: keep the session listed and stopped, not archived. */
   pausing?: boolean;
+  /** Pause requested to restart on a new agent version: print this and start again. */
+  restartNote?: string;
 }
 
 interface Dependencies<R extends LifecycleRuntime> {
@@ -45,13 +47,15 @@ interface Dependencies<R extends LifecycleRuntime> {
   renderPaneHeads: () => void;
   toast: (message: string) => void;
   confirmBox: (title: string, message: string, action: string) => Promise<boolean>;
+  /** The agent process started (not on a failed or instantly exited spawn). */
+  onSpawned?: (s: Session) => void;
 }
 
 /** Owns start/exit/close ordering and output channels, without installing global listeners. */
 export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, getInfo, runtimes,
   statuses, unread, agentMonitor, isClosing, editingId, createRuntime, invoke, createOutput,
   schedule, save, flush, statusOf, setStatus, isWatched, layout, renderSidebar, renderPaneHeads,
-  toast, confirmBox }: Dependencies<R>) {
+  toast, confirmBox, onSpawned }: Dependencies<R>) {
   const session = (id: string) => getState().sessions.find(s => s.id === id);
   const project = (id: string) => getState().projects.find(p => p.id === id);
   function disposeRuntime(id: string) {
@@ -212,6 +216,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       setStatus(s.id, statusAfterStartupTimeout(statusOf(s.id)), true);
     }, 15_000);
     save();
+    onSpawned?.(s);
     renderSidebar();
     renderPaneHeads();
     if (focus && s.id === getState().ui.activeSessionId && editingId() !== s.id) rt.term.focus();
@@ -230,7 +235,8 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     const s = session(id);
     if (!s) { forgetRuntime(id); return; }
     const paused = rt?.pausing === true;
-    if (rt) { rt.running = false; rt.pausing = false; }
+    const restartNote = paused ? rt?.restartNote : undefined;
+    if (rt) { rt.running = false; rt.pausing = false; rt.restartNote = undefined; }
     recordSessionExit(getState(), id, code, rt?.closing ?? false, systemShutdown);
     if (paused) s.exitCode = undefined;
     if (s.background && !rt?.closing) {
@@ -244,7 +250,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       forgetRuntime(id);
     } else {
       statuses.set(id, "exited");
-      rt?.term.writeln(`\r\n${paused ? t("session.pausedNotice") : t("session.exitCode", { code: code ?? "?" })}`);
+      rt?.term.writeln(`\r\n${restartNote ?? (paused ? t("session.pausedNotice") : t("session.exitCode", { code: code ?? "?" }))}`);
       if (!paused && !isWatched(id)) unread.add(id);
     }
     save();
@@ -253,6 +259,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     layout();
     renderSidebar();
     renderPaneHeads();
+    if (restartNote && !rt?.closing && !systemShutdown) void start(s, false);
   }
 
   async function closeSession(s: Session) {
@@ -295,5 +302,14 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     await invoke("pty_kill", { id: s.id }).catch((e) => { rt.pausing = false; toast(errorText(e)); });
   }
 
-  return { start, onExit, closeSession, pauseSession, canPause, forgetRuntime, isStarting: (id: string) => pendingStarts.has(id) };
+  /** Without confirmation: callers restart only idle sessions. The conversation resumes. */
+  async function restartSession(s: Session, note: string) {
+    const rt = runtimes.get(s.id);
+    if (!canPause(s) || !rt || rt.closing || rt.pausing) return;
+    rt.pausing = true;
+    rt.restartNote = note;
+    await invoke("pty_kill", { id: s.id }).catch((e) => { rt.pausing = false; rt.restartNote = undefined; toast(errorText(e)); });
+  }
+
+  return { start, onExit, closeSession, pauseSession, restartSession, canPause, forgetRuntime, isStarting: (id: string) => pendingStarts.has(id) };
 }

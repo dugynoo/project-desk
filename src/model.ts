@@ -98,6 +98,8 @@ export interface Settings {
   notifications: boolean;
   /** Po spustení aplikácie hneď obnoviť všetky relácie (Claude/Codex pokračujú v tej istej konverzácii). */
   autoResume: boolean;
+  /** Po aktualizácii Claude Code/Codexu reštartovať nečinné relácie, aby bežali na novej verzii. */
+  restartOnAgentUpdate: boolean;
   /** Prípony, ktoré Ctrl+klik otvorí v predvolenej aplikácii systému namiesto editora. */
   systemOpenExts: string;
   /** Vzdialený prístup z mobilu (loopback server + `tailscale serve`). */
@@ -166,6 +168,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customEditorArgs: "%TARGET_PATH%",
   notifications: true,
   autoResume: true,
+  restartOnAgentUpdate: true,
   systemOpenExts: "html htm pdf png jpg jpeg gif webp svg",
   remoteAccess: false,
   remotePort: 47615,
@@ -492,6 +495,28 @@ export type Status =
   /** Claude skončil ťah, ale čaká na vlastné úlohy na pozadí; ozve sa sám. */
   | "background-task"
   | "agent-exited";
+
+/** Typed or pasted text, as opposed to keys and terminal replies (escape sequences, Enter, Ctrl keys). */
+export function isTypedInput(data: string): boolean {
+  if (data.startsWith("\x1b[200~")) return true;
+  return !data.startsWith("\x1b") && /[^\x00-\x1f\x7f]/.test(data);
+}
+
+/** Reštart na novú verziu agenta nesmie nič stratiť ani prerušiť: len nečinná, práve nesledovaná
+ *  relácia bez rozpísaného vstupu, ktorej konverzáciu vie agent obnoviť. Hotovú, ešte neprečítanú
+ *  počká, aby nezmizlo „hotovo“. Pracovníkov na pozadí riadi Claude sám. */
+export function restartableForUpdate(
+  s: Pick<Session, "provider" | "background" | "started" | "agentSessionId" | "markedUnread">,
+  status: Status,
+  o: { typed: boolean; unread: boolean; watched: boolean },
+): boolean {
+  if (s.background || (s.provider !== "claude" && s.provider !== "codex")) return false;
+  if (o.typed || o.watched) return false;
+  if (status === "done") { if (o.unread || s.markedUnread) return false; }
+  else if (status !== "idle") return false;
+  // Codex bez známeho ID by po `codex resume` ukázal výber konverzácie.
+  return s.provider !== "codex" || !s.started || isUuid(s.agentSessionId);
+}
 
 /** Native snapshot is used only on reconnect, never as a periodic status poll. */
 export function backgroundStatus(state: string): Status {

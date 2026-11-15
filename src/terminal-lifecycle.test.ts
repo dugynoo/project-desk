@@ -241,3 +241,31 @@ test("pause is unavailable for shells and background workers, and working agents
   await f.lifecycle.pauseSession(s);
   assert.equal(f.calls.some(c => c.command === "pty_kill"), false);
 });
+
+test("restart for an agent update prints its note and resumes the same conversation without asking", async () => {
+  const f = fixture();
+  const s = f.state.sessions[0];
+  s.provider = "claude"; s.hasConversation = true; s.agentSessionId = "11111111-1111-4111-8111-111111111111";
+  await f.lifecycle.start(s);
+  f.statuses.set(s.id, "working");
+  f.confirmAnswer = false;
+  await f.lifecycle.restartSession(s, "fixture restart note");
+  assert.equal(f.calls.filter(c => c.command === "pty_kill").length, 1);
+  // A second request while the first is pending does not kill twice.
+  await f.lifecycle.restartSession(s, "fixture restart note");
+  assert.equal(f.calls.filter(c => c.command === "pty_kill").length, 1);
+  f.lifecycle.onExit(s.id, 129);
+  await new Promise(done => setImmediate(done));
+  assert.match(f.written.join("\n"), /fixture restart note/);
+  assert.doesNotMatch(f.written.join("\n"), /session\.pausedNotice|Paused/);
+  const spawns = f.calls.filter(c => c.command === "pty_spawn");
+  assert.equal(spawns.length, 2);
+  assert.match((spawns[1].args.args as { command: string }).command, /--resume 11111111/);
+  assert.equal(f.rt.running, true);
+  assert.equal(f.rt.restartNote, undefined);
+  // A later ordinary pause keeps its own notice and does not restart.
+  await f.lifecycle.pauseSession(s);
+  f.lifecycle.onExit(s.id, 129);
+  await new Promise(done => setImmediate(done));
+  assert.equal(f.calls.filter(c => c.command === "pty_spawn").length, 2);
+});

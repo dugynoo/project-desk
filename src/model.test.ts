@@ -1163,3 +1163,36 @@ test("app-owned scrolling moves three lines per mouse notch and keeps trackpad d
   assert.equal(appWheelSteps(1, 2), 10);
   assert.equal(appWheelSteps(5000, 0), 10);
 });
+
+import { isTypedInput, restartableForUpdate } from "./model.ts";
+
+test("typed input is text or a paste, not keys, Enter or terminal replies", () => {
+  for (const data of ["a", "ahoj", "č", "\x1b[200~pasted\x1b[201~"]) assert.equal(isTypedInput(data), true, JSON.stringify(data));
+  for (const data of ["\r", "\x7f", "\x03", "\x1b", "\x1b[A", "\x1b[I", "\x1b[O", "\x1b[<0;10;5M", "\x1b[?1;2c"]) {
+    assert.equal(isTypedInput(data), false, JSON.stringify(data));
+  }
+});
+
+test("only idle, unwatched, resumable foreground agents restart for an update", () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const calm = { typed: false, unread: false, watched: false };
+  const claude = { provider: "claude" as const, started: true, agentSessionId: id };
+  assert.equal(restartableForUpdate(claude, "idle", calm), true);
+  assert.equal(restartableForUpdate(claude, "done", calm), true);
+  for (const status of ["working", "needs-you", "background-task", "starting", "untracked", "running", "exited"] as const) {
+    assert.equal(restartableForUpdate(claude, status, calm), false, status);
+  }
+  assert.equal(restartableForUpdate(claude, "done", { ...calm, unread: true }), false);
+  assert.equal(restartableForUpdate({ ...claude, markedUnread: true }, "done", calm), false);
+  assert.equal(restartableForUpdate(claude, "idle", { ...calm, typed: true }), false);
+  assert.equal(restartableForUpdate(claude, "idle", { ...calm, watched: true }), false);
+  assert.equal(restartableForUpdate({ ...claude, background: true }, "idle", calm), false);
+  for (const provider of ["shell", "antigravity"] as const) assert.equal(restartableForUpdate({ ...claude, provider }, "idle", calm), false);
+  assert.equal(restartableForUpdate({ provider: "codex", started: true, agentSessionId: id }, "idle", calm), true);
+  assert.equal(restartableForUpdate({ provider: "codex", started: true }, "idle", calm), false);
+});
+
+test("restarting on agent updates is on by default and a saved opt-out survives loading", () => {
+  assert.equal(parseState(JSON.stringify({ settings: {} })).state.settings.restartOnAgentUpdate, true);
+  assert.equal(parseState(JSON.stringify({ settings: { restartOnAgentUpdate: false } })).state.settings.restartOnAgentUpdate, false);
+});

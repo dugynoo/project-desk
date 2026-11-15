@@ -1,6 +1,7 @@
 import { createTerminalFactory, attachWebgl, fitTerminal, reclaimSize, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
+import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
 import { openSearch } from "./terminal-search.ts";
 import { fileOpenTarget, type EditorInfo } from "./model.ts";
@@ -173,11 +174,18 @@ const agentMonitor = createAgentMonitor({
   invoke, save, statusOf, setStatus, renderStatusSoon,
 });
 const { statsOf, lookupCodexSessions, pollAgents, onAgentEvent } = agentMonitor;
+// Po aktualizácii Claude Code/Codexu reštartuje nečinné relácie (konverzácie pokračujú).
+const agentUpdates = createAgentUpdates({
+  getState: () => state, runtimes, statusOf, unread, isWatched, isClosing: () => closingWindow, invoke,
+  restart: (s, version) => void terminalLifecycle.restartSession(s, t("agentUpdate.restarting", { version })),
+  announce: (agent, version) => toast(t("agentUpdate.found", { agent: PROVIDER_LABEL[agent], version }), true),
+});
 
 function setStatus(id: string, next: Status, silent = false) {
   const prev = statusOf(id);
   if (prev === next) return;
   statuses.set(id, next);
+  agentUpdates.statusChanged(id, next);
   const kind = attentionEventKind(prev, next, silent);
   const s = session(id);
   if (next === "working" && s?.interrupted) {
@@ -212,14 +220,14 @@ const notify = createSystemNotifications({
 const createRuntime = createTerminalFactory({
   toast,
   getState: () => state, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
-  isWatched, unread, renderSidebar, notify, select,
+  isWatched, unread, renderSidebar, notify, select, onTyped: id => agentUpdates.input(id),
 });
 const terminalLifecycle = createTerminalLifecycle({
   getState: () => state, getInfo: () => info, runtimes, statuses, unread, agentMonitor,
   isClosing: () => closingWindow, editingId: () => sidebar.editingId(), createRuntime, invoke,
   createOutput: () => new Channel<OutputChunk>(), schedule: (callback, delay) => window.setTimeout(callback, delay),
   save, flush: () => saves.flush(), statusOf, setStatus, isWatched, layout, renderSidebar, renderPaneHeads, toast,
-  confirmBox: (...args) => confirmBox(...args),
+  confirmBox: (...args) => confirmBox(...args), onSpawned: s => agentUpdates.spawned(s),
 });
 const { start, onExit, closeSession, pauseSession, canPause, forgetRuntime } = terminalLifecycle;
 
@@ -1470,6 +1478,10 @@ async function main() {
   configureRemote();
   window.setInterval(() => void lookupCodexSessions(), 3000);
   window.setInterval(() => void pollAgents(), 2000);
+  // Verzia na disku: raz za 15 min (prvá po obnovení relácií); nečinné relácie sa kontrolujú každú minútu.
+  window.setTimeout(() => void agentUpdates.check(), 60_000);
+  window.setInterval(() => void agentUpdates.check(), 15 * 60_000);
+  window.setInterval(() => agentUpdates.restartIdle(), 60_000);
   if (info.updates) {
     window.setTimeout(() => void checkUpdate(), 10_000);
     window.setInterval(() => void checkUpdate(), 6 * 3600_000);

@@ -39,10 +39,22 @@ the new version.
 Settings checks the installed Claude, Codex and Antigravity CLI versions on opening;
 use **Check CLI versions** to retry after changing a command or installing a CLI.
 Checks run locally via `--version` in the configured shell, with an eight-second
-timeout and no recurring background checks. Standard agent commands (including
+timeout. Standard agent commands (including
 quoted executable paths and startup flags) are supported. Wrappers such as `npx`
 and custom shell syntax are marked as not automatically verifiable; this does not
 prevent launching sessions. The check does not verify sign-in or newer releases.
+
+**Restart idle sessions after Claude Code or Codex updates** (Settings → Agents, on
+by default) picks up updates installed outside the session, such as native Claude
+Code's own background updates or `codex update`. While Claude or Codex sessions run,
+Desk runs the same `--version` check every 15 minutes; when the installed version
+differs from the one a session started with, it says so once and restarts that
+session with the same conversation. Only idle or done sessions restart, and only
+when you are not viewing them, have not typed anything since their last turn and,
+for a finished turn, have already seen the result. Working sessions, sessions
+waiting for you, Codex sessions without a linked conversation, shells and Windows
+background workers are left alone until they qualify (background workers are not
+restarted). Desk does not install updates itself.
 
 ## Features
 

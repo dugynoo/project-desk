@@ -313,6 +313,12 @@ export function createSettings(
         const backgroundLabel = el("label", "check");
         backgroundLabel.append(background, document.createTextNode(t("settings.claudeBackground")));
         agents.append(backgroundLabel, el("div", "note", t("settings.claudeBackgroundNote")));
+        const restartUpdate = el("input");
+        restartUpdate.type = "checkbox";
+        restartUpdate.checked = st.restartOnAgentUpdate;
+        const restartUpdateLabel = el("label", "check");
+        restartUpdateLabel.append(restartUpdate, document.createTextNode(t("settings.restartOnAgentUpdate")));
+        agents.append(restartUpdateLabel);
         const resumeLabel = el("label", "check");
         const resume = el("input");
         resume.type = "checkbox";
@@ -382,6 +388,7 @@ export function createSettings(
             systemOpenExts: systemExts.value.trim(),
             notifications: notif.checked,
             autoResume: resume.checked,
+            restartOnAgentUpdate: restartUpdate.checked,
             claudeBackground: background.checked,
             language: language.value,
           }, editor());

@@ -8,7 +8,7 @@ import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
 import { errorText } from "./i18n.ts";
-import { appWheelSteps, copiedText, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
+import { appWheelSteps, copiedText, isTypedInput, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
   outputId?: string;
@@ -93,11 +93,13 @@ interface Dependencies {
   renderSidebar: () => void;
   notify: (id: string, status: Status) => Promise<void>;
   select: (id: string, focus?: boolean) => void;
+  /** Text the user typed or pasted (not terminal replies such as focus reports). */
+  onTyped?: (id: string) => void;
 }
 
 /** Owns xterm construction and input events; process lifetime is managed separately. */
 export function createTerminalFactory({ toast, getState, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
-  isWatched, unread, renderSidebar, notify, select }: Dependencies) {
+  isWatched, unread, renderSidebar, notify, select, onTyped }: Dependencies) {
   return function createRuntime(s: Session): Runtime {
     const pane = el("div", "pane");
     const head = el("div", "pane-head");
@@ -187,6 +189,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     });
 
     term.onData((data) => {
+      if (isTypedInput(data)) onTyped?.(s.id);
       writeInput(data);
     });
     // Zmena rozmerov na desktope (aj z fitTerminal) posiela veľkosť sama, takže vráti aj nárok od mobilu.
