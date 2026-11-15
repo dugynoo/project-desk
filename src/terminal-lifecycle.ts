@@ -148,6 +148,8 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
         && !(await codexNoDaemon(s.started ? getState().settings.codexResumeCommand : getState().settings.codexCommand))) {
         launch = withoutNoDaemon(command);
       }
+      const spawnCols = rt.term.cols;
+      const spawnRows = rt.term.rows;
       const prepared = await invoke<{ sessionId: string; status: string } | null>("pty_spawn", {
         args: {
           id: s.id,
@@ -158,11 +160,16 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
           claudeCommand: getState().settings.claudeCommand,
           command: launch ?? null,
           shell: getState().settings.shell || null,
-          cols: rt.term.cols,
-          rows: rt.term.rows,
+          cols: spawnCols,
+          rows: spawnRows,
         },
         onOutput: output,
       });
+      // pty_resize počas spúšťania nič nezmení (PTY ešte nie je zaregistrovaný), napr. keď sa okno
+      // po štarte aplikácie maximalizuje. Bez dorovnania by agent kreslil do pôvodnej šírky.
+      if (rt.running && runtimes.get(s.id) === rt && (rt.term.cols !== spawnCols || rt.term.rows !== spawnRows)) {
+        void invoke("pty_resize", { id: s.id, cols: rt.term.cols, rows: rt.term.rows }).catch(() => {});
+      }
       if (prepared) {
         s.agentSessionId = prepared.sessionId;
         if (statusOf(s.id) === "starting") statuses.set(s.id, backgroundStatus(prepared.status));
