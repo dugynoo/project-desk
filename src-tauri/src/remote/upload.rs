@@ -12,9 +12,45 @@ pub const MAX_IMAGE: usize = 1536 * 1024;
 /// Staršie obrázky sa pri ďalšom nahratí zmažú; agent si súbor prečíta pri vložení či odoslaní.
 const KEEP: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Priečinok pre obrázky z mobilu.
+/// Priečinok pre obrázky z mobilu. Na Unixe môže byť dočasný priečinok spoločný (`/tmp`),
+/// preto meno obsahuje UID a `private_dir` overí, že patrí nám a nik iný doň nevidí.
 pub fn dir() -> PathBuf {
-    std::env::temp_dir().join("project-desk-remote-images")
+    #[cfg(unix)]
+    // SAFETY: getuid nemá vstupy a nezlyhá.
+    let name = format!("project-desk-remote-images-{}", unsafe { libc::getuid() });
+    #[cfg(not(unix))]
+    let name = "project-desk-remote-images".to_owned();
+    std::env::temp_dir().join(name)
+}
+
+/// Vytvorí priečinok len pre seba; existujúci odmietne, ak je to symlink, patrí inému
+/// používateľovi alebo doň vidia iní.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    let meta = fs::symlink_metadata(dir)?;
+    if !meta.is_dir() {
+        return Err(std::io::Error::other("not a directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: getuid nemá vstupy a nezlyhá.
+        if meta.uid() != unsafe { libc::getuid() } || meta.mode() & 0o077 != 0 {
+            return Err(std::io::Error::other("directory is not private"));
+        }
+    }
+    Ok(())
 }
 
 /// Overí JPEG v base64, uloží ho pod náhodným menom a vráti cestu. Chyby sú kódy pre `err.*`.
@@ -32,10 +68,21 @@ pub fn save_image(dir: &Path, data: &str) -> Result<PathBuf, &'static str> {
     if bytes.len() < 4 || bytes[..3] != [0xFF, 0xD8, 0xFF] || bytes[bytes.len() - 2..] != [0xFF, 0xD9] {
         return Err("remote.imageInvalid");
     }
-    fs::create_dir_all(dir).map_err(|_| "remote.imageFailed")?;
+    private_dir(dir).map_err(|_| "remote.imageFailed")?;
     prune(dir);
     let path = dir.join(format!("{}.jpg", uuid::Uuid::new_v4().simple()));
-    fs::write(&path, &bytes).map_err(|_| "remote.imageFailed")?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options.open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, &bytes));
+    if written.is_err() {
+        let _ = fs::remove_file(&path);
+        return Err("remote.imageFailed");
+    }
     Ok(path)
 }
 
@@ -76,9 +123,29 @@ mod tests {
     }
 
     fn temp() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("pd-upload-test-{}", uuid::Uuid::new_v4().simple()));
-        fs::create_dir_all(&d).unwrap();
-        d
+        std::env::temp_dir().join(format!("pd-upload-test-{}", uuid::Uuid::new_v4().simple()))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_shared_or_symlinked_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let jpeg = b64(&[0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0xD9]);
+        let open = temp();
+        fs::create_dir(&open).unwrap();
+        fs::set_permissions(&open, fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(save_image(&open, &jpeg), Err("remote.imageFailed"));
+        let target = temp();
+        fs::create_dir(&target).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+        let link = temp();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(save_image(&link, &jpeg), Err("remote.imageFailed"));
+        let path = save_image(&target, &jpeg).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        fs::remove_dir_all(&open).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+        fs::remove_file(link).unwrap();
     }
 
     #[test]
@@ -101,8 +168,8 @@ mod tests {
         let mut big = vec![0u8; MAX_IMAGE + 1];
         big[..3].copy_from_slice(&[0xFF, 0xD8, 0xFF]);
         assert_eq!(save_image(&d, &b64(&big)), Err("remote.imageTooLarge"));
-        assert_eq!(fs::read_dir(&d).unwrap().count(), 0);
-        fs::remove_dir_all(d).unwrap();
+        assert!(fs::read_dir(&d).map_or(true, |mut e| e.next().is_none()));
+        let _ = fs::remove_dir_all(d);
     }
 
     #[test]
