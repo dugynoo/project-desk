@@ -86,7 +86,7 @@ const evaluate = (script, ...args) => command('POST', '/execute/sync', { script,
 async function click(selector) {
   // Sidebar actions appear on hover; use native pointer actions rather than
   // WebKit's element-click algorithm on an initially transparent button.
-  const point = await evaluate('const r = document.querySelector(arguments[0]).getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }', selector);
+  const point = await evaluate('const e = document.querySelector(arguments[0]); e.scrollIntoView({ block: "center", inline: "nearest" }); const r = e.getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }', selector);
   await command('POST', '/actions', { actions: [{ type: 'pointer', id: 'mouse',
     parameters: { pointerType: 'mouse' }, actions: [
       { type: 'pointerMove', duration: 0, origin: 'viewport', ...point },
@@ -168,6 +168,7 @@ try {
   await click('#settings-tab-editor');
   await type('#settings-panel-editor input[type=number]', '18', true);
   await click('#settings-panel-editor input[type=checkbox]');
+  await wait('return document.querySelector("#settings-panel-editor input[type=checkbox]").checked', 'word wrap checked');
   await click('#overlay button.primary');
   await wait('return !document.querySelector("#settings-tab-editor")', 'settings saved');
   await shell(1, 'exit');
