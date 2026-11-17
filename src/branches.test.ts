@@ -29,3 +29,11 @@ test('branches are opt-in, serial, cached, refreshed on events and invalidated w
   pending.shift()!('fresh'); await tick(); assert.equal(cache.get('a'), 'fresh');
   cache.configure(false, []); cache.refresh(['a'], true); assert.equal(calls.length, 4);
 });
+test('a custom revisit age delays repeat probes', async () => {
+  let now = 0;
+  const calls: string[] = [];
+  const cache = createBranches(async path => { calls.push(path); return 'main'; }, () => {}, () => now);
+  cache.configure(true, ['a']); cache.refresh(['a']); await tick();
+  now = 10_000; cache.refresh(['a'], 30_000); await tick(); assert.equal(calls.length, 1);
+  now = 30_000; cache.refresh(['a'], 30_000); await tick(); assert.equal(calls.length, 2);
+});

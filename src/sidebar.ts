@@ -299,7 +299,7 @@ export function createSidebar(deps: SidebarDependencies) {
   }
 
   const branches = createBranches(deps.loadBranch, () => renderSidebar());
-  function refreshBranches(revisit = false, paths = getState().projects.map(p => p.path)) {
+  function refreshBranches(revisit: boolean | number = false, paths = getState().projects.map(p => p.path)) {
     branches.configure(getState().settings.showGitBranch, getState().projects.map(p => p.path));
     branches.refresh(paths, revisit);
   }

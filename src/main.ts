@@ -236,6 +236,9 @@ const { start, onExit, closeSession, pauseSession, canPause, forgetRuntime } = t
 // ---------- zobrazenie (jedna relácia alebo mriežka) ----------
 
 let zoomedId: string | undefined;
+/** Najviac toľko terminálov drží WebGL kontext (viditeľné majú prednosť). */
+const WEBGL_BUDGET = 10;
+let webglRecent: string[] = [];
 const fitSoon = onNextFrame(fitVisible);
 const paneLayout = createPaneLayout($("#stage"), fitSoon, save);
 
@@ -276,12 +279,18 @@ function layout() {
     // Kurzor bliká len v aktívnom viditeľnom termináli; ostatné nebudia procesor.
     const blink = show && id === state.ui.activeSessionId;
     if (rt.term.options.cursorBlink !== blink) rt.term.options.cursorBlink = blink;
-    // WebGL kontext len pre viditeľné terminály: šetrí GPU pamäť a obchádza limit kontextov.
-    if (show && !rt.webgl) attachWebgl(rt);
-    if (!show && rt.webgl) {
-      rt.webgl.dispose();
-      rt.webgl = undefined;
+    if (show) {
+      if (!rt.webgl) attachWebgl(rt);
+      webglRecent = [id, ...webglRecent.filter(x => x !== id)];
     }
+  }
+  // WebGL majú viditeľné a naposledy zobrazené terminály, spolu najviac WEBGL_BUDGET:
+  // prepnutie späť je bez nového kontextu a limit prehliadača (~16) sa neprekročí.
+  webglRecent = webglRecent.filter(id => runtimes.has(id));
+  const shown = ids.filter((id): id is string => !!id && runtimes.has(id));
+  const keep = new Set([...new Set([...shown, ...webglRecent])].slice(0, Math.max(WEBGL_BUDGET, shown.length)));
+  for (const [id, rt] of runtimes) {
+    if (rt.webgl && !keep.has(id)) { rt.webgl.dispose(); rt.webgl = undefined; }
   }
   fitSoon();
   $("#btn-grid").classList.toggle("on", state.ui.grid);
@@ -828,7 +837,7 @@ const sidebar = createSidebar({
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
-function refreshBranches(revisit = false, paths?: string[]) { sidebar.refreshBranches(revisit, paths); }
+function refreshBranches(revisit: boolean | number = false, paths?: string[]) { sidebar.refreshBranches(revisit, paths); }
 
 // ---------- modálne okná ----------
 
@@ -1542,7 +1551,8 @@ async function main() {
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
-      refreshBranches(true);
+      // Alt-Tab spúšťa git pre každý projekt; stačí raz za 30 s.
+      refreshBranches(30_000);
       let changed = false;
       for (const id of visibleIds()) {
         const rt = runtimes.get(id);
@@ -1558,7 +1568,14 @@ async function main() {
   layout();
   configureRemote();
   window.setInterval(() => void lookupCodexSessions(), 3000);
-  window.setInterval(() => void pollAgents(), 2000);
+  // Skryté okno bez pracujúceho agenta stačí kontrolovať raz za 10 s; hooky hlásia zmeny hneď.
+  let lastPoll = 0;
+  window.setInterval(() => {
+    const idle = document.hidden && !state.sessions.some(s => statusOf(s.id) === "working");
+    if (idle && Date.now() - lastPoll < 10_000) return;
+    lastPoll = Date.now();
+    void pollAgents();
+  }, 2000);
   // Verzia na disku: raz za 15 min (prvá po obnovení relácií); nečinné relácie sa kontrolujú každú minútu.
   window.setTimeout(() => void agentUpdates.check(), 60_000);
   window.setInterval(() => void agentUpdates.check(), 15 * 60_000);

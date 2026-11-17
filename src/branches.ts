@@ -29,11 +29,13 @@ export function createBranches(query: (path: string) => Promise<string | null>, 
       for (const path of queue) if (!retained.has(path)) queue.delete(path);
     },
     get(path: string) { return enabled ? values.get(path)?.value : undefined; },
-    refresh(paths: string[], revisit = false) {
+    /** `revisit`: znova overí cestu staršiu ako 3 s, alebo ako zadaný počet ms. */
+    refresh(paths: string[], revisit: boolean | number = false) {
+      const maxAge = revisit === true ? 3000 : revisit;
       if (!enabled) return;
       for (const path of paths) {
         const cached = values.get(path);
-        if (path !== active && (!cached || (revisit && now() - cached.at >= 3000))) queue.add(path);
+        if (path !== active && (!cached || (maxAge !== false && now() - cached.at >= maxAge))) queue.add(path);
       }
       void drain();
     },

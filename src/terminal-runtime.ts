@@ -28,18 +28,23 @@ export interface Runtime extends MonitoredRuntime {
   remoteSized?: boolean;
   /** Odkaz pod myšou, pre menu na pravom kliku. */
   hoverLink?: { url: string } | { file: string; line?: number };
+  /** Tento terminál stratil WebGL kontext; ostane na DOM rendereri. */
+  webglLost?: boolean;
 }
 
-// Ako VS Code: po zlyhaní alebo strate kontextu ostane DOM renderer, inak by sa WebGL
-// skúšal znova pri každom layoute (a pri resetovanom GPU dookola).
+// Ako VS Code: terminál, ktorý stratil kontext, ostane na DOM rendereri, inak by sa WebGL
+// skúšal znova pri každom layoute. Ak WebGL nejde vytvoriť alebo ho stratí viac terminálov
+// (resetované GPU), DOM renderer dostanú všetky.
 let webglFailed = false;
+let webglLosses = 0;
 export function attachWebgl(rt: Runtime) {
-  if (webglFailed) return;
+  if (webglFailed || rt.webglLost) return;
   let gl: WebglAddon | undefined;
   try {
     gl = new WebglAddon();
     gl.onContextLoss(() => {
-      webglFailed = true;
+      rt.webglLost = true;
+      if (++webglLosses >= 3) webglFailed = true;
       gl?.dispose();
       rt.webgl = undefined;
     });
@@ -203,7 +208,8 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     term.onBell(() => {
       // Claude a Codex so známou konverzáciou hlásia stav inak; zvonček by notifikáciu zdvojil.
       const tracked = (s.provider === "claude" || s.provider === "antigravity") || (s.provider === "codex" && isUuid(s.agentSessionId));
-      if (!tracked && !isWatched(s.id)) {
+      // Kým relácia nie je prečítaná, ďalšie zvončeky nič nepridajú (cat binárky ich pošle stovky).
+      if (!tracked && !isWatched(s.id) && !unread.has(s.id)) {
         unread.add(s.id);
         renderSidebar();
         void notify(s.id, "needs-you");
