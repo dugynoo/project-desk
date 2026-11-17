@@ -14,6 +14,9 @@ const SCAN_BUDGET: u64 = 8 * 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
 /// Horná hranica sledovaných úloh na pozadí; chráni pamäť pri poškodenom súbore.
 const MAX_BACKGROUND_TASKS: usize = 64;
+/// Zastavené relácie si chvíľu držia pozíciu v súbore, aby reštart nečítal históriu odznova.
+const PARKED_LIMIT: usize = 16;
+const PARKED_FOR: Duration = Duration::from_secs(600);
 
 #[derive(Clone, Default, Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +73,7 @@ struct Watch {
 pub struct Watcher {
     watches: Mutex<HashMap<String, Watch>>,
     missing: Mutex<HashMap<String, Missing>>,
+    parked: Mutex<HashMap<String, (Watch, Instant)>>,
 }
 
 // Negative discovery results only: parsing/history catch-up never backs off.
@@ -376,20 +380,38 @@ impl Watch {
         Watch { path, generation: 0, offset: 0, line_start: 0, history_end: None, stats: Stats::default(), claude_msgs: HashMap::new(), primed: false, status: None, background: HashSet::new() }
     }
 
+    /// A new launch keeps the read position and usage totals; only live state
+    /// (status, background tasks) belongs to the previous process. Unread lines
+    /// written before the restart count as history, so they raise no events.
     fn set_generation(&mut self, generation: u64) {
         if self.generation == generation { return; }
-        let path = std::mem::take(&mut self.path);
-        *self = Watch::new(path);
         self.generation = generation;
+        self.status = None;
+        self.background.clear();
+        self.history_end = None;
+        self.primed = false;
     }
 }
 
 impl Watcher {
-    /// Called after the serialized frontend poll; removed watches drop all
-    /// message accounting metadata. Reopening rebuilds totals from disk.
+    /// Called after the serialized frontend poll. Removed watches are parked for
+    /// a while (metadata only) so a restart resumes reading; later ones re-read from disk.
     pub fn retain(&self, active_ids: &[String]) {
         if let Ok(mut watches) = self.watches.lock() {
-            watches.retain(|id, _| active_ids.contains(id));
+            let gone: Vec<String> = watches.keys().filter(|id| !active_ids.contains(id)).cloned().collect();
+            if let Ok(mut parked) = self.parked.lock() {
+                let now = Instant::now();
+                for id in gone {
+                    if let Some(w) = watches.remove(&id) { parked.insert(id, (w, now)); }
+                }
+                parked.retain(|_, (_, at)| now.duration_since(*at) < PARKED_FOR);
+                while parked.len() > PARKED_LIMIT {
+                    let Some(oldest) = parked.iter().min_by_key(|(_, (_, at))| *at).map(|(id, _)| id.clone()) else { break };
+                    parked.remove(&oldest);
+                }
+            } else {
+                watches.retain(|id, _| active_ids.contains(id));
+            }
             if watches.is_empty() { *watches = HashMap::new(); }
         }
         if let Ok(mut missing) = self.missing.lock() {
@@ -403,6 +425,9 @@ impl Watcher {
             return None;
         }
         let mut watches = self.watches.lock().ok()?;
+        if !watches.contains_key(agent_id) {
+            if let Some((w, _)) = self.parked.lock().ok()?.remove(agent_id) { watches.insert(agent_id.to_owned(), w); }
+        }
         if !watches.contains_key(agent_id) {
             let mut missing = self.missing.lock().ok()?;
             let path = locate(&mut missing, agent_id, provider, generation, Instant::now(), || match provider {
@@ -539,6 +564,43 @@ mod tests {
         }
         watcher.retain(&[]);
         assert_eq!(watcher.watches.lock().unwrap().capacity(), 0);
+        let parked = watcher.parked.lock().unwrap();
+        assert!(parked.contains_key("closed") && parked.contains_key("active"), "stopped sessions park their position");
+    }
+
+    #[test]
+    fn parked_watches_are_capped() {
+        let watcher = Watcher::default();
+        for i in 0..PARKED_LIMIT + 4 {
+            watcher.watches.lock().unwrap().insert(format!("s{i}"), Watch::new(PathBuf::new()));
+            watcher.retain(&[]);
+        }
+        assert_eq!(watcher.parked.lock().unwrap().len(), PARKED_LIMIT);
+    }
+
+    #[test]
+    fn restart_resumes_reading_without_replaying_history() {
+        let path = temp_file("restart-offset.jsonl");
+        let launch = crate::codex::parse_utc_ms("2026-10-25T12:00:00.000Z").unwrap();
+        append(&path, concat!(
+            "{\"timestamp\":\"2026-10-25T12:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n",
+            "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":42}}}}\n",
+        ));
+        let mut w = Watch::new(path.clone());
+        w.set_generation(launch);
+        w.read_new(Provider::Codex).unwrap();
+        let offset = w.offset;
+        // Written by the old process after the last poll, then a restart.
+        append(&path, "{\"timestamp\":\"2026-10-25T12:00:02.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n");
+        w.set_generation(launch + 10_000);
+        assert_eq!(w.offset, offset, "restart keeps the read position");
+        assert!(w.read_new(Provider::Codex).unwrap().is_empty(), "pre-restart lines raise no events");
+        assert!(w.primed);
+        assert_eq!(w.status, None);
+        assert_eq!(w.stats.input_tokens, 42);
+        append(&path, "{\"timestamp\":\"2026-10-25T12:00:11.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n");
+        assert_eq!(w.read_new(Provider::Codex).unwrap(), vec!["task_started"]);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
