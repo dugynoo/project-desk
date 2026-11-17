@@ -1,10 +1,11 @@
+import { writeClipboard } from "./clipboard.ts";
 import { editShortcuts } from "./actions.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { el } from "./dom.ts";
 import { cliChecks } from "./cli-check.ts";
 import { t, errorText, LANGUAGES, type Key } from "./i18n.ts";
-import { MIN_FONT_SIZE, MAX_FONT_SIZE, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
+import { MIN_FONT_SIZE, MAX_FONT_SIZE, MAX_SCROLLBACK, THEME_IDS, normalizeScrollback, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import qrcode from "qrcode-generator";
@@ -149,7 +150,7 @@ export function createSettings(
           cmd.type = "text"; cmd.readOnly = true; cmd.value = r.serveCommand;
           cmd.setAttribute("aria-label", t("settings.remoteServeHint"));
           const copy = el("button", "", t("settings.remoteCopy"));
-          copy.onclick = () => { void navigator.clipboard.writeText(r.serveCommand).catch(e => onError(errorText(e))); };
+          copy.onclick = () => { void writeClipboard(r.serveCommand).catch(e => onError(errorText(e))); };
           const row = el("div", "input-row"); row.append(cmd, copy);
           out.push(el("div", "note", t("settings.remoteServeHint")), row);
         }
@@ -253,7 +254,19 @@ export function createSettings(
         fontSize.value = String(st.fontSize);
         const fontLabel = el("label", "", t("settings.fontSize"));
         fontLabel.htmlFor = fontSize.id;
-        display.append(fontLabel, fontSize);
+        const theme = el("select");
+        theme.id = "settings-theme";
+        for (const id of THEME_IDS) theme.append(new Option(t(`theme.${id}`), id, false, id === st.theme));
+        const themeLabel = el("label", "", t("settings.theme")); themeLabel.htmlFor = theme.id;
+        const scrollback = el("input");
+        scrollback.id = "terminal-scrollback";
+        scrollback.type = "number";
+        scrollback.min = "0";
+        scrollback.max = String(MAX_SCROLLBACK);
+        scrollback.step = "1000";
+        scrollback.value = String(st.terminalScrollback);
+        const scrollbackLabel = el("label", "", t("settings.scrollback")); scrollbackLabel.htmlFor = scrollback.id;
+        display.append(themeLabel, theme, fontLabel, fontSize, scrollbackLabel, scrollback, el("div", "note", t("settings.scrollbackNote")));
         const gitBranch = el("input");
         gitBranch.type = "checkbox";
         gitBranch.id = "show-git-branch";
@@ -373,6 +386,8 @@ export function createSettings(
           const draft = settingsDraft(base, {
             ...remoteValue,
             fontSize: Number(fontSize.value),
+            theme: theme.value,
+            terminalScrollback: normalizeScrollback(Number(scrollback.value)),
             fileEditor: fileEditor.value as Settings["fileEditor"],
             markdownOpen: markdownOpen.value as Settings["markdownOpen"],
             editorFontSize: Number(editorFont.value),

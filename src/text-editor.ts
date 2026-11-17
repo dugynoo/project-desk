@@ -1,9 +1,11 @@
+import { writeClipboard } from "./clipboard.ts";
 import { EditorView, basicSetup } from "codemirror";
 import { Compartment, EditorState, type Text } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
 import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { editorColors } from "./theme.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
@@ -29,7 +31,7 @@ export function markdownHtml(source: string): string {
 type Document = { path: string; text: string };
 export function createTextEditor(confirmDiscard: () => Promise<boolean>, external: (path: string) => void,
   visibilityChanged: (visible: boolean) => void = () => {},
-  getSettings: () => Pick<Settings, "editorFontSize" | "editorWordWrap" | "markdownOpen"> = () => ({ editorFontSize: 13, editorWordWrap: false, markdownOpen: "preview" }),
+  getSettings: () => Pick<Settings, "editorFontSize" | "editorWordWrap" | "markdownOpen" | "theme"> = () => ({ editorFontSize: 13, editorWordWrap: false, markdownOpen: "preview", theme: "dark" }),
   externalLabel: () => string = () => t("editor.external"),
   openLink: (url: string) => void = () => {}) {
   const preview = el("div", "markdown-preview");
@@ -40,7 +42,9 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
   const appearanceExtensions = () => {
     const settings = getSettings();
     preview.style.fontSize = `${settings.editorFontSize}px`;
+    const colors = editorColors(settings.theme);
     return [EditorView.theme({ "&": { fontSize: `${settings.editorFontSize}px` } }),
+      ...(colors ? [EditorView.theme(colors, { dark: true })] : []),
       ...(settings.editorWordWrap ? [EditorView.lineWrapping] : [])];
   };
   function configure() {
@@ -120,7 +124,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
       preview.innerHTML = markdownHtml(view!.state.doc.toString());
       for (const pre of preview.querySelectorAll("pre")) {
         const copy = el("button", "markdown-copy", t("textEditor.copy"));
-        copy.onclick = () => void navigator.clipboard.writeText(pre.querySelector("code")?.textContent ?? "")
+        copy.onclick = () => void writeClipboard(pre.querySelector("code")?.textContent ?? "")
           .then(() => { copy.textContent = t("info.copied"); setTimeout(() => (copy.textContent = t("textEditor.copy")), 1500); });
         pre.append(copy);
       }

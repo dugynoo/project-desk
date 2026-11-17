@@ -36,7 +36,8 @@ export function showSavedLayouts(
           title.value = preset.name;
           save();
         };
-        const info = el("p", "hint", `${t(`panes.${preset.paneLayout}`)} · ${preset.paneSlots.length}`);
+        const owner = state.projects.find(p => p.id === preset.projectId);
+        const info = el("p", "hint", [owner?.name, t(`panes.${preset.paneLayout}`), String(preset.paneSlots.length)].filter(Boolean).join(" · "));
         const actions = el("div", "actions");
         const load = el("button", "primary", t("layouts.open"));
         load.onclick = () => { applyPanePreset(state, preset.id); close(); restore(); };

@@ -20,6 +20,7 @@ mod instance;
 mod file_drop;
 #[cfg(target_os = "linux")]
 mod webkit_nvidia;
+mod clipboard;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -535,7 +536,8 @@ pub fn run() {
             remote_configure,
             remote_status,
             remote_new_token,
-            remote_publish
+            remote_publish,
+            clipboard::copy_text
         ])
         .build(tauri::generate_context!())
         .expect("Project Desk failed to start");

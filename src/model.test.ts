@@ -1196,3 +1196,39 @@ test("restarting on agent updates is on by default and a saved opt-out survives 
   assert.equal(parseState(JSON.stringify({ settings: {} })).state.settings.restartOnAgentUpdate, true);
   assert.equal(parseState(JSON.stringify({ settings: { restartOnAgentUpdate: false } })).state.settings.restartOnAgentUpdate, false);
 });
+
+import { dropOnPane, paneDropSide, normalizeScrollback, normalizeTheme } from "./model.ts";
+
+test("paneDropSide picks the nearest edge, the middle third replaces", () => {
+  assert.equal(paneDropSide(0.1, 0.5), "left");
+  assert.equal(paneDropSide(0.9, 0.5), "right");
+  assert.equal(paneDropSide(0.5, 0.05), "top");
+  assert.equal(paneDropSide(0.5, 0.95), "bottom");
+  assert.equal(paneDropSide(0.5, 0.5), "center");
+});
+
+test("dropOnPane splits next to the target in the dropped direction", () => {
+  assert.deepEqual(dropOnPane(["a"], "grid", "b", "a", "left"), { paneLayout: "columns", paneSlots: ["b", "a"] });
+  assert.deepEqual(dropOnPane(["a"], "grid", "b", "a", "bottom"), { paneLayout: "rows", paneSlots: ["a", "b"] });
+  assert.deepEqual(dropOnPane(["a", "b"], "columns", "c", "a", "right"), { paneLayout: "columns", paneSlots: ["a", "c", "b"] });
+  assert.deepEqual(dropOnPane(["a", "b"], "columns", "c", "b", "top"), { paneLayout: "grid", paneSlots: ["a", "c", "b"] });
+  // Viditeľná relácia sa presunie, nezdvojí.
+  assert.deepEqual(dropOnPane(["a", "b", "c"], "columns", "c", "a", "left"), { paneLayout: "columns", paneSlots: ["c", "a", "b"] });
+});
+
+test("dropOnPane replaces or swaps in the middle and refuses impossible drops", () => {
+  assert.deepEqual(dropOnPane(["a", "b"], "rows", "c", "a", "center"), { paneLayout: "rows", paneSlots: ["c", "b"] });
+  assert.deepEqual(dropOnPane(["a", "b"], "rows", "b", "a", "center"), { paneLayout: "rows", paneSlots: ["b", "a"] });
+  assert.equal(dropOnPane(["a"], "grid", "a", "a", "left"), null);
+  assert.equal(dropOnPane(["a"], "grid", "b", "x", "left"), null);
+  assert.equal(dropOnPane(["1", "2", "3", "4", "5", "6", "7", "8"], "grid", "9", "1", "left"), null);
+});
+
+test("scrollback and theme settings are clamped to known values", () => {
+  assert.equal(normalizeScrollback(0), 0);
+  assert.equal(normalizeScrollback(-5), 0);
+  assert.equal(normalizeScrollback(1e9), 100_000);
+  assert.equal(normalizeScrollback("x"), 5000);
+  assert.equal(normalizeTheme("nord"), "nord");
+  assert.equal(normalizeTheme("neon"), "dark");
+});

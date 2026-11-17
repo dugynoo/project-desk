@@ -1,7 +1,7 @@
 import { $, el, iconButton, onNextFrame } from "./dom.ts";
 import { createBranches } from "./branches.ts";
 import { openSessionMenu, openActionMenu, type MenuAction } from "./session-menu.ts";
-import { ATTENTION, moveProject, moveSession, orderedProjects, railSessions, sessionsOf, PROVIDER_LABEL,
+import { ATTENTION, folderName, moveProject, moveSession, orderedProjects, railSessions, sessionsOf, PROVIDER_LABEL,
   type PersistedState, type Project, type Provider, type Session, type Status } from "./model.ts";
 import { t } from "./i18n.ts";
 
@@ -39,6 +39,12 @@ interface SidebarDependencies {
   rendered?(): void;
   showNotifications(): void;
   refreshNotifications(): void;
+  /** Relácia ťahaná nad terminálom: `hover` ukáže, kam padne (false = nie nad panelom). */
+  paneDrop: { hover(id: string, x: number, y: number): boolean; drop(id: string, x: number, y: number): void; clear(): void };
+  /** Pohľady projektu (uložené rozloženia s `projectId`). */
+  openView(id: string): void;
+  saveView(project: Project, id?: string): void;
+  manageViews(): void;
 }
 
 /** Owns sidebar DOM and transient interaction state; application state stays with the caller. */
@@ -53,7 +59,7 @@ export function createSidebar(deps: SidebarDependencies) {
   const showHidden = new Set<string>();
   // Premenovanie priamo v zozname. Sidebar sa prekresľuje aj pri zmene stavu,
   // preto si rozpísaný text držíme mimo DOM.
-  let editing: { id: string; draft: string; selectAll: boolean } | undefined;
+  let editing: { id: string; draft: string; selectAll: boolean; project?: boolean } | undefined;
   let rerendering = false;
 
   function markUnread(id: string) {
@@ -69,10 +75,28 @@ export function createSidebar(deps: SidebarDependencies) {
     if (render) renderSidebar();
   }
 
+  function startProjectRename(p: Project) {
+    editing = { id: p.id, draft: p.name, selectAll: true, project: true };
+    renderSidebar();
+  }
+
   function finishRename(commit: boolean) {
     if (!editing) return;
-    const s = session(editing.id);
     const title = editing.draft.trim();
+    if (editing.project) {
+      const p = getState().projects.find(x => x.id === editing!.id);
+      editing = undefined;
+      // Prázdny názov vráti meno priečinka.
+      if (p && commit) {
+        p.name = (title || folderName(p.path)).slice(0, 200);
+        save();
+        renderPaneHeads();
+      }
+      renderSidebar();
+      runtimes.get(getState().ui.activeSessionId ?? "")?.term.focus();
+      return;
+    }
+    const s = session(editing.id);
     editing = undefined;
     if (s && commit && title) {
       s.title = title;
@@ -135,23 +159,26 @@ export function createSidebar(deps: SidebarDependencies) {
   let dragListeners: AbortController | undefined;
 
   /** `targets` sú selektor povolených cieľov (s `data-id`), `drop` dostane cieľ a stranu. */
-  function startDrag(e: PointerEvent, box: HTMLElement, targets: string, drop: (toId: string, after: boolean) => void) {
+  function startDrag(e: PointerEvent, box: HTMLElement, targets: string, drop: (toId: string, after: boolean) => void, sessionId?: string) {
     if (e.button !== 0 || (e.target as HTMLElement).closest("button, input")) return;
     e.stopPropagation();
     dragListeners?.abort();
     document.querySelectorAll(".dragging").forEach((x) => x.classList.remove("dragging"));
     const listeners = dragListeners = new AbortController();
-    const startY = e.clientY;
+    const startX = e.clientX, startY = e.clientY;
     drag = { moved: false };
     let target: { id: string; after: boolean } | undefined;
+    // Relácia pustená nad terminálom rozdelí panel (`paneDrop` v main).
+    let onPane: { x: number; y: number } | undefined;
     const clearMarks = () => document.querySelectorAll(".drop-before, .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
     const move = (ev: PointerEvent) => {
       if (!drag) return;
-      if (!drag.moved && Math.abs(ev.clientY - startY) < 5) return;
+      if (!drag.moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 5) return;
       drag.moved = true;
       box.classList.add("dragging");
       clearMarks();
-      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(targets);
+      onPane = sessionId && deps.paneDrop.hover(sessionId, ev.clientX, ev.clientY) ? { x: ev.clientX, y: ev.clientY } : undefined;
+      const over = onPane ? undefined : document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(targets);
       target = undefined;
       if (over?.dataset.id && over !== box) {
         const r = over.getBoundingClientRect();
@@ -162,12 +189,14 @@ export function createSidebar(deps: SidebarDependencies) {
     const up = () => {
       listeners.abort();
       clearMarks();
+      deps.paneDrop.clear();
       box.classList.remove("dragging");
       if (!drag?.moved) {
         drag = undefined;
         return;
       }
-      if (target) {
+      if (sessionId && onPane) deps.paneDrop.drop(sessionId, onPane.x, onPane.y);
+      else if (target) {
         drop(target.id, target.after);
         save();
       }
@@ -177,7 +206,7 @@ export function createSidebar(deps: SidebarDependencies) {
         renderSidebar();
       }, 0);
     };
-    const cancel = () => { target = undefined; up(); };
+    const cancel = () => { target = undefined; onPane = undefined; up(); };
     const { signal } = listeners;
     window.addEventListener("pointermove", move, { signal });
     window.addEventListener("pointerup", up, { signal });
@@ -319,17 +348,23 @@ export function createSidebar(deps: SidebarDependencies) {
       actions.append(launcher, actionsButton(() => [
         { label: t("project.openEditor"), run: () => openEditor(p.path) },
         { label: openFolderLabel(), run: () => openFolder(p.path) },
+        { label: t("project.rename"), run: () => startProjectRename(p) },
+        { label: t("views.save"), run: () => deps.saveView(p) },
         { label: t(p.pinned ? "project.unpin" : "project.pin"), run: () => { p.pinned = !p.pinned; save(); renderSidebar(); } },
         { label: t("project.remove"), danger: true, separator: true, run: () => void removeProject(p) },
       ], `project-menu-${p.id}`));
       const name = el("span", "name", p.name);
       name.title = p.name;
+      const renaming = editing?.project && editing.id === p.id;
       const branch = branches.get(p.path);
-      if (branch) {
+      if (branch && !renaming) {
         name.append(el("span", "git-branch", " · " + branch));
         name.title = p.name + " · " + branch;
       }
-      if (p.pinned) name.prepend(el("span", "pin", "★ "));
+      if (renaming) {
+        editInput = renameInput();
+        name.replaceChildren(editInput);
+      } else if (p.pinned) name.prepend(el("span", "pin", "★ "));
       const disclosure = el("div", "project-disclosure");
       disclosure.setAttribute("role", "button"); disclosure.tabIndex = 0;
       disclosure.dataset.focusId = `project-${p.id}`;
@@ -343,8 +378,11 @@ export function createSidebar(deps: SidebarDependencies) {
         disclosure.setAttribute("aria-label", `${p.name}: ${badge.title}`);
       }
       row.append(disclosure, actions);
-      disclosure.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); } };
-      row.addEventListener("pointerdown", (e) => startDrag(e, box, ".project", (toId, after) => {
+      disclosure.onkeydown = e => {
+        if (e.target instanceof HTMLInputElement) return;
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); row.click(); }
+      };
+      row.addEventListener("pointerdown", (e) => e.target instanceof HTMLInputElement || startDrag(e, box, ".project", (toId, after) => {
         getState().projects = moveProject(getState().projects, p.id, toId, after);
       }));
       row.addEventListener("click", () => {
@@ -415,7 +453,7 @@ export function createSidebar(deps: SidebarDependencies) {
           item.append(el("span", `dot ${st}`), body, actions);
           item.addEventListener("pointerdown", (e) => startDrag(e, item, `.project[data-id="${CSS.escape(p.id)}"] .session`, (toId, after) => {
             getState().sessions = moveSession(getState().sessions, s.id, toId, after);
-          }));
+          }, s.id));
           item.addEventListener("click", () => { if (!drag?.moved) select(s.id); });
           item.addEventListener("dblclick", () => startRename(s));
           item.addEventListener("contextmenu", (e) => {
@@ -431,6 +469,24 @@ export function createSidebar(deps: SidebarDependencies) {
           toggle.setAttribute("aria-expanded", String(open));
           toggle.onclick = () => { if (open) showHidden.delete(p.id); else showHidden.add(p.id); renderSidebar(); };
           box.append(toggle);
+        }
+        if (!attentionOnly) for (const view of getState().savedLayouts.filter(l => l.projectId === p.id)) {
+          const item = el("div", "project-view");
+          item.dataset.focusId = `view-${view.id}`;
+          const open = el("button", "project-view-open", `▦  ${view.name}`);
+          open.title = t("views.open", { name: view.name });
+          open.onclick = () => deps.openView(view.id);
+          const actions = el("span", "row-actions");
+          actions.append(actionsButton(() => [
+            { label: t("layouts.update"), run: () => deps.saveView(p, view.id) },
+            { label: t("views.manage"), run: () => deps.manageViews() },
+            { label: t("layouts.delete"), danger: true, separator: true, run: () => {
+              getState().savedLayouts = getState().savedLayouts.filter(l => l.id !== view.id);
+              save(); renderSidebar();
+            } },
+          ], `view-menu-${view.id}`));
+          item.append(open, actions);
+          box.append(item);
         }
       }
       root.append(box);

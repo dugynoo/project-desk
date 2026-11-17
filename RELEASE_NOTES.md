@@ -1,2 +1,7 @@
-- Phone: the + button next to the message field sends a photo or screenshot to the agent, like dropping an image on the terminal.
-- Phone: a /compact key in the chat asks Claude Code or Codex to summarize the conversation and free up context.
+- Drag a session from the sidebar onto a terminal to split it: drop near an edge to open it beside that panel, or in the middle to replace it.
+- Project views: save the current panels under a project and open them from the sidebar with one click.
+- Color themes: Dark, Black (OLED), Nord and Solarized for the sidebar, terminals and editor (Settings → Display).
+- Terminal history length is now adjustable in Settings → Display.
+- Projects can be renamed from their menu.
+- Linux: copying text uses wl-copy or xclip when available, so pasting into other apps should no longer hang after Project Desk loses focus.
+- The cursor blinks only in the active terminal, so background terminals use less CPU.

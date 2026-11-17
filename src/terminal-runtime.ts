@@ -1,3 +1,4 @@
+import { writeClipboard } from "./clipboard.ts";
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -8,7 +9,8 @@ import type { MonitoredRuntime } from "./agent-monitor.ts";
 import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
 import { errorText } from "./i18n.ts";
-import { appWheelSteps, copiedText, isTypedInput, isUuid, type Session, type PersistedState, type Status } from "./model.ts";
+import { terminalTheme } from "./theme.ts";
+import { appWheelSteps, copiedText, isTypedInput, isUuid, normalizeScrollback, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
   outputId?: string;
@@ -110,10 +112,11 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
       fontSize: getState().settings.fontSize,
-      cursorBlink: true,
-      scrollback: 5000,
+      // Bliká len aktívny terminál (`layout`), skryté nebudia procesor.
+      cursorBlink: false,
+      scrollback: normalizeScrollback(getState().settings.terminalScrollback),
       allowProposedApi: true,
-      theme: { background: "#111317", foreground: "#e6e8ee", cursor: "#7cc4ff", selectionBackground: "#2d3a52" },
+      theme: terminalTheme(getState().settings.theme),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -172,7 +175,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
         // Zalomenie od agenta sa od dvoch riadkov kódu odlíšiť nedá, preto riadky spája len Ctrl+Shift+C.
         // V shelli môžu byť riadky zarovnané zámerne (stĺpce, tabuľky).
         const columns = e.shiftKey && s.provider !== "shell" ? term.cols : undefined;
-        void navigator.clipboard.writeText(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x, columns));
+        void writeClipboard(copiedText(term.getSelection(), term.getSelectionPosition()?.start.x, columns));
         term.clearSelection();
         e.preventDefault();
         return false;

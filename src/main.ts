@@ -1,13 +1,15 @@
+import { writeClipboard } from "./clipboard.ts";
 import { createTerminalFactory, attachWebgl, fitTerminal, reclaimSize, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
-import { openSearch } from "./terminal-search.ts";
-import { fileOpenTarget, type EditorInfo } from "./model.ts";
+import { openSearch, setSearchTheme } from "./terminal-search.ts";
+import { fileOpenTarget, applyPanePreset, savePanePreset, paneDropSide, dropOnPane, type EditorInfo } from "./model.ts";
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
-import { normalizeFontSize, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
+import { applyUiTheme, terminalTheme } from "./theme.ts";
+import { normalizeFontSize, normalizeScrollback, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
@@ -271,6 +273,9 @@ function layout() {
     rt.pane.style.gridColumn = cell ? `${cell.column} / span ${cell.span}` : "";
     rt.pane.style.gridRow = cell ? String(cell.row) : "";
     rt.pane.classList.toggle("focused", id === state.ui.activeSessionId);
+    // Kurzor bliká len v aktívnom viditeľnom termináli; ostatné nebudia procesor.
+    const blink = show && id === state.ui.activeSessionId;
+    if (rt.term.options.cursorBlink !== blink) rt.term.options.cursorBlink = blink;
     // WebGL kontext len pre viditeľné terminály: šetrí GPU pamäť a obchádza limit kontextov.
     if (show && !rt.webgl) attachWebgl(rt);
     if (!show && rt.webgl) {
@@ -383,7 +388,7 @@ function setupLinks(rt: Runtime, s: Session) {
     if ("url" in link) {
       popupMenu(e.clientX, e.clientY, [
         [t("menu.openLink"), () => openLink(link.url)],
-        [t("menu.copyLink"), () => void navigator.clipboard.writeText(link.url)],
+        [t("menu.copyLink"), () => void writeClipboard(link.url)],
       ]);
       return;
     }
@@ -393,9 +398,9 @@ function setupLinks(rt: Runtime, s: Session) {
       [externalEditorLabel(), () => openEditor(link.file, link.line)],
       [t("menu.openDefault"), () => void openDefault(link.file)],
       [t(REVEAL_LABEL[info.platform] ?? "menu.revealLinux"), () => void revealFile(link.file)],
-      [t("menu.copyPath"), () => void navigator.clipboard.writeText(link.file)],
+      [t("menu.copyPath"), () => void writeClipboard(link.file)],
     ];
-    if (rel) items.push([t("menu.copyRelative"), () => void navigator.clipboard.writeText(rel)]);
+    if (rel) items.push([t("menu.copyRelative"), () => void writeClipboard(rel)]);
     popupMenu(e.clientX, e.clientY, items);
   });
 }
@@ -646,6 +651,7 @@ async function removeProject(p: Project) {
   state.sessions = state.sessions.filter((s) => s.projectId !== p.id);
   state.templates = state.templates.filter((t) => t.projectId !== p.id);
   state.projects = state.projects.filter((x) => x.id !== p.id);
+  state.savedLayouts = state.savedLayouts.filter((l) => l.projectId !== p.id);
   save();
   layout();
   renderSidebar();
@@ -812,6 +818,9 @@ function showClosedSessions() {
 
 const sidebar = createSidebar({
   getState: () => state, runtimes, unread, providerIcons: PROVIDER_ICON,
+  // Volá sa až pri ťahaní, keď je `paneDrop` už definovaný.
+  paneDrop: { hover: (id, x, y) => paneDrop.hover(id, x, y), drop: (id, x, y) => paneDrop.drop(id, x, y), clear: () => paneDrop.clear() },
+  openView, saveView, manageViews: () => showSavedLayouts(state, modal, save, restorePaneLayout),
   loadBranch: path => invoke<string | null>("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
@@ -1071,7 +1080,7 @@ function showInfo(s: Session) {
       if (s.agentSessionId) {
         const copy = el("button", "", t("info.copyId"));
         copy.onclick = () =>
-          void navigator.clipboard.writeText(s.agentSessionId!).then(() => (copy.textContent = t("info.copied")));
+          void writeClipboard(s.agentSessionId!).then(() => (copy.textContent = t("info.copied")));
         actions.append(copy);
       }
       const ok = el("button", "primary", t("common.close"));
@@ -1261,7 +1270,7 @@ const showSettings = createSettings(
     state.settings = draft;
     let remote: Promise<RemoteStatus | null> | undefined;
     if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); remote = configureRemote(); }
-    applyFontSize(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints();
+    applyFontSize(); applyTheme(); applyScrollback(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints();
     return remote;
   },
   modal, toast, checkUpdate, installUpdate,
@@ -1277,6 +1286,77 @@ function applyFontSize() {
   }
   fitSoon();
 }
+function applyTheme() {
+  const theme = state.settings.theme;
+  applyUiTheme(theme);
+  setSearchTheme(theme);
+  const colors = terminalTheme(theme);
+  for (const rt of runtimes.values()) rt.term.options.theme = colors;
+}
+function applyScrollback() {
+  const lines = normalizeScrollback(state.settings.terminalScrollback);
+  for (const rt of runtimes.values()) {
+    if (rt.term.options.scrollback !== lines) rt.term.options.scrollback = lines;
+  }
+}
+// ---------- pohľady a rozdelenie pretiahnutím ----------
+
+/** Pohľad projektu: uloží aktuálne panely; s `id` prepíše existujúci. */
+function saveView(p: Project, id?: string) {
+  const name = id ? state.savedLayouts.find(l => l.id === id)?.name ?? "" : t("views.defaultName", { n: state.savedLayouts.filter(l => l.projectId === p.id).length + 1 });
+  // Pohľad je rozloženie panelov; jedna relácia nie je čo ukladať.
+  if (!state.ui.grid) { toast(t("views.needPanels")); return; }
+  if (!savePanePreset(state, id ?? crypto.randomUUID(), name, p.id)) return;
+  save(); renderSidebar();
+  toast(t(id ? "views.updated" : "views.saved", { name }));
+}
+function openView(id: string) {
+  if (!applyPanePreset(state, id)) return;
+  zoomedId = undefined;
+  restorePaneLayout();
+}
+
+let dropMark: HTMLElement | undefined;
+/** Panel pod kurzorom a strana, na ktorú by relácia padla. */
+function paneUnder(x: number, y: number) {
+  const pane = document.elementFromPoint(x, y)?.closest<HTMLElement>("#stage .pane.visible");
+  if (!pane) return undefined;
+  const id = [...runtimes].find(([, rt]) => rt.pane === pane)?.[0];
+  if (!id) return undefined;
+  const r = pane.getBoundingClientRect();
+  return { id, rect: r, side: paneDropSide((x - r.left) / r.width, (y - r.top) / r.height) };
+}
+function visiblePanes(): string[] {
+  if (!state.ui.grid) return state.ui.activeSessionId ? [state.ui.activeSessionId] : [];
+  return state.ui.paneSlots.filter((id): id is string => id !== null && runtimes.has(id));
+}
+const paneDrop = {
+  hover(id: string, x: number, y: number): boolean {
+    const under = paneUnder(x, y);
+    if (!under || under.id === id) { paneDrop.clear(); return false; }
+    dropMark ??= el("div", "pane-drop");
+    const { rect: r, side } = under;
+    const half = { left: [0, 0, .5, 1], right: [.5, 0, .5, 1], top: [0, 0, 1, .5], bottom: [0, .5, 1, .5], center: [0, 0, 1, 1] }[side];
+    Object.assign(dropMark.style, { left: `${r.left + r.width * half[0]}px`, top: `${r.top + r.height * half[1]}px`,
+      width: `${r.width * half[2]}px`, height: `${r.height * half[3]}px` });
+    if (!dropMark.isConnected) document.body.append(dropMark);
+    return true;
+  },
+  drop(id: string, x: number, y: number) {
+    paneDrop.clear();
+    const under = paneUnder(x, y);
+    if (!under) return;
+    const next = dropOnPane(visiblePanes(), state.ui.paneLayout, id, under.id, under.side);
+    if (!next) { toast(t("views.tooMany")); return; }
+    state.ui.grid = true;
+    state.ui.paneLayout = next.paneLayout;
+    state.ui.paneSlots = next.paneSlots;
+    zoomedId = undefined;
+    select(id);
+  },
+  clear() { dropMark?.remove(); },
+};
+
 function changeFontSize(value: number) {
   const size = normalizeFontSize(value);
   if (size === state.settings.fontSize) return;
@@ -1372,6 +1452,7 @@ async function main() {
   const stored = await invoke<{ json: string | null; recovered: boolean }>("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;
+  applyTheme();
   setLang(state.settings.language);
   translateDocument();
   if (stored.recovered) toast(t("app.recovered"), true);

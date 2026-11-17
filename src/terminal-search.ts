@@ -2,15 +2,11 @@ import type { Terminal } from "@xterm/xterm";
 import type { SearchAddon } from "@xterm/addon-search";
 import { el, iconButton } from "./dom.ts";
 import { t, type Key } from "./i18n.ts";
+import { searchDecorations } from "./theme.ts";
 
-const SEARCH_OPTIONS = {
-  decorations: {
-    matchBackground: "#3a4a63",
-    matchOverviewRuler: "#7cc4ff",
-    activeMatchBackground: "#b8860b",
-    activeMatchColorOverviewRuler: "#ffb454",
-  },
-};
+let SEARCH_OPTIONS = { decorations: searchDecorations("dark") };
+/** Farby zvýraznenia podľa témy; platia od ďalšieho hľadania. */
+export function setSearchTheme(theme: string) { SEARCH_OPTIONS = { decorations: searchDecorations(theme) }; }
 
 /** Hľadanie v histórii terminálu (Ctrl+Shift+F). */
 export function createSearchBar(term: Terminal, search: SearchAddon, isAppShortcut: (e: KeyboardEvent) => boolean): HTMLElement {

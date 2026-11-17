@@ -77,6 +77,7 @@ restarted). Desk does not install updates itself.
 - Drag the sidebar edge to resize it.
 - **Auto-hide sidebar** (button beside Settings, or the palette): the sidebar shrinks to a narrow strip with one dot per session, grouped by project: red needs you, yellow is working (a yellow ring: waiting on background tasks), green is done, grey is stopped or untracked. Hovering the strip slides the sidebar over the terminal without resizing it; it retracts when the pointer leaves, but stays while a menu, rename or drag is in progress. Clicking a dot opens that session; » keeps the sidebar open again.
 - A project's **⋯** menu opens its folder in Explorer, Finder or the file manager.
+- Rename a project with **⋯ → Rename** on its row; the folder name returns when you clear the name. Hovering the row shows the folder path.
 - Rename a session inline by double-clicking or using **⋯ → Rename**. The same menu (also available on right-click) contains diagnostics and close/remove. Stopped sessions keep a quick restart button. Closing a terminal moves it to **Recently closed** in the fixed sidebar footer (up to 20 sessions), where it can be resumed with its conversation ID. **Notifications** is beside it, with a badge only for unread items.
 - When a process exits, its terminal output stays visible with the exit code and a **Start again** button. Stopped sessions stay stopped after an app restart; terminal output itself is not saved to disk.
 - **Pause** (⏸ in the terminal header or the session's **⋯** menu) stops a running Claude, Codex or AGY session and its child processes, such as MCP servers, but keeps it in the list. **Start again** resumes the same conversation. Pausing a working agent asks for confirmation, because it interrupts the current step. Shell sessions and Windows background workers cannot be paused.
@@ -212,7 +213,10 @@ or a button. The compact toolbar wraps when the sidebar is narrow.
 
 ### Display settings
 
-Settings → Display includes terminal font size and an optional Git branch label
+Settings → Display includes the color theme (Dark, Black for OLED screens, Nord and
+Solarized, applied to the sidebar, terminals and the built-in editor), terminal font
+size, terminal history (how many lines each terminal keeps for scrolling back, 5000 by
+default, 0 to 100 000; the agent's conversation is not affected) and an optional Git branch label
 beside project names (off by default). The full project and branch name is in
 the tooltip. Requires Git on PATH; non-repositories, detached HEAD and unavailable
 Git show no label. Nested folders, unborn branches and linked worktrees are supported.
@@ -247,6 +251,8 @@ Large log bursts slow the producer instead of growing an unbounded parser queue;
 normal small writes do not require an acknowledgement. Closing a session or
 shutting down releases waiting readers, and each launch has its own output ID.
 - **Saved layouts:** open **Layout → Saved layouts** beside the sidebar search button to save a named snapshot of the panel mode, session assignments, order and sizes. Open a saved layout to switch arrangements without stopping running sessions or starting stopped ones. Missing sessions leave empty panels. Edit a saved name to rename it, explicitly overwrite it with the current panels, or delete the layout without closing any sessions. Snapshots and the current arrangement survive app restarts independently.
+- **Drag to split:** drag a session from the sidebar onto a terminal. A highlight shows where it lands: near an edge it opens beside that panel (left, right, above or below), in the middle it takes that panel's place. A session that is already visible moves instead of appearing twice. Up to 8 panels.
+- **Project views:** **⋯ → Save panels as a view** on a project row saves the current panels under that project; the view appears below the project's sessions and opens with one click. Its menu overwrites it with the current panels or deletes it; rename views in **Saved layouts**. Removing the project removes its views. Views never start or stop sessions.
 - **Search:** Ctrl+Shift+F, then Enter for next and Shift+Enter for previous.
 - **Ctrl+click** a URL to open it in your browser. Ctrl+click a file path such as `src/main.ts:120` to open it in your editor at that line. File types listed in ⚙ Settings (by default HTML, PDF and images) open in the default app instead, so an HTML file opens in the browser.
 - **Right-click** a file path for more: open in the editor, open with the default app, show in Explorer / Finder / the file manager, copy the full or relative path. Right-click a URL to open or copy it.

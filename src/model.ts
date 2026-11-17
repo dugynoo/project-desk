@@ -91,6 +91,10 @@ export interface Settings {
   markdownOpen: "preview" | "edit";
   editorFontSize: number;
   editorWordWrap: boolean;
+  /** Farebná téma (`theme.ts`). */
+  theme: string;
+  /** Koľko riadkov histórie drží terminál (0 = žiadnu). */
+  terminalScrollback: number;
   editorId: string;
   customEditorPath: string;
   /** Argumenty vlastného editora; `%TARGET_PATH%` = súbor alebo priečinok, `%LINE%` = riadok. */
@@ -163,6 +167,8 @@ export const DEFAULT_SETTINGS: Settings = {
   markdownOpen: "preview",
   editorFontSize: 13,
   editorWordWrap: false,
+  theme: "dark",
+  terminalScrollback: 5000,
   editorId: "",
   customEditorPath: "",
   customEditorArgs: "%TARGET_PATH%",
@@ -291,6 +297,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     if (!["builtin", "external"].includes(state.settings.fileEditor)) state.settings.fileEditor = "builtin";
     if (!["preview", "edit"].includes(state.settings.markdownOpen)) state.settings.markdownOpen = DEFAULT_SETTINGS.markdownOpen;
     state.settings.fontSize = normalizeFontSize(data.settings.fontSize);
+    state.settings.terminalScrollback = normalizeScrollback(data.settings.terminalScrollback);
+    state.settings.theme = normalizeTheme(state.settings.theme);
     state.settings.shortcuts = parseShortcuts(data.settings.shortcuts);
     if (!PROVIDERS.includes(state.settings.defaultProvider)) state.settings.defaultProvider = DEFAULT_SETTINGS.defaultProvider;
     if (!["en", "sk", "cs"].includes(state.settings.language)) state.settings.language = DEFAULT_SETTINGS.language;
@@ -337,7 +345,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
     state.savedLayouts.push({ id: item.id, name: item.name.trim().slice(0, 80),
       paneLayout: item.paneLayout as PaneLayout,
       paneSlots: normalizePaneSlots(item.paneSlots, new Set(state.sessions.map(s => s.id))),
-      paneSizes: parsePaneSizes(item.paneSizes) });
+      paneSizes: parsePaneSizes(item.paneSizes),
+      ...(str(item.projectId) && state.projects.some(p => p.id === item.projectId) ? { projectId: item.projectId } : {}) });
   }
   return { state, dropped };
 }
@@ -348,6 +357,8 @@ export interface SavedLayout {
   paneLayout: PaneLayout;
   paneSlots: (string | null)[];
   paneSizes: Record<string, number[]>;
+  /** Pohľad projektu: ukáže sa v zozname pod projektom. Bez neho je to spoločné rozloženie. */
+  projectId?: string;
 }
 
 function parsePaneSizes(value: unknown): Record<string, number[]> {
@@ -361,13 +372,15 @@ function parsePaneSizes(value: unknown): Record<string, number[]> {
 }
 
 /** Explicit snapshots: editing the visible panes never changes a saved layout. */
-export function savePanePreset(state: PersistedState, id: string, name: string): boolean {
+export function savePanePreset(state: PersistedState, id: string, name: string, projectId?: string): boolean {
   const trimmed = name.trim().slice(0, 80);
   if (!trimmed) return false;
+  const index = state.savedLayouts.findIndex(item => item.id === id);
+  // Prepísanie zachová, ku ktorému projektu pohľad patrí.
+  const owner = index < 0 ? projectId : state.savedLayouts[index].projectId;
   const preset: SavedLayout = { id, name: trimmed, paneLayout: state.ui.paneLayout,
     paneSlots: normalizePaneSlots(state.ui.paneSlots, new Set(state.sessions.map(s => s.id))),
-    paneSizes: parsePaneSizes(state.ui.paneSizes) };
-  const index = state.savedLayouts.findIndex(item => item.id === id);
+    paneSizes: parsePaneSizes(state.ui.paneSizes), ...(owner ? { projectId: owner } : {}) };
   if (index < 0) state.savedLayouts.push(preset); else state.savedLayouts[index] = preset;
   return true;
 }
@@ -947,6 +960,37 @@ export function assignPaneSlot(slots: (string | null)[], index: number, id: stri
 
 export type PaneLayout = "grid" | "columns" | "rows";
 
+/** Kam padla relácia pretiahnutá na panel: k jeho okraju, alebo do stredu (nahradí ho). */
+export type PaneDrop = "left" | "right" | "top" | "bottom" | "center";
+
+/** Strana panelu podľa polohy kurzora (0–1 v paneli): stred je vnútorná tretina. */
+export function paneDropSide(x: number, y: number): PaneDrop {
+  const edges: [PaneDrop, number][] = [["left", x], ["right", 1 - x], ["top", y], ["bottom", 1 - y]];
+  const [side, distance] = edges.reduce((a, b) => b[1] < a[1] ? b : a);
+  return distance > 1 / 3 ? "center" : side;
+}
+
+/**
+ * Relácia pretiahnutá na panel `target`: vloží sa vedľa neho (alebo ho nahradí) a zapne sa mriežka.
+ * Viditeľné panely sú `visible` (bez prázdnych); null = nedá sa (viac ako 8 panelov alebo neznámy cieľ).
+ */
+export function dropOnPane(visible: readonly string[], layout: PaneLayout, dragged: string, target: string, side: PaneDrop):
+  { paneLayout: PaneLayout; paneSlots: string[] } | null {
+  if (dragged === target || !visible.includes(target)) return null;
+  if (side === "center") {
+    const from = visible.indexOf(dragged);
+    const slots = visible.map((id, i) => id === target ? dragged : i === from ? target : id);
+    return { paneLayout: slots.length > 1 ? layout : "columns", paneSlots: slots };
+  }
+  const rest = visible.filter(id => id !== dragged);
+  const index = rest.indexOf(target) + (side === "right" || side === "bottom" ? 1 : 0);
+  const slots = [...rest.slice(0, index), dragged, ...rest.slice(index)];
+  if (slots.length > 8) return null;
+  const across = side === "left" || side === "right" ? "columns" : "rows";
+  const paneLayout = slots.length === 2 || layout === across ? across : "grid";
+  return { paneLayout, paneSlots: slots };
+}
+
 /** Normalized tracks, with a minimum 10% share so a pane cannot disappear. */
 export function paneWeights(value: unknown, count: number): number[] {
   const equal = () => Array.from({ length: count }, () => 1 / count);
@@ -1025,6 +1069,18 @@ export function createDiscovery(now: () => number = () => performance.now()) {
       } finally { busy = false; }
     },
   };
+}
+
+/** Farebné témy; farby sú v `theme.ts`. */
+export const THEME_IDS = ["dark", "oled", "nord", "solarized"] as const;
+export type ThemeId = (typeof THEME_IDS)[number];
+export const normalizeTheme = (id: unknown): ThemeId =>
+  (THEME_IDS as readonly unknown[]).includes(id) ? id as ThemeId : "dark";
+
+export const MAX_SCROLLBACK = 100_000;
+export function normalizeScrollback(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(MAX_SCROLLBACK, Math.round(value))) : DEFAULT_SETTINGS.terminalScrollback;
 }
 
 // App actions share one binding registry. Empty strings explicitly disable bindings.
