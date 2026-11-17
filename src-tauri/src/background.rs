@@ -152,8 +152,7 @@ pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> 
             // The trust prompt needs an interactive terminal: forget this attempt so the
             // session can start in the foreground, where Claude asks for trust itself.
             if untrusted(&e) {
-                let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_file(dir.join(format!("background-{id}-hooks.json")));
+                forget(dir, id);
                 return Err("background.untrusted".into());
             }
             return Err(e);
@@ -182,7 +181,14 @@ pub fn stop(dir: &Path, id: &str) -> Result<(), String> {
         let id = control_id(row)?;
         run(&owned.program, &owned.cwd, &["stop", id])?;
     }
+    // The job is gone; its record and hook settings would otherwise pile up.
+    forget(dir, id);
     Ok(())
+}
+
+fn forget(dir: &Path, id: &str) {
+    let _ = std::fs::remove_file(dir.join(format!("background-{id}.json")));
+    let _ = std::fs::remove_file(dir.join(format!("background-{id}-hooks.json")));
 }
 
 #[cfg(test)]
@@ -219,6 +225,19 @@ mod tests {
         assert!(launch_options("claude --dangerously-skip-permissions").unwrap());
         for command in ["claude; echo hi", "claude --model sonnet", "other"] { assert!(launch_options(command).is_err()); }
         assert!(record(Path::new("/test"), "../other").is_err());
+    }
+    #[test]
+    fn forget_removes_only_that_sessions_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let (id, other) = ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222");
+        for name in [format!("background-{id}.json"), format!("background-{id}-hooks.json"),
+            format!("background-{other}.json"), "background-endpoint.json".into()] {
+            std::fs::write(dir.path().join(name), "{}").unwrap();
+        }
+        forget(dir.path(), id);
+        let mut left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        assert_eq!(left, [format!("background-{other}.json"), "background-endpoint.json".into()]);
     }
     #[test]
     fn recognizes_untrusted_workspace_failures() {
