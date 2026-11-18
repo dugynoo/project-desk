@@ -25,6 +25,7 @@ const en = {
   "err.file.conflict": "This file changed on disk. Your edits are kept. Copy them if needed, then Reload to read the new version.",
   "err.file.editFailed": "Could not edit the file: {detail}",
   "err.file.linked": "This file has multiple hard links. Use your external editor to preserve them.",
+  "err.clipboard.unavailable": "The clipboard is not available.",
 
   "sidebar.panels": "Multiple panels",
   "sidebar.search": "Search sessions…",
@@ -500,6 +501,7 @@ const sk: Record<Key, string> = {
   "err.file.conflict": "Súbor sa na disku zmenil. Tvoje úpravy zostali zachované. Prípadne ich skopíruj a načítaj novú verziu tlačidlom Načítať znova.",
   "err.file.editFailed": "Súbor sa nepodarilo upraviť: {detail}",
   "err.file.linked": "Súbor má viac pevných odkazov. Na ich zachovanie použi externý editor.",
+  "err.clipboard.unavailable": "Schránka nie je dostupná.",
 
   "sidebar.panels": "Viac panelov",
   "sidebar.search": "Hľadať sessions…",
@@ -971,6 +973,7 @@ const cs: Record<Key, string> = {
   "err.file.conflict": "Soubor se na disku změnil. Tvoje úpravy zůstaly zachované. Případně je zkopíruj a načti novou verzi tlačítkem Načíst znovu.",
   "err.file.editFailed": "Soubor se nepodařilo upravit: {detail}",
   "err.file.linked": "Soubor má více pevných odkazů. Pro jejich zachování použij externí editor.",
+  "err.clipboard.unavailable": "Schránka není dostupná.",
 
   "sidebar.panels": "Více panelů",
   "sidebar.search": "Hledat sessions…",
