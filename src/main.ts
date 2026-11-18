@@ -474,7 +474,8 @@ let quitConfirmation: Promise<boolean> | undefined;
 function confirmQuit(): Promise<boolean> {
   const sessions = busy();
   if (!sessions.length) return Promise.resolve(true);
-  return quitConfirmation ??= confirmBox(t("quit.title"), t("quit.body", { titles: sessions.map(s => s.title).join(", ") }), t("quit.ok"))
+  // Stacked: a quit cancelled from here must leave an open dialog (Settings) as it was.
+  return quitConfirmation ??= confirmBox(t("quit.title"), t("quit.body", { titles: sessions.map(s => s.title).join(", ") }), t("quit.ok"), "", { stack: true })
     .finally(() => { quitConfirmation = undefined; });
 }
 /** Remember interrupted steps so the restarted sessions can say so. */

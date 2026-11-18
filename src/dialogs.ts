@@ -1,13 +1,23 @@
 import { $, el } from "./dom.ts";
 import { t } from "./i18n.ts";
 
+interface Open { box: HTMLElement; dismiss: (focus: boolean) => void; backdrop: (e: { target: unknown }) => void }
+
+export interface ModalOptions {
+  /**
+   * Open above the current dialog instead of replacing it; closing returns to the one below.
+   * For questions that arrive from outside (quit), so they never discard an open dialog's draft.
+   */
+  stack?: boolean;
+}
+
 export function createDialogs(restoreFocus: () => void) {
-  let activeClose: ((focus: boolean) => void) | undefined;
+  const open: Open[] = [];
   let generation = 0;
 
-  function modal(build: (box: HTMLElement, close: () => void, signal: AbortSignal) => void, onClose: () => void) {
+  function modal(build: (box: HTMLElement, close: () => void, signal: AbortSignal) => void, onClose: () => void, options: ModalOptions = {}) {
     const request = ++generation;
-    activeClose?.(false);
+    if (!options.stack) open.at(-1)?.dismiss(false);
     // A cleanup callback may itself open another dialog.
     if (request !== generation) { onClose(); return; }
     const overlay = $("#overlay");
@@ -18,27 +28,43 @@ export function createDialogs(restoreFocus: () => void) {
     const app = $("#app");
     app.inert = true;
     const controller = new AbortController();
-    overlay.replaceChildren(box);
+    const below = open.at(-1);
+    if (below) below.box.hidden = true;
+    if (below) overlay.append(box); else overlay.replaceChildren(box);
     overlay.hidden = false;
     let done = false;
     const dismiss = (focus: boolean) => {
       if (done) return;
       done = true;
-      activeClose = undefined;
-      overlay.onclick = null;
-      overlay.hidden = true;
-      overlay.replaceChildren();
-      app.inert = false;
+      open.splice(open.indexOf(entry), 1);
       controller.abort();
+      const top = open.at(-1);
+      if (top) {
+        overlay.replaceChildren(...open.map(item => item.box));
+        top.box.hidden = false;
+        overlay.onclick = top.backdrop;
+        top.box.focus();
+      } else {
+        overlay.onclick = null;
+        overlay.hidden = true;
+        overlay.replaceChildren();
+        app.inert = false;
+      }
       try {
         onClose();
       } finally {
-        if (focus && !activeClose) restoreFocus();
+        if (focus && !open.length) restoreFocus();
       }
     };
     const close = () => dismiss(true);
-    activeClose = dismiss;
+    const backdrop = (e: { target: unknown }) => {
+      if (e.target === overlay) close();
+    };
+    const entry: Open = { box, dismiss, backdrop };
+    open.push(entry);
     document.addEventListener("keydown", (e: KeyboardEvent) => {
+      // Only the top dialog answers keys; the ones below wait.
+      if (open.at(-1) !== entry) return;
       if (e.key === "Escape") {
         e.preventDefault();
         close();
@@ -55,9 +81,7 @@ export function createDialogs(restoreFocus: () => void) {
         }
       }
     }, { capture: true, signal: controller.signal });
-    overlay.onclick = (e) => {
-      if (e.target === overlay) close();
-    };
+    overlay.onclick = backdrop;
     try {
       build(box, close, controller.signal);
       const heading = box.querySelector("h3");
@@ -72,7 +96,7 @@ export function createDialogs(restoreFocus: () => void) {
     }
   }
 
-  function confirmBox(heading: string, text: string, okLabel: string, notes = ""): Promise<boolean> {
+  function confirmBox(heading: string, text: string, okLabel: string, notes = "", options: ModalOptions = {}): Promise<boolean> {
     return new Promise((resolve) => {
       let result = false;
       modal(
@@ -92,6 +116,7 @@ export function createDialogs(restoreFocus: () => void) {
           cancel.focus();
         },
         () => resolve(result),
+        options,
       );
     });
   }

@@ -158,3 +158,24 @@ test("update checks from closed or replaced settings never install or close the 
     f.escape();
   }
 });
+
+test("a stacked question keeps the dialog below and returns to it", async t => {
+  const f = fixture(t);
+  let draftClosed = 0, below!: HTMLElement;
+  f.modal(box => { below = box; }, () => { draftClosed++; });
+  const answer = f.confirmBox("Quit?", "Busy", "Quit", "", { stack: true });
+  assert.equal((below as unknown as Element).hidden, true);
+  assert.equal(f.overlay.children.length, 2);
+  assert.equal(f.escape().defaultPrevented, true, "Escape answers only the top dialog");
+  assert.equal(await answer, false);
+  assert.equal(draftClosed, 0, "the dialog below survives");
+  assert.equal((below as unknown as Element).hidden, false);
+  assert.equal(f.overlay.children.length, 1);
+  assert.equal(f.app.inert, true);
+  assert.equal(f.focused(), 0);
+  f.overlay.onclick!({ target: f.overlay });
+  assert.equal(draftClosed, 1);
+  assert.equal(f.overlay.hidden, true);
+  assert.equal(f.app.inert, false);
+  assert.equal(f.focused(), 1);
+});
