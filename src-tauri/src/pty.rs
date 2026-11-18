@@ -129,7 +129,14 @@ struct PtySession {
     killer: Box<dyn ChildKiller + Send + Sync>,
     #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     pid: Option<u32>,
+    /// The session's process tree (agents leave MCP servers and tool processes behind otherwise).
+    #[cfg(windows)]
+    job: Option<crate::job::SessionJob>,
 }
+
+/// Unix: a group that ignores the hangup gets SIGTERM, then SIGKILL, this long apart.
+#[cfg(unix)]
+const ESCALATE_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl PtySession {
     fn kill(&mut self) -> std::io::Result<()> {
@@ -138,15 +145,27 @@ impl PtySession {
         #[cfg(unix)]
         if let Some(pid) = self.pid {
             let foreground = self.master.process_group_leader().filter(|&g| g != pid as libc::pid_t);
+            let groups: Vec<libc::pid_t> = foreground.into_iter().chain([pid as libc::pid_t]).collect();
             // SAFETY: killpg iba posiela signál, nepracuje s pamäťou.
-            unsafe {
-                if let Some(group) = foreground { libc::killpg(group, libc::SIGHUP); }
-                libc::killpg(pid as libc::pid_t, libc::SIGHUP);
-            }
+            for &group in &groups { unsafe { libc::killpg(group, libc::SIGHUP); } }
+            // Agents that trap or ignore SIGHUP would otherwise keep running until the app exits.
+            thread::spawn(move || {
+                for signal in [libc::SIGTERM, libc::SIGKILL] {
+                    thread::sleep(ESCALATE_AFTER);
+                    // SAFETY: signal 0 only checks whether the group still exists.
+                    let alive: Vec<_> = groups.iter().copied().filter(|&g| unsafe { libc::killpg(g, 0) } == 0).collect();
+                    if alive.is_empty() { return; }
+                    for group in alive { unsafe { libc::killpg(group, signal); } }
+                }
+            });
         }
         // portable-pty 0.9's cloned Windows killer reverses the BOOL success
         // check. Use the native result while the child handle is still held by
         // the wait thread (and the session registry lock prevents its removal).
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            return job.terminate();
+        }
         #[cfg(windows)]
         if let Some(pid) = self.pid {
             return kill_windows_process(pid);
@@ -374,7 +393,12 @@ impl PtyManager {
 
         let flow = Arc::new(OutputFlow::default());
         let (input, input_rx) = InputQueue::new();
-        let session = PtySession { master: pair.master, input, killer: child.clone_killer(), pid: child.process_id(), output: flow.clone() };
+        let session = PtySession {
+            master: pair.master, input, killer: child.clone_killer(), pid: child.process_id(), output: flow.clone(),
+            // Right after the fork, before the shell has started anything, so its later children join too.
+            #[cfg(windows)]
+            job: child.process_id().and_then(crate::job::SessionJob::assign),
+        };
         if let Err((error, mut session)) = self.register(&req.id, &req.output_id, session) {
             let _ = session.kill();
             thread::spawn(move || { let _ = child.wait(); });
