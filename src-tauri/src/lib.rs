@@ -5,6 +5,7 @@ mod codex;
 mod cli;
 mod conversations;
 mod editors;
+mod error;
 mod files;
 mod fsutil;
 mod git;
@@ -86,25 +87,25 @@ fn app_info(app: tauri::AppHandle, state: State<'_, AppState>) -> AppInfo {
 // Disk I/O with fsync: keep it off the main thread, which also handles terminal input.
 #[tauri::command(async)]
 fn load_state(state: State<'_, AppState>) -> Result<persistence::Loaded, String> {
-    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    let _guard = state.state_write.lock().map_err(error::internal)?;
     persistence::load(&state.state_file)
 }
 
 #[tauri::command(async)]
 fn save_state(state: State<'_, AppState>, json: String) -> Result<(), String> {
-    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    let _guard = state.state_write.lock().map_err(error::internal)?;
     persistence::save(&state.state_file, &json)
 }
 
 #[tauri::command(async)]
 fn list_backups(state: State<'_, AppState>) -> Result<Vec<persistence::Backup>, String> {
-    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    let _guard = state.state_write.lock().map_err(error::internal)?;
     Ok(persistence::backups(&state.state_file))
 }
 
 #[tauri::command(async)]
 fn restore_backup(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    let _guard = state.state_write.lock().map_err(error::internal)?;
     persistence::schedule_restore(&state.state_file, &name)
 }
 
@@ -136,7 +137,7 @@ async fn pty_spawn(
     let mut env = vec![(hooks::SESSION_ENV.to_owned(), args.id.clone())];
     if let Some(h) = &state.hooks {
         if args.provider.as_deref() == Some("antigravity") {
-            let home = app.path().home_dir().map_err(|e| e.to_string())?;
+            let home = app.path().home_dir().map_err(error::internal)?;
             antigravity::install(Path::new(&args.cwd), &home)
                 .map_err(|e| format!("antigravity.setupFailed: {e}"))?;
         }
@@ -147,11 +148,11 @@ async fn pty_spawn(
     }
     let prepared = if args.background {
         if args.provider.as_deref() != Some("claude") || state.hooks.is_none() { return Err("background.unsupportedCommand".into()); }
-        let dir = state.state_file.parent().ok_or("Missing state directory")?.to_owned();
-        let home = app.path().home_dir().map_err(|e| e.to_string())?;
+        let dir = state.state_file.parent().ok_or_else(|| error::internal("missing state directory"))?.to_owned();
+        let home = app.path().home_dir().map_err(error::internal)?;
         let id = args.id.clone(); let cwd = PathBuf::from(&args.cwd);
         let command = args.claude_command.clone().unwrap_or_default();
-        Some(tauri::async_runtime::spawn_blocking(move || background::prepare(&dir, &home, &id, &cwd, &command)).await.map_err(|e| e.to_string())??)
+        Some(tauri::async_runtime::spawn_blocking(move || background::prepare(&dir, &home, &id, &cwd, &command)).await.map_err(error::internal)??)
     } else { None };
     // Codex exits after updating itself; run the same command (and conversation) again.
     let mut command = args.command;
@@ -176,7 +177,7 @@ async fn pty_spawn(
         rows: args.rows,
     };
     let pty = state.pty.clone();
-    tauri::async_runtime::spawn_blocking(move || pty.spawn(app, req, on_output)).await.map_err(|e| e.to_string())??;
+    tauri::async_runtime::spawn_blocking(move || pty.spawn(app, req, on_output)).await.map_err(error::internal)??;
     Ok(prepared)
 }
 
@@ -319,16 +320,16 @@ fn remote_publish(
 
 #[tauri::command]
 async fn pty_kill(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let dir = state.state_file.parent().ok_or("Missing state directory")?.to_owned();
+    let dir = state.state_file.parent().ok_or_else(|| error::internal("missing state directory"))?.to_owned();
     let owned_id = id.clone();
-    tauri::async_runtime::spawn_blocking(move || background::stop(&dir, &owned_id)).await.map_err(|e| e.to_string())??;
+    tauri::async_runtime::spawn_blocking(move || background::stop(&dir, &owned_id)).await.map_err(error::internal)??;
     state.pty.kill(&id)
 }
 
 /// Nainštalované editory; výsledok sa zapamätá pre `open_in_editor`.
 #[tauri::command]
 async fn list_editors(state: State<'_, AppState>) -> Result<Vec<editors::Found>, String> {
-    let found = tauri::async_runtime::spawn_blocking(editors::detect).await.map_err(|e| e.to_string())?;
+    let found = tauri::async_runtime::spawn_blocking(editors::detect).await.map_err(error::internal)?;
     *state.editors.lock().unwrap() = Some(found.clone());
     Ok(found)
 }
@@ -345,7 +346,7 @@ async fn open_in_editor(
     let installed = match cached {
         Some(list) => list,
         None => {
-            let list = tauri::async_runtime::spawn_blocking(editors::detect).await.map_err(|e| e.to_string())?;
+            let list = tauri::async_runtime::spawn_blocking(editors::detect).await.map_err(error::internal)?;
             *state.editors.lock().unwrap() = Some(list.clone());
             list
         }
@@ -364,11 +365,11 @@ fn prepare_update(on: bool) -> Result<(), String> {
 /// Súbor v predvolenej aplikácii systému (HTML v prehliadači…). Spustiteľné súbory odmietne.
 #[tauri::command]
 async fn text_open(path: String) -> Result<text_editor::Document, String> {
-    tauri::async_runtime::spawn_blocking(move || text_editor::open(&path)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || text_editor::open(&path)).await.map_err(error::internal)?
 }
 #[tauri::command]
 async fn text_save(path: String, expected: String, text: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || text_editor::save(&path, &expected, &text)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || text_editor::save(&path, &expected, &text)).await.map_err(error::internal)?
 }
 
 #[tauri::command]
@@ -391,7 +392,7 @@ async fn open_folder(path: String) -> Result<(), String> {
 #[tauri::command]
 async fn project_exists(path: String, existing: Vec<String>) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || files::project_exists(&path, &existing))
-        .await.map_err(|e| e.to_string())?
+        .await.map_err(error::internal)?
 }
 
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
@@ -416,7 +417,7 @@ fn resolve_file(cwd: String, candidate: String) -> Option<String> {
 #[tauri::command]
 async fn agent_retain(state: State<'_, AppState>, active_ids: Vec<String>) -> Result<(), String> {
     let watcher = state.usage.clone();
-    tauri::async_runtime::spawn_blocking(move || watcher.retain(&active_ids)).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || watcher.retain(&active_ids)).await.map_err(error::internal)
 }
 
 /// Tokeny a stav agenta z jeho session súboru.
@@ -428,7 +429,7 @@ async fn agent_poll(state: State<'_, AppState>, provider: String, agent_id: Stri
         _ => return Ok(None),
     };
     let watcher = state.usage.clone();
-    tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id, generation)).await.map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || watcher.poll(provider, &agent_id, generation)).await.map_err(error::internal)
 }
 
 #[tauri::command]

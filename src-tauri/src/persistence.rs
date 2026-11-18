@@ -41,9 +41,9 @@ fn valid(json: &str) -> bool {
 fn read(path: &Path) -> Result<Option<String>, String> {
     match fs::read_to_string(path) {
         Ok(json) if valid(&json) => Ok(Some(json)),
-        Ok(_) => Err(format!("Invalid state: {}", path.display())),
+        Ok(_) => Err(crate::error::with("state.invalid", path.display())),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+        Err(e) => Err(crate::error::with("state.ioFailed", format!("{}: {e}", path.display()))),
     }
 }
 
@@ -173,12 +173,12 @@ fn apply_restore(path: &Path) -> Option<String> {
 }
 
 fn replace(path: &Path, json: &str) -> Result<(), String> {
-    crate::fsutil::atomic_write(path, json.as_bytes(), false).map_err(|e| e.to_string())
+    crate::fsutil::atomic_write(path, json.as_bytes(), false).map_err(|e| crate::error::with("state.ioFailed", e))
 }
 
 pub fn save(path: &Path, json: &str) -> Result<(), String> {
-    if !valid(json) { return Err("Invalid state payload".into()); }
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    if !valid(json) { return Err("state.invalid".into()); }
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|e| crate::error::with("state.ioFailed", e))?; }
     // Never replace a healthy backup with an unreadable or corrupt primary.
     match read(path) {
         Ok(Some(previous)) => {
@@ -190,7 +190,7 @@ pub fn save(path: &Path, json: &str) -> Result<(), String> {
             // Preserve damaged input for recovery, but do not mask I/O failures.
             let damaged = fs::read_to_string(path).map_err(|_| e)?;
             let copy = path.with_extension(format!("json.corrupt-{}", uuid::Uuid::new_v4()));
-            fs::write(copy, damaged).map_err(|e| e.to_string())?;
+            fs::write(copy, damaged).map_err(|e| crate::error::with("state.ioFailed", e))?;
         }
     }
     replace(path, json)

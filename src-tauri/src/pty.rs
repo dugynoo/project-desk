@@ -341,8 +341,8 @@ impl PtyManager {
     ) -> Result<(), String> {
         // Open and fork without the registry lock: ConPTY and process creation can be slow,
         // and input, resizes and kills of other sessions must not wait for them.
-        if self.sessions.lock().map_err(|e| e.to_string())?.contains_key(&req.id)
-            || self.outputs.lock().map_err(|e| e.to_string())?.contains_key(&req.output_id) {
+        if self.sessions.lock().map_err(crate::error::internal)?.contains_key(&req.id)
+            || self.outputs.lock().map_err(crate::error::internal)?.contains_key(&req.output_id) {
             return Err("pty.alreadyRunning".into());
         }
 
@@ -350,8 +350,8 @@ impl PtyManager {
             .openpty(size(req.cols, req.rows))
             .map_err(|e| format!("pty.openFailed: {e}"))?;
         // Before the fork, so an error here cannot leave a child running.
-        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let reader = pair.master.try_clone_reader().map_err(|e| crate::error::with("pty.openFailed", e))?;
+        let writer = pair.master.take_writer().map_err(|e| crate::error::with("pty.openFailed", e))?;
 
         let mut cmd = if let Some((program, args)) = req.direct {
             let mut cmd = CommandBuilder::new(program); cmd.args(args); cmd
@@ -447,23 +447,23 @@ impl PtyManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let sessions = self.sessions.lock().map_err(crate::error::internal)?;
         let s = sessions.get(id).ok_or("pty.notRunning")?;
         s.input.send(data.as_bytes())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let sessions = self.sessions.lock().map_err(crate::error::internal)?;
         if let Some(s) = sessions.get(id) {
-            s.master.resize(size(cols, rows)).map_err(|e| e.to_string())?;
+            s.master.resize(size(cols, rows)).map_err(|e| crate::error::with("pty.resizeFailed", e))?;
         }
         Ok(())
     }
 
     pub fn kill(&self, id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let mut sessions = self.sessions.lock().map_err(crate::error::internal)?;
         if let Some(s) = sessions.get_mut(id) {
-            s.kill().map_err(|e| e.to_string())?;
+            s.kill().map_err(|e| crate::error::with("pty.killFailed", e))?;
             s.output.cancel();
         }
         Ok(())
