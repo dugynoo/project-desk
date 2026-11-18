@@ -65,5 +65,6 @@ winreg = "0.56"
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# Unwind: a panicking thread or command must not take every PTY session down with it.
+panic = "unwind"
 strip = true
