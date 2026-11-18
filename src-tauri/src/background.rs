@@ -1,10 +1,12 @@
 //! Opt-in Claude background workers. Ownership is persisted before dispatch;
 //! only the terminal attachment belongs to the application's process tree.
-use std::{io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::Mutex, time::{Duration, Instant}};
+use std::{collections::HashMap, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{Arc, LazyLock, Mutex, MutexGuard}, time::{Duration, Instant}};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-static OPERATIONS: Mutex<()> = Mutex::new(());
+/// One lock per session ID: Claude commands for one session (up to 30 s each) must not
+/// stall closing an unrelated session.
+static OPERATIONS: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = LazyLock::new(Default::default);
 pub const RELAY: &str = "--project-desk-background-hook";
 
 #[derive(Deserialize, Serialize)]
@@ -29,6 +31,26 @@ pub struct Prepared {
 }
 
 fn error(e: impl std::fmt::Display) -> String { format!("background.failed: {e}") }
+
+/// Holds the per-ID lock; the map entry is removed when its last holder drops.
+struct IdLock { id: String, lock: Arc<Mutex<()>> }
+
+impl IdLock {
+    fn new(id: &str) -> Self {
+        let mut map = OPERATIONS.lock().unwrap_or_else(|e| e.into_inner());
+        Self { id: id.to_owned(), lock: map.entry(id.to_owned()).or_default().clone() }
+    }
+    // The lock guards no data, so a poisoned lock is safe to reuse.
+    fn guard(&self) -> MutexGuard<'_, ()> { self.lock.lock().unwrap_or_else(|e| e.into_inner()) }
+}
+
+impl Drop for IdLock {
+    fn drop(&mut self) {
+        let mut map = OPERATIONS.lock().unwrap_or_else(|e| e.into_inner());
+        // Map + this holder; checked under the map lock, so nobody can clone it meanwhile.
+        if Arc::strong_count(&self.lock) == 2 { map.remove(&self.id); }
+    }
+}
 fn save_owned(path: &Path, owned: &Owned) -> Result<(), String> {
     let temporary = path.with_extension("json.pending");
     std::fs::write(&temporary, serde_json::to_vec(owned).map_err(error)?).map_err(error)?;
@@ -116,8 +138,9 @@ fn control_id(row: &Value) -> Result<&str, String> {
 
 pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> Result<Prepared, String> {
     if !cfg!(windows) { return Err("background.platform".into()); }
-    let _guard = OPERATIONS.lock().map_err(error)?;
     let path = record(dir, id)?;
+    let lock = IdLock::new(id);
+    let _guard = lock.guard();
     let mut owned: Owned = if path.exists() {
         serde_json::from_slice(&std::fs::read(&path).map_err(error)?).map_err(error)?
     } else {
@@ -172,8 +195,12 @@ pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> 
 pub fn stop(dir: &Path, id: &str) -> Result<(), String> {
     // Legacy/synthetic foreground IDs cannot have an owned background record.
     if uuid::Uuid::parse_str(id).is_err() { return Ok(()); }
-    let _guard = OPERATIONS.lock().map_err(error)?;
     let path = record(dir, id)?;
+    // Foreground sessions have no record: skip the lock so closing never waits on
+    // another session's Claude commands. Re-checked under the lock below.
+    if !path.exists() { return Ok(()); }
+    let lock = IdLock::new(id);
+    let _guard = lock.guard();
     if !path.exists() { return Ok(()); }
     let owned: Owned = serde_json::from_slice(&std::fs::read(path).map_err(error)?).map_err(error)?;
     let rows = entries(&owned)?;
@@ -239,6 +266,32 @@ mod tests {
         left.sort();
         assert_eq!(left, [format!("background-{other}.json"), "background-endpoint.json".into()]);
     }
+    #[test]
+    fn stopping_a_foreground_session_never_waits_for_background_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let (busy, foreground) = ("33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444");
+        // Another session's Claude commands, and even this ID's own lock, are held.
+        let (a, b) = (IdLock::new(busy), IdLock::new(foreground));
+        let (_a, _b) = (a.guard(), b.guard());
+        let (send, receive) = std::sync::mpsc::channel();
+        let path = dir.path().to_owned();
+        std::thread::spawn(move || { let _ = send.send(stop(&path, foreground)); });
+        assert_eq!(receive.recv_timeout(Duration::from_secs(2)).unwrap(), Ok(()));
+    }
+
+    #[test]
+    fn id_locks_are_exclusive_per_id_and_cleaned_up() {
+        let (id, other) = ("55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666");
+        {
+            let first = IdLock::new(id);
+            let _held = first.guard();
+            assert!(IdLock::new(id).lock.try_lock().is_err());
+            assert!(IdLock::new(other).lock.try_lock().is_ok());
+        }
+        let map = OPERATIONS.lock().unwrap();
+        assert!(!map.contains_key(id) && !map.contains_key(other));
+    }
+
     #[test]
     fn recognizes_untrusted_workspace_failures() {
         assert!(untrusted(&error("Workspace not trusted. Run `claude` in C:\\p once and accept the trust prompt, then retry.")));
