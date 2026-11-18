@@ -1,5 +1,5 @@
-- Switching back to a recently shown terminal no longer rebuilds its GPU renderer, and a lost graphics context only slows down that one terminal.
-- After restarting or resuming a Claude Code or Codex session, its status and token counts appear right away instead of after the whole conversation file is read again.
-- A terminal that rings its bell many times (for example when printing a binary file) notifies once until you open it.
-- Less background work: agent checks slow down while the window is hidden and nothing is running, and Git branch labels refresh at most every 30 seconds when you switch back to the app.
-- Background Claude sessions no longer leave files behind after they are closed.
+- Your workspace is now backed up daily and before you remove a project; restore a snapshot from ⚙ Settings.
+- Closing, pausing or restarting a session also ends everything it started, such as dev servers and MCP servers.
+- Buttons in the sidebar and pane headers no longer miss clicks while an agent is updating its status.
+- Status and token counts of many sessions update faster, and one large conversation no longer delays the others.
+- Phone remote access: limits on uploaded images, and a restarted session no longer shows the previous run's output. Plus clearer, translated error messages and better stability.
