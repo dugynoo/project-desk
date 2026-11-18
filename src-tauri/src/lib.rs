@@ -252,6 +252,8 @@ async fn remote_configure(app: tauri::AppHandle, state: State<'_, AppState>, ena
     control.address = address;
     // Vypnutie zmaže históriu a vypnutý hub nič nezaznamená.
     state.remote.set_enabled(enabled);
+    // Fotky z mobilu nečakajú na ďalšie nahratie, aby sa upratali.
+    tauri::async_runtime::spawn_blocking(|| remote::upload::prune(&remote::upload::dir()));
     if !enabled {
         control.tailnet = None;
         return Ok(control.status());

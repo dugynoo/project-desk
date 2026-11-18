@@ -481,6 +481,7 @@ const en = {
   "remote.compact": "Summarize the conversation to free up context (/compact)",
   "err.remote.imageInvalid": "This image cannot be sent.",
   "err.remote.imageTooLarge": "The image is too large.",
+  "err.remote.imageRateLimited": "Wait a moment before sending another image.",
   "err.remote.imageFailed": "The image could not be saved on the PC.",
 };
 
@@ -955,6 +956,7 @@ const sk: Record<Key, string> = {
   "remote.compact": "Zhrnúť konverzáciu a uvoľniť kontext (/compact)",
   "err.remote.imageInvalid": "Tento obrázok sa nedá poslať.",
   "err.remote.imageTooLarge": "Obrázok je príliš veľký.",
+  "err.remote.imageRateLimited": "Pred ďalším obrázkom chvíľu počkaj.",
   "err.remote.imageFailed": "Obrázok sa nepodarilo uložiť v počítači.",
 };
 
@@ -1426,6 +1428,7 @@ const cs: Record<Key, string> = {
   "remote.compact": "Shrnout konverzaci a uvolnit kontext (/compact)",
   "err.remote.imageInvalid": "Tento obrázek nelze poslat.",
   "err.remote.imageTooLarge": "Obrázek je příliš velký.",
+  "err.remote.imageRateLimited": "Před dalším obrázkem chvíli počkej.",
   "err.remote.imageFailed": "Obrázek se nepodařilo uložit v počítači.",
 };
 

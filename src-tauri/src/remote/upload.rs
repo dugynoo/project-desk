@@ -11,6 +11,9 @@ use base64::Engine;
 pub const MAX_IMAGE: usize = 1536 * 1024;
 /// Staršie obrázky sa pri ďalšom nahratí zmažú; agent si súbor prečíta pri vložení či odoslaní.
 const KEEP: Duration = Duration::from_secs(24 * 60 * 60);
+/// Strop priečinka: pri prekročení sa mažú najstaršie obrázky.
+const MAX_FILES: usize = 50;
+const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Priečinok pre obrázky z mobilu. Na Unixe môže byť dočasný priečinok spoločný (`/tmp`),
 /// preto meno obsahuje UID a `private_dir` overí, že patrí nám a nik iný doň nevidí.
@@ -86,21 +89,41 @@ pub fn save_image(dir: &Path, data: &str) -> Result<PathBuf, &'static str> {
     Ok(path)
 }
 
-fn prune(dir: &Path) {
+/// Zmaže obrázky staršie ako `KEEP` a najstaršie nad strop počtu a veľkosti.
+/// Volá sa pri nahratí aj pri zapnutí a vypnutí vzdialeného prístupu.
+pub fn prune(dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else { return };
-    let now = SystemTime::now();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "jpg") {
-            continue;
-        }
-        let old = entry.metadata().and_then(|m| m.modified()).ok()
-            .and_then(|t| now.duration_since(t).ok())
-            .is_some_and(|age| age > KEEP);
-        if old {
-            let _ = fs::remove_file(path);
-        }
+    let images = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jpg"))
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some((e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+        })
+        .collect();
+    for path in excess(images, SystemTime::now()) {
+        let _ = fs::remove_file(path);
     }
+}
+
+/// Ktoré obrázky zmazať: príliš staré, a potom od najstarších, kým nesedí počet a veľkosť.
+fn excess(mut images: Vec<(PathBuf, SystemTime, u64)>, now: SystemTime) -> Vec<PathBuf> {
+    // Najnovšie prvé; nad stropom ostanú len tie, ktoré sa ešte zmestia.
+    images.sort_by_key(|image| std::cmp::Reverse(image.1));
+    let (mut count, mut bytes) = (0, 0);
+    images
+        .into_iter()
+        .filter(|(_, modified, len)| {
+            let old = now.duration_since(*modified).is_ok_and(|age| age > KEEP);
+            let keep = !old && count < MAX_FILES && bytes + len <= MAX_BYTES;
+            if keep {
+                count += 1;
+                bytes += len;
+            }
+            !keep
+        })
+        .map(|(path, ..)| path)
+        .collect()
 }
 
 /// Bracketed paste cesty v apostrofoch s medzerou na konci, rovnako ako `droppedFilePaths`
@@ -178,5 +201,21 @@ mod tests {
         let quoted = if cfg!(windows) { "'/tmp/it''s here.jpg' " } else { "'/tmp/it'\\''s here.jpg' " };
         assert_eq!(paste_for(p).unwrap(), format!("\x1b[200~{quoted}\x1b[201~"));
         assert_eq!(paste_for(Path::new("/tmp/a\x1b[201~b.jpg")), None);
+    }
+
+    #[test]
+    fn prune_drops_old_images_then_the_oldest_over_the_caps() {
+        let now = SystemTime::now();
+        let at = |secs: u64| now - Duration::from_secs(secs);
+        let mut images: Vec<_> = (0..MAX_FILES as u64 + 3).map(|i| (PathBuf::from(format!("{i}.jpg")), at(i), 1)).collect();
+        images.push(("stale.jpg".into(), at(KEEP.as_secs() + 1), 1));
+        let mut gone = excess(images, now);
+        gone.sort();
+        let mut expected: Vec<PathBuf> = (MAX_FILES as u64..MAX_FILES as u64 + 3).map(|i| format!("{i}.jpg").into()).collect();
+        expected.push("stale.jpg".into());
+        expected.sort();
+        assert_eq!(gone, expected);
+        let big = vec![("new.jpg".into(), at(1), MAX_BYTES - 10), ("older.jpg".into(), at(2), 20)];
+        assert_eq!(excess(big, now), vec![PathBuf::from("older.jpg")]);
     }
 }

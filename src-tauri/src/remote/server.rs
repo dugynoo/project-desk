@@ -305,7 +305,7 @@ async fn ws(
                 let rx = s.hub.subscribe();
                 let closing = s.closing.clone();
                 let id = s.next_client.fetch_add(1, Ordering::Relaxed);
-                let mut conn = Conn { s, id, socket, rx, closing, subs: BTreeSet::new(), sizes: HashMap::new(), chats: HashMap::new() };
+                let mut conn = Conn { s, id, socket, rx, closing, subs: BTreeSet::new(), sizes: HashMap::new(), chats: HashMap::new(), last_image: None };
                 let end = conn.run().await;
                 conn.finish(end).await;
             }),
@@ -341,7 +341,12 @@ struct Conn {
     sizes: HashMap<String, (u16, u16)>,
     /// Otvorené chaty; `None` = čítačka práve beží v `spawn_blocking`.
     chats: HashMap<String, Option<ChatReader>>,
+    /// Kedy klient naposledy nahral obrázok (limit `IMAGE_INTERVAL`).
+    last_image: Option<Instant>,
 }
+
+/// Najviac jeden obrázok za tento čas na spojenie; mobil posiela fotky po jednej.
+const IMAGE_INTERVAL: Duration = Duration::from_secs(2);
 
 impl Conn {
     async fn run(&mut self) -> End {
@@ -569,6 +574,10 @@ impl Conn {
                 }
             }
             ClientMsg::Image { id, data } => {
+                if self.last_image.is_some_and(|t| t.elapsed() < IMAGE_INTERVAL) {
+                    return self.error(&id, "remote.imageRateLimited".into()).await;
+                }
+                self.last_image = Some(Instant::now());
                 let dir = super::upload::dir();
                 let saved = tokio::task::spawn_blocking(move || super::upload::save_image(&dir, &data)).await;
                 let path = match saved {
