@@ -1,7 +1,5 @@
-- Drag a session from the sidebar onto a terminal to split it: drop near an edge to open it beside that panel, or in the middle to replace it.
-- Project views: save the current panels under a project and open them from the sidebar with one click.
-- Color themes: Dark, Black (OLED), Nord and Solarized for the sidebar, terminals and editor (Settings → Display).
-- Terminal history length is now adjustable in Settings → Display.
-- Projects can be renamed from their menu.
-- Linux: copying text uses wl-copy or xclip when available, so pasting into other apps should no longer hang after Project Desk loses focus.
-- The cursor blinks only in the active terminal, so background terminals use less CPU.
+- Switching back to a recently shown terminal no longer rebuilds its GPU renderer, and a lost graphics context only slows down that one terminal.
+- After restarting or resuming a Claude Code or Codex session, its status and token counts appear right away instead of after the whole conversation file is read again.
+- A terminal that rings its bell many times (for example when printing a binary file) notifies once until you open it.
+- Less background work: agent checks slow down while the window is hidden and nothing is running, and Git branch labels refresh at most every 30 seconds when you switch back to the app.
+- Background Claude sessions no longer leave files behind after they are closed.
