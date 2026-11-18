@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { onNextFrame } from "./dom.ts";
+import { createPressGuard, onNextFrame } from "./dom.ts";
 
 test("frame scheduling coalesces bursts, reads latest state and permits another frame", t => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "requestAnimationFrame");
@@ -34,3 +34,34 @@ test("frame scheduling coalesces bursts, reads latest state and permits another 
   frames.shift()!(32);
   assert.deepEqual(drawn, [100, 101, 101]);
 });
+
+test("renders wait for a press on a guarded control to end, then run once after the click", async () => {
+  const events = new EventTarget();
+  const guarded = { inside: true };
+  const guard = createPressGuard(target => (target as unknown as typeof guarded | null)?.inside === true, events);
+  let renders = 0;
+  const render = () => { renders++; };
+  assert.equal(guard.defer(render), false, "no press: render now");
+  const press = (type: string, target: object) => {
+    const e = new Event(type);
+    Object.defineProperty(e, "target", { value: target });
+    events.dispatchEvent(e);
+  };
+  press("pointerdown", { inside: false });
+  assert.equal(guard.defer(render), false, "a press elsewhere does not hold renders");
+  press("pointerup", {});
+  press("pointerdown", guarded);
+  assert.equal(guard.defer(render), true);
+  assert.equal(guard.defer(render), true);
+  press("pointerup", guarded);
+  assert.equal(renders, 0, "the click is dispatched before the deferred render");
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(renders, 1, "repeated requests collapse into one render");
+  assert.equal(guard.defer(render), false);
+  press("pointerdown", guarded);
+  guard.defer(render);
+  events.dispatchEvent(new Event("blur"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(renders, 2, "leaving the window mid-press releases the hold");
+});
+

@@ -17,7 +17,7 @@ import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
 import { showSavedLayouts } from "./saved-layouts.ts";
 import { createUpdates } from "./updates.ts";
-import { $, el, onNextFrame, iconButton } from "./dom.ts";
+import { $, el, onNextFrame, iconButton, createPressGuard } from "./dom.ts";
 import { createSaveQueue, createShutdownHandler } from "./persistence.ts";
 import { createDialogs } from "./dialogs.ts";
 import "@xterm/xterm/css/xterm.css";
@@ -114,6 +114,9 @@ function toast(msg: string, info = false) {
   document.body.append(t);
   window.setTimeout(() => t.remove(), 6000);
 }
+
+// Status updates must not replace a button between press and release, or its click is lost.
+const pressGuard = createPressGuard(target => target instanceof Element && !!target.closest("#sidebar, #sidebar-rail, .pane-head"));
 
 const renderSoon = onNextFrame(() => {
   renderSidebar();
@@ -309,6 +312,7 @@ function fitVisible() {
 }
 
 function renderPaneHeads() {
+  if (pressGuard.defer(renderPaneHeads)) return;
   for (const [id, rt] of runtimes) {
     const s = session(id);
     if (!s) continue;
@@ -822,7 +826,7 @@ const sidebar = createSidebar({
   loadBranch: path => call("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
-  showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
+  showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), deferRender: render => pressGuard.defer(render), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }

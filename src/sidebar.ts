@@ -37,6 +37,8 @@ interface SidebarDependencies {
   showClosedSessions(): void;
   /** Každé prekreslenie zoznamu (zmena relácií, názvov, poradia); main z neho publikuje snímok pre mobil. */
   rendered?(): void;
+  /** `true` when the render was postponed (a press on a sidebar control is still down). */
+  deferRender?(render: () => void): boolean;
   showNotifications(): void;
   refreshNotifications(): void;
   /** Relácia ťahaná nad terminálom: `hover` ukáže, kam padne (false = nie nad panelom). */
@@ -304,6 +306,7 @@ export function createSidebar(deps: SidebarDependencies) {
     branches.refresh(paths, revisit);
   }
   function renderSidebar() {
+    if (deps.deferRender?.(renderSidebar)) return;
     deps.rendered?.();
     renderRail();
     refreshBranches();
