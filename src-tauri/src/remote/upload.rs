@@ -89,15 +89,29 @@ pub fn save_image(dir: &Path, data: &str) -> Result<PathBuf, &'static str> {
     Ok(path)
 }
 
+/// Pri zapnutí a vypnutí vzdialeného prístupu: upratať len náš súkromný priečinok.
+/// Na Unixe môže cudzí používateľ v spoločnom `/tmp` podstrčiť priečinok alebo symlink.
+pub fn cleanup(dir: &Path) {
+    if fs::symlink_metadata(dir).is_ok() && private_dir(dir).is_ok() {
+        prune(dir);
+    }
+}
+
+/// Meno, ktoré dáva `save_image`: 32 hex znakov a `.jpg`.
+fn ours(name: &str) -> bool {
+    name.strip_suffix(".jpg").is_some_and(|stem| stem.len() == 32 && stem.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 /// Zmaže obrázky staršie ako `KEEP` a najstaršie nad strop počtu a veľkosti.
-/// Volá sa pri nahratí aj pri zapnutí a vypnutí vzdialeného prístupu.
-pub fn prune(dir: &Path) {
+/// Volá sa až po `private_dir`; maže len bežné súbory s menom od `save_image`.
+fn prune(dir: &Path) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     let images = entries
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "jpg"))
+        .filter(|e| e.file_name().to_str().is_some_and(ours))
         .filter_map(|e| {
-            let meta = e.metadata().ok()?;
+            // DirEntry::metadata nesleduje symlinky; symlink sa nikdy nezmaže ako obrázok.
+            let meta = e.metadata().ok().filter(|m| m.file_type().is_file())?;
             Some((e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
         })
         .collect();
@@ -217,5 +231,35 @@ mod tests {
         assert_eq!(gone, expected);
         let big = vec![("new.jpg".into(), at(1), MAX_BYTES - 10), ("older.jpg".into(), at(2), 20)];
         assert_eq!(excess(big, now), vec![PathBuf::from("older.jpg")]);
+    }
+
+    #[test]
+    fn prune_touches_only_our_regular_image_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours_name = format!("{}.jpg", "a".repeat(32));
+        for name in [ours_name.as_str(), "photo.jpg", "notes.txt"] {
+            fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        let old = SystemTime::now() - KEEP - Duration::from_secs(60);
+        for name in [ours_name.as_str(), "photo.jpg"] {
+            fs::File::options().write(true).open(dir.path().join(name)).unwrap().set_modified(old).unwrap();
+        }
+        prune(dir.path());
+        let mut left: Vec<_> = fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        assert_eq!(left, ["notes.txt", "photo.jpg"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_ignores_a_directory_that_is_not_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        let image = dir.path().join(format!("{}.jpg", "b".repeat(32)));
+        fs::write(&image, b"x").unwrap();
+        fs::File::options().write(true).open(&image).unwrap().set_modified(SystemTime::UNIX_EPOCH).unwrap();
+        cleanup(dir.path());
+        assert!(image.exists());
     }
 }
