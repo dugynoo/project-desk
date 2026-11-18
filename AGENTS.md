@@ -20,6 +20,7 @@ See `README.md` for product behavior, setup details, and release instructions.
 - `src/main.ts`: UI, terminal lifecycle, Tauri calls/events and notifications.
 - `src/settings.ts`, `dialogs.ts`, `updates.ts`: settings UI, modal dialogs and updates.
   `src/persistence.ts`: serialized, debounced saves with explicit close/update flush.
+  `src/file-links.ts`: terminal links and opening files/folders; `remote-bridge.ts`: phone snapshots and events.
 - `src/model.ts`: pure domain logic, state parsing/migrations, commands, statuses,
   and terminal paste/link helpers. Keep this module independent of DOM and Tauri.
 - `src/ipc.ts`: every native command and event with its argument and result types;

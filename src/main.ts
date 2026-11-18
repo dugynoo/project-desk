@@ -1,11 +1,10 @@
-import { writeClipboard } from "./clipboard.ts";
 import { createTerminalFactory, attachWebgl, fitTerminal, reclaimSize, type Runtime } from "./terminal-runtime.ts";
 import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.ts";
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
 import { openSearch, setSearchTheme } from "./terminal-search.ts";
-import { fileOpenTarget, removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane, type EditorInfo } from "./model.ts";
+import { removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane } from "./model.ts";
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { applyUiTheme, terminalTheme } from "./theme.ts";
@@ -14,6 +13,8 @@ import { createSettings } from "./settings.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import { createFileDropHandler } from "./file-drop.ts";
 import { createTemplates } from "./templates.ts";
+import { createFileLinks } from "./file-links.ts";
+import { createRemoteBridge } from "./remote-bridge.ts";
 import { createSessionDialogs } from "./session-dialogs.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
@@ -29,15 +30,11 @@ import { Channel } from "@tauri-apps/api/core";
 import { call, on, type AppInfo } from "./ipc.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 
 import {
   attentionEventKind,
   recordAttention,
   readAttention,
-  remoteChatSources,
-  remoteSnapshot,
   type PaneLayout,
   restoreSession,
   shouldAutoResume,
@@ -46,7 +43,6 @@ import {
   nextAttention,
   ATTENTION,
   clampSidebar,
-  findFileRefs,
   folderName,
   formatTokens,
   orderedProjects,
@@ -54,11 +50,9 @@ import {
   type PersistedState,
   type Project,
   PROVIDER_LABEL,
-  relativePath,
   type Provider,
   type Session,
   sessionByNumber,
-  linkEditorMode,
   interruptedAgents,
   sessionsOf,
   type Status,
@@ -73,8 +67,6 @@ const runtimes = new Map<string, Runtime>();
 const statuses = new Map<string, Status>();
 const unread = new Set<string>();
 let windowFocused = true;
-/** Relácie, ktoré má práve otvorené mobil. */
-let remoteWatching = new Set<string>();
 
 // ---------- perzistencia ----------
 
@@ -118,46 +110,15 @@ const renderSoon = onNextFrame(() => {
 });
 /** Mobil dostane stav hneď: requestAnimationFrame pri minimalizovanom okne nemusí bežať. */
 function renderStatusSoon() {
-  publishRemote();
+  remote.publish();
   renderSoon();
 }
 
-// Snímok pre mobil: len keď je vzdialený prístup zapnutý, najviac raz za 250 ms.
-let lastRemotePublish = -Infinity;
-let remotePublishTimer: number | undefined;
-function publishRemote() {
-  if (!state.settings.remoteAccess) return;
-  const wait = 250 - (performance.now() - lastRemotePublish);
-  if (wait > 0) {
-    remotePublishTimer ??= window.setTimeout(() => { remotePublishTimer = undefined; publishRemote(); }, wait);
-    return;
-  }
-  lastRemotePublish = performance.now();
-  const snapshot = remoteSnapshot(state, statusOf, id => runtimes.get(id)?.running === true, id => {
-    const s = session(id);
-    return s ? canPause(s) : false;
-  });
-  void call("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
-}
-
-/** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
-function clearRemoteWatching() {
-  if (!remoteWatching.size) return;
-  for (const id of remoteWatching) {
-    const rt = runtimes.get(id);
-    if (rt) reclaimSize(rt, id);
-  }
-  remoteWatching = new Set();
-  renderSidebar();
-}
-
-/** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. `null` = chyba (oznámená). */
-function configureRemote(): Promise<RemoteStatus | null> {
-  const { remoteAccess, remotePort, remoteAddress } = state.settings;
-  return call("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
-    .then((status) => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); return status; })
-    .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); return null; });
-}
+const remote = createRemoteBridge({
+  getState: () => state, runtimes, statusOf, toast, save,
+  canPause: s => canPause(s), pauseSession: (s, confirm) => pauseSession(s, confirm), start: (s, focus) => start(s, focus),
+  markSessionRead: id => markSessionRead(id), renderSidebar: () => renderSidebar(),
+});
 
 const agentMonitor = createAgentMonitor({
   getState: () => state, runtimes, isClosing: () => closingWindow,
@@ -200,11 +161,16 @@ function setStatus(id: string, next: Status, silent = false) {
 
 /** Používateľ práve reláciu vidí (je v zobrazení a okno má fokus). */
 function isWatched(id: string) {
-  return (windowFocused && visibleIds().includes(id)) || remoteWatching.has(id);
+  return (windowFocused && visibleIds().includes(id)) || remote.isWatching(id);
 }
 
 const notify = createSystemNotifications({
   enabled: () => state.settings.notifications, session, project, statusLabel,
+});
+
+const { setupLinks, openEditor, openTextEditor, openFolder, openFolderLabel, configureEditor, editorPending, editorMayClose } = createFileLinks({
+  getState: () => state, platform: () => info.platform, toast,
+  confirmBox: (...args) => confirmBox(...args), editorVisibilityChanged,
 });
 
 const createRuntime = createTerminalFactory({
@@ -333,94 +299,6 @@ function renderPaneHeads() {
 
 // ---------- terminály ----------
 
-/** Ctrl+klik na URL otvorí prehliadač, na cestu k súboru editor alebo predvolenú aplikáciu. Pravý klik ukáže menu. */
-function setupLinks(rt: Runtime, s: Session) {
-  const hover = (key: Key, link: NonNullable<Runtime["hoverLink"]>) => {
-    rt.host.title = t(key);
-    rt.hoverLink = link;
-  };
-  const leave = () => {
-    rt.host.title = "";
-    rt.hoverLink = undefined;
-  };
-  const wantsOpen = (e: MouseEvent) => e.ctrlKey || e.metaKey;
-  rt.term.loadAddon(
-    new WebLinksAddon(
-      (e, uri) => {
-        if (wantsOpen(e)) openLink(uri);
-      },
-      { hover: (_e, uri) => hover("link.urlHint", { url: uri }), leave },
-    ),
-  );
-  rt.term.registerLinkProvider({
-    provideLinks(y, callback) {
-      const p = project(s.projectId);
-      const text = rt.term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
-      const refs = p ? findFileRefs(text, p.path) : [];
-      if (!refs.length) return callback(undefined);
-      void Promise.all(refs.map((r) => resolveFile(p!.path, r.path))).then((resolved) => {
-        const links = refs.flatMap((r, i) => {
-          const file = resolved[i];
-          if (!file) return [];
-          return [
-            {
-              range: { start: { x: r.index + 1, y }, end: { x: r.index + r.length, y } },
-              text: text.slice(r.index, r.index + r.length),
-              activate: (e: MouseEvent) => {
-                if (wantsOpen(e)) openFile(file, r.line);
-              },
-              hover: () => hover("link.fileHint", { file, line: r.line }),
-              leave,
-            },
-          ];
-        });
-        callback(links.length ? links : undefined);
-      });
-    },
-  });
-  rt.host.addEventListener("contextmenu", (e) => {
-    const link = rt.hoverLink;
-    if (!link) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if ("url" in link) {
-      popupMenu(e.clientX, e.clientY, [
-        [t("menu.openLink"), () => openLink(link.url)],
-        [t("menu.copyLink"), () => void writeClipboard(link.url)],
-      ]);
-      return;
-    }
-    const rel = relativePath(project(s.projectId)?.path ?? "", link.file);
-    const items: MenuItem[] = [
-      [t("textEditor.title"), () => void openTextEditor(link.file, link.line)],
-      [externalEditorLabel(), () => openEditor(link.file, link.line)],
-      [t("menu.openDefault"), () => void openDefault(link.file)],
-      [t(REVEAL_LABEL[info.platform] ?? "menu.revealLinux"), () => void revealFile(link.file)],
-      [t("menu.copyPath"), () => void writeClipboard(link.file)],
-    ];
-    if (rel) items.push([t("menu.copyRelative"), () => void writeClipboard(rel)]);
-    popupMenu(e.clientX, e.clientY, items);
-  });
-}
-
-function openLink(url: string) {
-  void openUrl(url).catch((err) => toast(t("link.openFailed", { detail: String(err) })));
-}
-
-/** Ctrl+klik na súbor: prípony z nastavení idú do predvolenej aplikácie, ostatné do editora. */
-let textEditor: ReturnType<typeof import("./text-editor.ts")["createTextEditor"]> | undefined;
-let loadingEditor: Promise<void> | undefined;
-let installedEditors: EditorInfo[] = [];
-function externalEditorLabel() {
-  const settings = state.settings;
-  const name = settings.editorId === "custom" ? settings.customEditorPath.split(/[\\/]/).at(-1)
-    : installedEditors.find(editor => editor.id === settings.editorId)?.label
-      ?? (!settings.editorId ? installedEditors[0]?.label : undefined);
-  return name ? t("editor.openNamed", { name }) : t("editor.external");
-}
-void call("list_editors").then(editors => {
-  installedEditors = editors; textEditor?.configure();
-}).catch(() => {});
 let editorZoomedId: string | undefined;
 function editorVisibilityChanged(visible: boolean) {
   if (visible) {
@@ -435,27 +313,6 @@ function editorVisibilityChanged(visible: boolean) {
     editorZoomedId = undefined;
     if (restore) restorePaneLayout();
   }
-}
-async function openTextEditor(file?: string, line?: number, mode: "preview" | "edit" = "edit") {
-  try {
-    if (!file) {
-      const selected = await openDialog({ directory: false, multiple: false });
-      if (!selected || typeof selected !== "string") return;
-      file = selected;
-    }
-    loadingEditor ??= import("./text-editor.ts").then(module => {
-      textEditor = module.createTextEditor(
-        () => confirmBox(t("textEditor.discard"), t("textEditor.discardBody"), t("textEditor.discardOk")),
-        path => openEditor(path),
-        editorVisibilityChanged,
-        () => state.settings,
-        externalEditorLabel,
-        openLink,
-      );
-    }).catch(e => { loadingEditor = undefined; throw e; });
-    await loadingEditor;
-    await textEditor!.open(file, line, false, mode);
-  } catch (e) { toast(errorText(e)); }
 }
 const busy = () => busyAgents(state.sessions, statusOf, id => runtimes.get(id)?.running === true);
 let quitConfirmation: Promise<boolean> | undefined;
@@ -472,92 +329,9 @@ function markInterrupted() {
   for (const s of interruptedAgents(state.sessions, statusOf, id => runtimes.get(id)?.running === true)) s.interrupted = true;
 }
 async function flushForRestart() {
-  if (textEditor?.pending()) throw new Error(t("textEditor.saveFirst"));
+  if (editorPending()) throw new Error(t("textEditor.saveFirst"));
   markInterrupted();
   await saves.flush();
-}
-
-function openFile(file: string, line?: number) {
-  const target = fileOpenTarget(file, state.settings);
-  const openPreferred = () => state.settings.fileEditor === "external" ? openEditor(file, line)
-    : void openTextEditor(file, line, linkEditorMode(file, state.settings));
-  if (target !== "system") return openPreferred();
-  // Spustiteľný súbor backend odmietne; vtedy ho otvoríme aspoň v editore.
-  void openDefault(file, false).then((ok) => {
-    if (!ok) openPreferred();
-  });
-}
-
-/** false = spustiteľný súbor, ktorý sa predvolenou aplikáciou neotvára (s `explain` to aj povie). */
-async function openDefault(file: string, explain = true): Promise<boolean> {
-  try {
-    await call("open_file_default", { path: file });
-    return true;
-  } catch (e) {
-    if (e === "file.runnable" && !explain) return false;
-    toast(errorText(e));
-    return e !== "file.runnable";
-  }
-}
-
-async function revealFile(file: string) {
-  await call("reveal_file", { path: file }).catch((e) => toast(errorText(e)));
-}
-
-const REVEAL_LABEL: Record<string, Key> = { windows: "menu.revealWindows", macos: "menu.revealMac" };
-const OPEN_FOLDER_LABEL: Record<string, Key> = { windows: "project.openFolderWindows", macos: "project.openFolderMac" };
-const openFolderLabel = () => t(OPEN_FOLDER_LABEL[info.platform] ?? "project.openFolderLinux");
-function openFolder(path: string) {
-  void call("open_folder", { path }).catch((e) => toast(errorText(e)));
-}
-
-type MenuItem = [label: string, run: () => void];
-
-/** Malé kontextové menu na pozícii myši. Zavrie ho klik mimo, Escape alebo strata fokusu okna. */
-function popupMenu(x: number, y: number, items: MenuItem[]) {
-  document.querySelector(".ctxmenu")?.remove();
-  const menu = el("div", "ctxmenu");
-  const close = () => {
-    menu.remove();
-    document.removeEventListener("mousedown", outside, true);
-    document.removeEventListener("keydown", esc, true);
-    window.removeEventListener("blur", close);
-  };
-  const outside = (e: MouseEvent) => {
-    if (!menu.contains(e.target as Node)) close();
-  };
-  const esc = (e: KeyboardEvent) => {
-    if (e.key !== "Escape") return;
-    e.preventDefault();
-    close();
-  };
-  for (const [label, run] of items) {
-    const b = el("button", "", label);
-    b.onclick = () => {
-      close();
-      run();
-    };
-    menu.append(b);
-  }
-  document.body.append(menu);
-  const r = menu.getBoundingClientRect();
-  menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
-  document.addEventListener("mousedown", outside, true);
-  document.addEventListener("keydown", esc, true);
-  window.addEventListener("blur", close);
-}
-
-const resolved = new Map<string, string | null>();
-async function resolveFile(cwd: string, candidate: string): Promise<string | null> {
-  const key = `${cwd}\n${candidate}`;
-  if (resolved.has(key)) return resolved.get(key)!;
-  const file = await call("resolve_file", { cwd, candidate }).catch(() => null);
-  if (resolved.size > 2000) resolved.clear();
-  // Neexistujúce cesty si pamätáme len chvíľu, súbor môže agent práve vytvoriť.
-  resolved.set(key, file);
-  if (!file) window.setTimeout(() => resolved.delete(key), 10_000);
-  return file;
 }
 
 // ---------- akcie ----------
@@ -653,12 +427,6 @@ async function removeProject(p: Project) {
   renderSidebar();
 }
 
-function openEditor(path: string, line?: number) {
-  const { editorId: id, customEditorPath: customPath, customEditorArgs: customArgs } = state.settings;
-  call("open_in_editor", { editor: { id, customPath, customArgs }, path, line: line ?? null }).catch((e) =>
-    toast(errorText(e)),
-  );
-}
 
 function toggleGrid() {
   zoomedId = undefined;
@@ -820,7 +588,7 @@ const sidebar = createSidebar({
   loadBranch: path => call("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
-  showImport: p => showImport(p), showInfo: s => showInfo(s), markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), deferRender: render => pressGuard.defer(render), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
+  showImport: p => showImport(p), showInfo: s => showInfo(s), markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => remote.publish(), deferRender: render => pressGuard.defer(render), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
 function renderSidebar() { sidebar.render(); }
@@ -871,10 +639,10 @@ const showSettings = createSettings(
   (draft, langChanged) => {
     const remoteChanged = draft.remoteAccess !== state.settings.remoteAccess || draft.remotePort !== state.settings.remotePort || draft.remoteAddress !== state.settings.remoteAddress;
     state.settings = draft;
-    let remote: Promise<RemoteStatus | null> | undefined;
-    if (remoteChanged) { if (!draft.remoteAccess) clearRemoteWatching(); remote = configureRemote(); }
-    applyFontSize(); applyTheme(); applyScrollback(); save(); if (langChanged) applyLanguage(); else renderSidebar(); textEditor?.configure(); refreshShortcutHints();
-    return remote;
+    let remoteStatus: Promise<RemoteStatus | null> | undefined;
+    if (remoteChanged) { if (!draft.remoteAccess) remote.clearWatching(); remoteStatus = remote.configure(); }
+    applyFontSize(); applyTheme(); applyScrollback(); save(); if (langChanged) applyLanguage(); else renderSidebar(); configureEditor(); refreshShortcutHints();
+    return remoteStatus;
   },
   modal, toast, checkUpdate, installUpdate,
 );
@@ -1105,44 +873,13 @@ async function main() {
     event.preventDefault();
     if (closingWindow) return;
     closingWindow = true;
-    if (textEditor && !await textEditor.mayClose()) { closingWindow = false; return; }
+    if (!await editorMayClose()) { closingWindow = false; return; }
     if (!await confirmQuit()) { closingWindow = false; return; }
     markInterrupted();
     try { await saves.flush(); await win.destroy(); }
     catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
   });
-  await on("remote-watching", payload => {
-    const next = new Set(payload.ids);
-    // Mobil odišiel: desktop si vezme veľkosť späť bez čakania na písanie či fokus.
-    for (const id of remoteWatching) {
-      const rt = runtimes.get(id);
-      if (!next.has(id) && rt) reclaimSize(rt, id);
-    }
-    let changed = false;
-    for (const id of next) {
-      if (remoteWatching.has(id)) continue;
-      if (markSessionRead(id)) changed = true;
-    }
-    remoteWatching = next;
-    if (changed) save();
-    renderSidebar();
-  });
-  // Mobil potvrdil pozastavenie sám; spustenie znova je to isté ako ↻ na desktope.
-  await on("remote-action", payload => {
-    const s = session(payload.id);
-    if (!s) return;
-    if (payload.action === "pause") void pauseSession(s, false);
-    else if (payload.action === "start" && !runtimes.get(s.id)?.running) void start(s, false);
-  });
-  // Mobil zavrel terminál (napr. prepol na chat): desktop si veľkosť vezme hneď.
-  await on("remote-size-released", payload => {
-    const rt = runtimes.get(payload.id);
-    if (rt) reclaimSize(rt, payload.id);
-  });
-  await on("remote-size", payload => {
-    const rt = runtimes.get(payload.id);
-    if (rt) rt.remoteSized = true;
-  });
+  await remote.listen();
   await win.onFocusChanged(({ payload }) => {
     windowFocused = payload;
     if (payload) {
@@ -1161,7 +898,7 @@ async function main() {
 
   renderSidebar();
   layout();
-  configureRemote();
+  void remote.configure();
   window.setInterval(() => void lookupCodexSessions(), 3000);
   // Skryté okno bez pracujúceho agenta stačí kontrolovať raz za 10 s; hooky hlásia zmeny hneď.
   let lastPoll = 0;

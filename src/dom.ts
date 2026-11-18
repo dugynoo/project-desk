@@ -58,3 +58,40 @@ export function iconButton(label: string, title: string, onClick: () => void) {
   });
   return b;
 }
+
+export type MenuItem = [label: string, run: () => void];
+
+/** Malé kontextové menu na pozícii myši. Zavrie ho klik mimo, Escape alebo strata fokusu okna. */
+export function popupMenu(x: number, y: number, items: MenuItem[]) {
+  document.querySelector(".ctxmenu")?.remove();
+  const menu = el("div", "ctxmenu");
+  const close = () => {
+    menu.remove();
+    document.removeEventListener("mousedown", outside, true);
+    document.removeEventListener("keydown", esc, true);
+    window.removeEventListener("blur", close);
+  };
+  const outside = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) close();
+  };
+  const esc = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault();
+    close();
+  };
+  for (const [label, run] of items) {
+    const b = el("button", "", label);
+    b.onclick = () => {
+      close();
+      run();
+    };
+    menu.append(b);
+  }
+  document.body.append(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, innerWidth - r.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, innerHeight - r.height - 4))}px`;
+  document.addEventListener("mousedown", outside, true);
+  document.addEventListener("keydown", esc, true);
+  window.addEventListener("blur", close);
+}
