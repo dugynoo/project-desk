@@ -5,7 +5,7 @@ import { createAgentMonitor } from "./agent-monitor.ts";
 import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
 import { openSearch, setSearchTheme } from "./terminal-search.ts";
-import { fileOpenTarget, applyPanePreset, savePanePreset, paneDropSide, dropOnPane, type EditorInfo } from "./model.ts";
+import { fileOpenTarget, removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane, type EditorInfo } from "./model.ts";
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { applyUiTheme, terminalTheme } from "./theme.ts";
@@ -654,13 +654,10 @@ async function removeProject(p: Project) {
     catch (e) { toast(errorText(e)); return; }
   }
   for (const s of all) forgetRuntime(s.id);
-  state.closedSessions = state.closedSessions.filter((s) => s.projectId !== p.id);
-  state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((id) => !all.some((s) => s.id === id));
-  state.ui.paneSlots = state.ui.paneSlots.map(id => all.some(s => s.id === id) ? null : id);
-  state.sessions = state.sessions.filter((s) => s.projectId !== p.id);
-  state.templates = state.templates.filter((t) => t.projectId !== p.id);
-  state.projects = state.projects.filter((x) => x.id !== p.id);
-  state.savedLayouts = state.savedLayouts.filter((l) => l.projectId !== p.id);
+  removeProjectState(state, p.id);
+  // Show the fallback session's stopped terminal instead of an empty stage; never auto-start it.
+  const active = session(state.ui.activeSessionId);
+  if (active?.stopped && !runtimes.has(active.id)) createRuntime(active);
   save();
   layout();
   renderSidebar();

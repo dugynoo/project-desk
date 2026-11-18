@@ -332,7 +332,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
       state.ui.pinnedSessionIds = [...new Set(data.ui.pinnedSessionIds.filter((id): id is string =>
         typeof id === "string" && state.sessions.some((s) => s.id === id)))].slice(0, 4);
     }
-    if (str(data.ui.activeSessionId)) state.ui.activeSessionId = data.ui.activeSessionId;
+    const active = data.ui.activeSessionId;
+    if (str(active) && state.sessions.some((s) => s.id === active)) state.ui.activeSessionId = active;
     const legacy = [...new Set([...state.ui.pinnedSessionIds, ...(state.ui.activeSessionId ? [state.ui.activeSessionId] : [])])].slice(0, 4);
     state.ui.paneSlots = normalizePaneSlots(Array.isArray(data.ui.paneSlots) ? data.ui.paneSlots : legacy, new Set(state.sessions.map(s => s.id)));
   }
@@ -643,6 +644,7 @@ export function attentionEventKind(previous: Status, next: Status, silent: boole
   if (silent || previous === next) return;
   if (next === "needs-you") return next;
   if (next === "done" && (previous === "working" || previous === "needs-you")) return next;
+  return undefined;
 }
 
 export function recordAttention(state: PersistedState, s: Session, kind: AttentionEvent["kind"], id: string, at: number, read: boolean) {
@@ -913,6 +915,22 @@ export function archiveSession(state: PersistedState, id: string): void {
   if (state.ui.activeSessionId === id) state.ui.activeSessionId = byRecent(state.sessions)[0]?.id;
 }
 
+/** Removes a project with its sessions, closed sessions, templates and layouts; returns the removed session IDs. */
+export function removeProjectState(state: PersistedState, projectId: string): string[] {
+  const ids = new Set(state.sessions.filter((s) => s.projectId === projectId).map((s) => s.id));
+  state.closedSessions = state.closedSessions.filter((s) => s.projectId !== projectId);
+  state.ui.pinnedSessionIds = state.ui.pinnedSessionIds.filter((id) => !ids.has(id));
+  state.ui.paneSlots = state.ui.paneSlots.map((id) => id !== null && ids.has(id) ? null : id);
+  state.sessions = state.sessions.filter((s) => s.projectId !== projectId);
+  state.templates = state.templates.filter((t) => t.projectId !== projectId);
+  state.projects = state.projects.filter((p) => p.id !== projectId);
+  state.savedLayouts = state.savedLayouts.filter((l) => l.projectId !== projectId);
+  if (state.ui.activeSessionId && ids.has(state.ui.activeSessionId)) {
+    state.ui.activeSessionId = state.ui.paneSlots.find((id) => id !== null) ?? byRecent(state.sessions)[0]?.id;
+  }
+  return [...ids];
+}
+
 export function restoreSession(state: PersistedState, id: string): Session | undefined {
   const s = state.closedSessions.find((s) => s.id === id);
   if (!s || !state.projects.some((p) => p.id === s.projectId) || state.sessions.some((x) => x.id === id)) return;
@@ -1119,6 +1137,7 @@ export function shortcutConflict(bindings: Shortcuts, mac: boolean): ActionId | 
     if (value && seen.has(value)) return id;
     if (value) seen.add(value);
   }
+  return undefined;
 }
 export function parseShortcuts(value: unknown): Shortcuts {
   if (!isObj(value)) return {};

@@ -30,6 +30,7 @@ import {
   linkEditorMode,
   railSessions,
   restoreSession,
+  removeProjectState,
   recordSessionExit,
   shouldAutoResume,
   nextAttention,
@@ -1231,4 +1232,39 @@ test("scrollback and theme settings are clamped to known values", () => {
   assert.equal(normalizeScrollback("x"), 5000);
   assert.equal(normalizeTheme("nord"), "nord");
   assert.equal(normalizeTheme("neon"), "dark");
+});
+
+test("removing a project drops its data and never leaves the active session dangling", () => {
+  const state = parseState(JSON.stringify({
+    projects: [{ id: "p1", name: "One", path: "/1" }, { id: "p2", name: "Two", path: "/2" }],
+    sessions: [
+      { id: "a", projectId: "p1", title: "a", provider: "shell", createdAt: 1 },
+      { id: "b", projectId: "p2", title: "b", provider: "shell", createdAt: 2 },
+      { id: "c", projectId: "p2", title: "c", provider: "shell", createdAt: 3 },
+    ],
+    templates: [{ id: "t1", name: "T", text: "x", projectId: "p1" }, { id: "t2", name: "G", text: "y" }],
+  })).state;
+  state.ui.activeSessionId = "a";
+  state.ui.pinnedSessionIds = ["a", "b"];
+  state.ui.paneSlots = ["a", null, "b"];
+  savePanePreset(state, "l1", "Layout");
+  state.savedLayouts[0].projectId = "p1";
+  assert.deepEqual(removeProjectState(state, "p1"), ["a"]);
+  assert.deepEqual(state.projects.map(p => p.id), ["p2"]);
+  assert.deepEqual(state.sessions.map(s => s.id), ["b", "c"]);
+  assert.deepEqual(state.ui.pinnedSessionIds, ["b"]);
+  assert.deepEqual(state.ui.paneSlots, [null, null, "b"]);
+  assert.deepEqual(state.templates.map(t => t.id), ["t2"]);
+  assert.equal(state.savedLayouts.length, 0);
+  assert.equal(state.ui.activeSessionId, "b", "a visible pane wins over the most recent session");
+  state.ui.paneSlots = [null, null, null];
+  state.ui.activeSessionId = "b";
+  removeProjectState(state, "p2");
+  assert.equal(state.ui.activeSessionId, undefined);
+});
+
+test("an active session ID without a session is dropped on load", () => {
+  const raw = { projects: [{ id: "p", name: "P", path: "/p" }], sessions: [{ id: "a", projectId: "p", title: "a", provider: "shell" }] };
+  assert.equal(parseState(JSON.stringify({ ...raw, ui: { activeSessionId: "gone" } })).state.ui.activeSessionId, undefined);
+  assert.equal(parseState(JSON.stringify({ ...raw, ui: { activeSessionId: "a" } })).state.ui.activeSessionId, "a");
 });
