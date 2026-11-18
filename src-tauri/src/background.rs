@@ -52,9 +52,7 @@ impl Drop for IdLock {
     }
 }
 fn save_owned(path: &Path, owned: &Owned) -> Result<(), String> {
-    let temporary = path.with_extension("json.pending");
-    std::fs::write(&temporary, serde_json::to_vec(owned).map_err(error)?).map_err(error)?;
-    std::fs::rename(temporary, path).map_err(error)
+    crate::fsutil::atomic_write(path, &serde_json::to_vec(owned).map_err(error)?, false).map_err(error)
 }
 
 fn record(dir: &Path, id: &str) -> Result<PathBuf, String> {
@@ -167,7 +165,8 @@ pub fn prepare(dir: &Path, home: &Path, id: &str, cwd: &Path, command: &str) -> 
                 "args": [RELAY, dir.join("background-endpoint.json"), id], "timeout": 2 }] }]));
         }
         let settings = dir.join(format!("background-{id}-hooks.json"));
-        std::fs::write(&settings, json!({"hooks": hooks, "worktree": {"bgIsolation": "none"}}).to_string()).map_err(error)?;
+        let body = json!({"hooks": hooks, "worktree": {"bgIsolation": "none"}}).to_string();
+        crate::fsutil::atomic_write(&settings, body.as_bytes(), false).map_err(error)?;
         let settings = settings.to_string_lossy();
         let mut args = vec!["--bg", "--name", &owned.name, "--settings", &settings];
         if bypass { args.push("--dangerously-skip-permissions"); }

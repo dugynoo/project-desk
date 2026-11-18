@@ -6,6 +6,7 @@ mod cli;
 mod conversations;
 mod editors;
 mod files;
+mod fsutil;
 mod git;
 pub mod hooks;
 pub mod hook_relay;

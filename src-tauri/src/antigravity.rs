@@ -30,17 +30,8 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    use std::io::Write;
-    let temp = path.with_file_name(format!(".project-desk-{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| -> Result<(), String> {
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temp).map_err(|e| e.to_string())?;
-        file.write_all(serde_json::to_string_pretty(value).unwrap().as_bytes()).map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())?;
-        drop(file);
-        std::fs::rename(&temp, path).map_err(|e| e.to_string())
-    })();
-    if result.is_err() { let _ = std::fs::remove_file(temp); }
-    result
+    let body = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    crate::fsutil::atomic_write(path, body.as_bytes(), false).map_err(|e| e.to_string())
 }
 
 /// The documented manual-plugin location, shared by the AGY surfaces.

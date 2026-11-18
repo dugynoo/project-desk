@@ -1,7 +1,7 @@
 //! Párovací token v `<app_config_dir>/remote.json` (`{"token": "..."}`), nikdy v `state.json`.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -38,23 +38,9 @@ pub fn new_token(dir: &Path) -> io::Result<String> {
     // 2 × 122 náhodných bitov, len [0-9a-f]: bezpečné v URL fragmente aj v `Sec-WebSocket-Protocol`.
     let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     fs::create_dir_all(dir)?;
-    let path = dir.join(FILE);
-    let tmp = path.with_extension("json.tmp");
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-        #[cfg(unix)]
-        { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-        let mut file = options.open(&tmp)?;
-        file.write_all(serde_json::to_string(&Stored { token: token.clone() })?.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, &path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.map(|_| token)
+    let body = serde_json::to_string(&Stored { token: token.clone() })?;
+    crate::fsutil::atomic_write(&dir.join(FILE), body.as_bytes(), true)?;
+    Ok(token)
 }
 
 #[cfg(test)]

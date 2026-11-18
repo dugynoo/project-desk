@@ -1,6 +1,6 @@
 //! Validated state with a last-known-good backup. Callers serialize writes.
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
 use std::path::Path;
 
 #[derive(serde::Serialize)]
@@ -39,16 +39,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
 }
 
 fn replace(path: &Path, json: &str) -> Result<(), String> {
-    let tmp = path.with_extension(format!("{}.tmp", path.extension().unwrap_or_default().to_string_lossy()));
-    let result = (|| {
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(json.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() { let _ = fs::remove_file(&tmp); }
-    result.map_err(|e: std::io::Error| e.to_string())
+    crate::fsutil::atomic_write(path, json.as_bytes(), false).map_err(|e| e.to_string())
 }
 
 pub fn save(path: &Path, json: &str) -> Result<(), String> {
