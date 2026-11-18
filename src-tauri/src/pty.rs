@@ -381,15 +381,13 @@ impl PtyManager {
             return Err(error);
         }
 
-        self.remote.started(&req.id);
+        let generation = self.remote.started(&req.id);
         let outputs = self.outputs.clone();
         let output_id = req.output_id;
-        let (remote, tap_id, sessions) = (self.remote.clone(), req.id.clone(), self.sessions.clone());
+        let (remote, tap_id) = (self.remote.clone(), req.id.clone());
         thread::spawn(move || {
-            pump_output(reader, &flow, |text| remote.output(&tap_id, text), send);
+            pump_output(reader, &flow, |text| remote.output(&tap_id, generation, text), send);
             if let Ok(mut map) = outputs.lock() { map.remove(&output_id); }
-            // Dobehnutý výstup po ukončení nesmie nechať históriu mŕtvej session v pamäti.
-            if sessions.lock().is_ok_and(|map| !map.contains_key(&tap_id)) { remote.forget(&tap_id); }
         });
 
         thread::spawn(move || {
@@ -409,12 +407,13 @@ impl PtyManager {
             // the app receives its own shutdown notification. Exit codes alone
             // cannot distinguish shutdown from an unrelated forced termination.
             let system_shutdown = system_is_shutting_down() || preparing_shutdown.load(Ordering::SeqCst);
-            // Uvoľnenie mastera ukončí aj čítacie vlákno (ConPTY inak nedostane EOF).
-            if let Ok(mut map) = registry.lock() {
-                map.remove(&id);
-            }
-            // Pred `pty-exit`: po ňom môže okno spustiť session s rovnakým id a jej históriu nezmažeme.
-            remote.forget(&id);
+            // Uvoľnenie mastera ukončí aj čítacie vlákno (ConPTY inak nedostane EOF). Mimo zámku
+            // registra: ClosePseudoConsole môže chvíľu čakať a ostatné sessions nesmú stáť.
+            let removed = registry.lock().ok().and_then(|mut map| map.remove(&id));
+            drop(removed);
+            // Pred `pty-exit`: po ňom môže okno spustiť session s rovnakým id. Dobiehajúci výstup
+            // tohto behu sa už do histórie nezapíše (iná generácia alebo žiadny záznam).
+            remote.forget(&id, generation);
             if !shutting_down.load(Ordering::SeqCst) {
                 exit(ExitEvent { id, code, system_shutdown });
             }

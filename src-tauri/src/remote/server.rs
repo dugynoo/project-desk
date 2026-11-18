@@ -791,14 +791,15 @@ mod tests {
     #[tokio::test]
     async fn subscribe_sends_history_then_live_output() {
         let h = harness().await;
+        let (gs, gt) = (h.hub.started("s"), h.hub.started("t"));
         h.hub.publish_snapshot(json!({"projects": []}));
-        h.hub.output("s", "old");
+        h.hub.output("s", gs, "old");
         let mut ws = connect(&h).await;
         assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "snapshot", "snapshot": {"projects": []}}));
         send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
         assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "history", "id": "s", "data": "old"}));
-        h.hub.output("t", "other");
-        h.hub.output("s", "new");
+        h.hub.output("t", gt, "other");
+        h.hub.output("s", gs, "new");
         assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "output", "id": "s", "data": "new"}));
     }
 
@@ -914,12 +915,13 @@ mod tests {
     #[tokio::test]
     async fn lagged_client_gets_fresh_history() {
         let h = harness().await;
+        let gs = h.hub.started("s");
         let mut ws = connect(&h).await;
         send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
         assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
         // Jednovláknový runtime: server sa k frontu dostane až po celom cykle.
         for i in 0..crate::remote::hub::BROADCAST_CAPACITY * 2 {
-            h.hub.output("s", &format!("{i}\n"));
+            h.hub.output("s", gs, &format!("{i}\n"));
         }
         let fresh = loop {
             let msg = next(&mut ws).await.expect("socket closed");
@@ -931,13 +933,14 @@ mod tests {
     #[tokio::test]
     async fn lagged_client_gets_current_snapshot() {
         let h = harness().await;
+        let gs = h.hub.started("s");
         let mut ws = connect(&h).await;
         send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
         assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
         // Snímok sa vo fronte prepíše výstupom; po pretečení ho server pošle znova.
         h.hub.publish_snapshot(json!({"n": 1}));
         for i in 0..crate::remote::hub::BROADCAST_CAPACITY * 2 {
-            h.hub.output("s", &format!("{i}\n"));
+            h.hub.output("s", gs, &format!("{i}\n"));
         }
         loop {
             let msg = next(&mut ws).await.expect("socket closed");
@@ -962,6 +965,7 @@ mod tests {
     #[tokio::test]
     async fn answering_client_survives_heartbeat() {
         let mut h = harness_with(FAST).await;
+        let gs = h.hub.started("s");
         let mut ws = connect(&h).await;
         send(&mut ws, json!({"type": "subscribe", "id": "s", "cols": 40, "rows": 20})).await;
         assert_eq!(next(&mut ws).await.unwrap()["type"], "history");
@@ -976,7 +980,7 @@ mod tests {
             }
         }
         assert!(pings >= 3, "{pings}");
-        h.hub.output("s", "live");
+        h.hub.output("s", gs, "live");
         assert_eq!(next(&mut ws).await.unwrap(), json!({"type": "output", "id": "s", "data": "live"}));
         while let Ok(e) = h.events.try_recv() {
             assert_ne!(e, RemoteEvent::Watching { ids: vec![] });
