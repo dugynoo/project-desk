@@ -6,7 +6,7 @@ import { errorText, setLang, t } from "./i18n.ts";
 test("každý kód chyby z Rustu má preklad", () => {
   const dir = new URL("../src-tauri/src/", import.meta.url);
   const codes = new Set<string>();
-  const code = /"((?:editor|pty|project|file|folder|background|remote|antigravity|clipboard|update)\.[A-Za-z]+)(?::|")/g;
+  const code = /"((?:editor|pty|project|file|folder|background|remote|antigravity|clipboard|update|state)\.[A-Za-z]+)(?::|")/g;
   // Rovnaký tvar majú aj názvy súborov (remote.html, remote.json), tie nie sú kódy chýb.
   const fileName = /\.(html|json|jsonl)$/;
   for (const file of readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".rs"))) {

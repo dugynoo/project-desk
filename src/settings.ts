@@ -4,13 +4,46 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { el } from "./dom.ts";
 import { cliChecks } from "./cli-check.ts";
-import { t, errorText, LANGUAGES, type Key } from "./i18n.ts";
+import { t, errorText, locale, LANGUAGES, type Key } from "./i18n.ts";
 import { MIN_FONT_SIZE, MAX_FONT_SIZE, MAX_SCROLLBACK, THEME_IDS, normalizeScrollback, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import qrcode from "qrcode-generator";
 
 interface SettingsInfo { platform: string; hooksEnabled: boolean; stateFile: string; updates: boolean }
+interface Backup { name: string; kind: "daily" | "shrink"; savedAt: number; projects: number; sessions: number; bytes: number }
+
+/** Snapshots of the saved state; a restore is applied on the next start. */
+function backupsSection(parent: HTMLElement, signal: AbortSignal, toast: (message: string) => void) {
+  const list = el("div", "backup-list");
+  parent.append(el("h4", "", t("settings.backups")), el("div", "note", t("settings.backupsNote")), list);
+  const format = new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" });
+  invoke<Backup[]>("list_backups").then((backups) => {
+    if (signal.aborted) return;
+    if (!backups.length) { list.append(el("div", "note", t("backup.none"))); return; }
+    for (const b of backups) {
+      const row = el("div", "backup-row");
+      const label = el("span", "", `${format.format(b.savedAt)} · ${t(b.kind === "daily" ? "backup.daily" : "backup.shrink")} · ${t("backup.counts", { projects: b.projects, sessions: b.sessions })}`);
+      const restore = el("button", "", t("backup.restore"));
+      // Two clicks instead of a confirm dialog, which would close Settings.
+      let armed = false;
+      restore.onclick = async () => {
+        if (!armed) { armed = true; restore.textContent = t("backup.confirm"); return; }
+        restore.disabled = true;
+        try {
+          await invoke("restore_backup", { name: b.name });
+          toast(t("backup.scheduled"));
+        } catch (e) {
+          toast(errorText(e));
+        } finally {
+          if (!signal.aborted) { armed = false; restore.disabled = false; restore.textContent = t("backup.restore"); }
+        }
+      };
+      row.append(label, restore);
+      list.append(row);
+    }
+  }).catch((e) => { if (!signal.aborted) toast(errorText(e)); });
+}
 
 export function createSettings(
   getSettings: () => Settings,
@@ -348,6 +381,7 @@ export function createSettings(
         const save_ = el("button", "primary", t("common.save"));
         const cancel = el("button", "", t("common.cancel"));
         const actions = el("div", "actions");
+        backupsSection(about, signal, toast);
         if (info.updates) {
           const checkBtn = el("button", "left", t("update.check"));
           checkBtn.onclick = async () => {

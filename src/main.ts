@@ -1455,13 +1455,14 @@ function setupResizer() {
 
 async function main() {
   info = await invoke<AppInfo>("app_info");
-  const stored = await invoke<{ json: string | null; recovered: boolean }>("load_state");
+  const stored = await invoke<{ json: string | null; recovered: boolean; restored: boolean }>("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;
   applyTheme();
   setLang(state.settings.language);
   translateDocument();
   if (stored.recovered) toast(t("app.recovered"), true);
+  if (stored.restored) toast(t("app.restored"));
   if (loaded.dropped) toast(t("app.corrupted", { n: loaded.dropped }));
 
   setupResizer();

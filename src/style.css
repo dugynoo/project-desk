@@ -275,6 +275,10 @@ button.icon { min-width: 24px; min-height: 24px; }
 .settings-panel > label:first-child { margin-top: 0; }
 .settings-panel > button { margin-top: 16px; }
 .settings-panel > .note:first-child { margin-top: 0; }
+.settings-panel h4 { margin: 20px 0 0; font-size: 12px; }
+.backup-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.backup-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.backup-row button { flex: none; }
 .settings-modal > .actions { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 0; flex-shrink: 0; }
 .settings-modal > .actions button { min-width: 88px; }
 .shortcut-record { font-family: ui-monospace, "Cascadia Mono", monospace; }

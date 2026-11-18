@@ -96,6 +96,18 @@ fn save_state(state: State<'_, AppState>, json: String) -> Result<(), String> {
     persistence::save(&state.state_file, &json)
 }
 
+#[tauri::command(async)]
+fn list_backups(state: State<'_, AppState>) -> Result<Vec<persistence::Backup>, String> {
+    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    Ok(persistence::backups(&state.state_file))
+}
+
+#[tauri::command(async)]
+fn restore_backup(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let _guard = state.state_write.lock().map_err(|e| e.to_string())?;
+    persistence::schedule_restore(&state.state_file, &name)
+}
+
 #[tauri::command]
 fn shutdown_pending(app: tauri::AppHandle) -> Vec<String> {
     shutdown::pending(&app)
@@ -510,6 +522,8 @@ pub fn run() {
             updates::check_release,
             load_state,
             save_state,
+            list_backups,
+            restore_backup,
             shutdown_pending,
             shutdown_ready,
             shutdown_defer,
