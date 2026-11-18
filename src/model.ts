@@ -714,6 +714,12 @@ export function templatesFor(templates: PromptTemplate[], projectId: string | un
   ];
 }
 
+/** Templates whose name or text contains the query (case-insensitive); an empty query keeps all. */
+export function searchTemplates(templates: PromptTemplate[], query: string): PromptTemplate[] {
+  const q = query.trim().toLowerCase();
+  return q ? templates.filter(tpl => `${tpl.name} ${tpl.text}`.toLowerCase().includes(q)) : templates;
+}
+
 /** Text pripravený na vloženie do terminálu ako jeden celok (bracketed paste). */
 export function pasteSequence(text: string): string {
   // Ukončovacia sekvencia v texte by paste predčasne ukončila a zvyšok by sa vykonal ako príkaz.

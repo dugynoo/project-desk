@@ -49,6 +49,7 @@ import {
   pasteSequence,
   copiedText,
   templatesFor,
+  searchTemplates,
   DEFAULT_SETTINGS,
   folderName,
   matches,
@@ -589,6 +590,15 @@ test("šablóny: projektové pred spoločnými, cudzí projekt nie", () => {
   const t = (id: string, name: string, projectId?: string) => ({ id, name, text: "", send: false, projectId });
   const list = templatesFor([t("1", "Review"), t("2", "Deploy", "p1"), t("3", "Iný", "p2"), t("4", "Audit")], "p1");
   assert.deepEqual(list.map((x) => x.id), ["2", "4", "1"]);
+});
+
+test("template search matches name or text without case and keeps all for a blank query", () => {
+  const tpl = (id: string, name: string, text: string) => ({ id, name, text, send: false });
+  const all = [tpl("1", "Review", "Check the diff"), tpl("2", "Deploy", "npm run RELEASE")];
+  assert.deepEqual(searchTemplates(all, "  ").map(x => x.id), ["1", "2"]);
+  assert.deepEqual(searchTemplates(all, "release").map(x => x.id), ["2"]);
+  assert.deepEqual(searchTemplates(all, " REVIEW ").map(x => x.id), ["1"]);
+  assert.deepEqual(searchTemplates(all, "missing"), []);
 });
 
 test("vloženie šablóny je jeden paste a nedá sa z neho utiecť", () => {
