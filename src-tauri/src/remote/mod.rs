@@ -131,11 +131,28 @@ fn asset(app: &AppHandle, path: &str) -> Option<(Vec<u8>, String)> {
 /// `npm run app:dev`: stránku a moduly servuje Vite na pevnom porte.
 #[cfg(debug_assertions)]
 fn asset(_app: &AppHandle, path: &str) -> Option<(Vec<u8>, String)> {
-    // `@fs` by sprístupnil súbory mimo projektu.
-    if path.starts_with("@fs") {
+    if !dev_path_allowed(path) {
         return None;
     }
     dev_fetch(format!("http://localhost:1420/{path}"))
+}
+
+/// Debug proxy na Vite je dostupná z tailnetu bez tokenu, preto púšťa len to, čo
+/// mobilná stránka naozaj načítava. Vite by inak servoval celé repozitár.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn dev_path_allowed(key: &str) -> bool {
+    const FILES: [&str; 6] =
+        ["remote.html", "@vite/client", "@vite/env", "src/i18n.ts", "src/model.ts", "node_modules/@xterm/xterm/css/xterm.css"];
+    const DIRS: [&str; 3] = ["src/remote/", "node_modules/.vite/deps/", "node_modules/vite/dist/client/"];
+    // Query kľúče, ktoré pridáva samotný Vite; `?raw`, `?url` a pod. by menili, čo sa vráti.
+    const QUERY: [&str; 4] = ["v", "t", "import", "direct"];
+    let (path, query) = key.split_once('?').unwrap_or((key, ""));
+    if key.contains(['%', '\\']) || path.split('/').any(|p| p == ".." || p == "." || p.is_empty()) {
+        return false;
+    }
+    let query_ok = query.is_empty()
+        || query.split('&').all(|kv| QUERY.contains(&kv.split_once('=').map_or(kv, |(k, _)| k)));
+    query_ok && (FILES.contains(&path) || DIRS.iter().any(|d| path.starts_with(d)))
 }
 
 #[cfg(debug_assertions)]
@@ -170,6 +187,37 @@ mod tests {
             tauri::async_runtime::spawn_blocking(|| dev_fetch("http://127.0.0.1:9/remote.html".into())).await
         });
         assert_eq!(got.unwrap(), None);
+    }
+
+    #[test]
+    fn dev_proxy_allows_only_the_remote_page_and_its_modules() {
+        for ok in [
+            "remote.html",
+            "@vite/client",
+            "src/remote/main.ts",
+            "src/remote/remote.css?direct",
+            "src/i18n.ts?t=1700000000",
+            "node_modules/.vite/deps/@xterm_xterm.js?v=1a2b3c4d",
+            "node_modules/@xterm/xterm/css/xterm.css?import",
+        ] {
+            assert!(dev_path_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "@fs/C:/Users/x/.ssh/id_rsa",
+            "CLAUDE.md",
+            ".claude/settings.local.json",
+            "src-tauri/tauri.conf.json",
+            "src/main.ts",
+            "src/remote/../main.ts",
+            "src/remote/%2e%2e/main.ts",
+            "src/remote/main.ts?raw",
+            "src/remote/main.ts?import&raw",
+            "src/remote//main.ts",
+            "node_modules/.vite/deps\\x.js",
+            "package.json",
+        ] {
+            assert!(!dev_path_allowed(bad), "{bad}");
+        }
     }
 
     #[test]
