@@ -1,8 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 import { el } from "./dom.ts";
 import { t } from "./i18n.ts";
-
-type Check = { status: "available" | "missing" | "failed" | "timeout" | "unsupported" | "busy"; version: string };
 
 /** Checks only on opening or explicit request; edits invalidate the displayed result. */
 export function cliChecks(box: HTMLElement, inputs: HTMLInputElement[], shell: HTMLInputElement, signal: AbortSignal) {
@@ -29,7 +27,7 @@ export function cliChecks(box: HTMLElement, inputs: HTMLInputElement[], shell: H
     const snapshot = values(), started = revision;
     show("cli.checking");
     try {
-      const results = await invoke<Check[]>("check_cli", { commands: snapshot.slice(0, 3), shell: snapshot[3] });
+      const results = await call("check_cli", { commands: [snapshot[0] ?? "", snapshot[1] ?? "", snapshot[2] ?? ""], shell: snapshot[3] ?? "" });
       if (signal.aborted || started !== revision) return;
       rows.forEach(({ name, row }, i) => {
         const result = results[i];

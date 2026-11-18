@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTerminalLifecycle, type LifecycleRuntime, type OutputChunk } from "./terminal-lifecycle.ts";
 import { emptyState, type Status } from "./model.ts";
+import type { Call } from "./ipc.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -35,9 +36,9 @@ function fixture(query: (command: string) => Promise<unknown> = async () => null
     agentMonitor: { cancelDiscovery() {}, discover() {}, forget() {} },
     isClosing: () => false, editingId: () => undefined,
     createRuntime(s) { runtimes.set(s.id, rt); return rt; },
-    invoke: async <T>(command: string, args: Record<string, unknown>) => {
+    invoke: (async <T>(command: string, args: Record<string, unknown>) => {
       calls.push({ command, args }); return await query(command) as T;
-    },
+    }) as unknown as Call,
     createOutput() { const channel = { onmessage: (_chunk: OutputChunk) => {} }; channels.push(channel); return channel; },
     schedule(callback) { timers.push(callback); }, save() {}, async flush() { flushed++; },
     statusOf: id => statuses.get(id) ?? "sleeping", setStatus: (id, status) => { statuses.set(id, status); },

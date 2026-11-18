@@ -12,7 +12,7 @@ import { applyUiTheme, terminalTheme } from "./theme.ts";
 import { normalizeFontSize, normalizeScrollback, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
-import { createFileDropHandler, type FileDrag } from "./file-drop.ts";
+import { createFileDropHandler } from "./file-drop.ts";
 import { createNotificationCenter } from "./notifications.ts";
 import { createPaneLayout } from "./panes.ts";
 import { showSavedLayouts } from "./saved-layouts.ts";
@@ -23,8 +23,8 @@ import { createDialogs } from "./dialogs.ts";
 import "@xterm/xterm/css/xterm.css";
 import "./style.css";
 
-import { Channel, invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { Channel } from "@tauri-apps/api/core";
+import { call, on, type AppInfo } from "./ipc.ts";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -45,7 +45,6 @@ import {
   importConversation,
   nextAttention,
   ATTENTION,
-  type AgentEvent,
   byRecent,
   clampSidebar,
   findFileRefs,
@@ -72,14 +71,6 @@ import {
 } from "./model.ts";
 import { errorText, type Key, locale, setLang, t, translateDocument } from "./i18n.ts";
 
-interface AppInfo {
-  platform: string;
-  hooksEnabled: boolean;
-  stateFile: string;
-  updates: boolean;
-  automaticUpdates: boolean;
-}
-
 const PROVIDER_ICON: Record<Provider, string> = { claude: "✳", codex: "‹›", antigravity: "△", shell: "▣" };
 
 let info: AppInfo = { platform: "windows", hooksEnabled: false, stateFile: "", updates: false, automaticUpdates: false };
@@ -95,7 +86,7 @@ let remoteWatching = new Set<string>();
 
 const saves = createSaveQueue(
   () => JSON.stringify(state, null, 2),
-  (json) => invoke("save_state", { json }),
+  (json) => call("save_state", { json }),
   (e) => toast(t("app.saveFailed", { detail: String(e) })),
 );
 const save = saves.schedule;
@@ -149,7 +140,7 @@ function publishRemote() {
     const s = session(id);
     return s ? canPause(s) : false;
   });
-  void invoke("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
+  void call("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
 }
 
 /** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
@@ -166,19 +157,19 @@ function clearRemoteWatching() {
 /** Konfigurácia servera podľa nastavení; pri vypnutí nesmie ostať otvorený port. `null` = chyba (oznámená). */
 function configureRemote(): Promise<RemoteStatus | null> {
   const { remoteAccess, remotePort, remoteAddress } = state.settings;
-  return invoke<RemoteStatus>("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
+  return call("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
     .then((status) => { if (remoteAccess) publishRemote(); else clearRemoteWatching(); return status; })
     .catch((e: unknown) => { clearRemoteWatching(); toast(errorText(e)); return null; });
 }
 
 const agentMonitor = createAgentMonitor({
   getState: () => state, runtimes, isClosing: () => closingWindow,
-  invoke, save, statusOf, setStatus, renderStatusSoon,
+  invoke: call, save, statusOf, setStatus, renderStatusSoon,
 });
 const { statsOf, lookupCodexSessions, pollAgents, onAgentEvent } = agentMonitor;
 // Po aktualizácii Claude Code/Codexu reštartuje nečinné relácie (konverzácie pokračujú).
 const agentUpdates = createAgentUpdates({
-  getState: () => state, runtimes, statusOf, unread, isWatched, isClosing: () => closingWindow, invoke,
+  getState: () => state, runtimes, statusOf, unread, isWatched, isClosing: () => closingWindow, invoke: call,
   restart: (s, version) => void terminalLifecycle.restartSession(s, t("agentUpdate.restarting", { version })),
   announce: (agent, version) => toast(t("agentUpdate.found", { agent: PROVIDER_LABEL[agent], version }), true),
 });
@@ -226,7 +217,7 @@ const createRuntime = createTerminalFactory({
 });
 const terminalLifecycle = createTerminalLifecycle({
   getState: () => state, getInfo: () => info, runtimes, statuses, unread, agentMonitor,
-  isClosing: () => closingWindow, editingId: () => sidebar.editingId(), createRuntime, invoke,
+  isClosing: () => closingWindow, editingId: () => sidebar.editingId(), createRuntime, invoke: call,
   createOutput: () => new Channel<OutputChunk>(), schedule: (callback, delay) => window.setTimeout(callback, delay),
   save, flush: () => saves.flush(), statusOf, setStatus, isWatched, layout, renderSidebar, renderPaneHeads, toast,
   confirmBox: (...args) => confirmBox(...args), onSpawned: s => agentUpdates.spawned(s),
@@ -429,7 +420,7 @@ function externalEditorLabel() {
       ?? (!settings.editorId ? installedEditors[0]?.label : undefined);
   return name ? t("editor.openNamed", { name }) : t("editor.external");
 }
-void invoke<EditorInfo[]>("list_editors").then(editors => {
+void call("list_editors").then(editors => {
   installedEditors = editors; textEditor?.configure();
 }).catch(() => {});
 let editorZoomedId: string | undefined;
@@ -502,7 +493,7 @@ function openFile(file: string, line?: number) {
 /** false = spustiteľný súbor, ktorý sa predvolenou aplikáciou neotvára (s `explain` to aj povie). */
 async function openDefault(file: string, explain = true): Promise<boolean> {
   try {
-    await invoke("open_file_default", { path: file });
+    await call("open_file_default", { path: file });
     return true;
   } catch (e) {
     if (e === "file.runnable" && !explain) return false;
@@ -512,14 +503,14 @@ async function openDefault(file: string, explain = true): Promise<boolean> {
 }
 
 async function revealFile(file: string) {
-  await invoke("reveal_file", { path: file }).catch((e) => toast(errorText(e)));
+  await call("reveal_file", { path: file }).catch((e) => toast(errorText(e)));
 }
 
 const REVEAL_LABEL: Record<string, Key> = { windows: "menu.revealWindows", macos: "menu.revealMac" };
 const OPEN_FOLDER_LABEL: Record<string, Key> = { windows: "project.openFolderWindows", macos: "project.openFolderMac" };
 const openFolderLabel = () => t(OPEN_FOLDER_LABEL[info.platform] ?? "project.openFolderLinux");
 function openFolder(path: string) {
-  void invoke("open_folder", { path }).catch((e) => toast(errorText(e)));
+  void call("open_folder", { path }).catch((e) => toast(errorText(e)));
 }
 
 type MenuItem = [label: string, run: () => void];
@@ -563,7 +554,7 @@ const resolved = new Map<string, string | null>();
 async function resolveFile(cwd: string, candidate: string): Promise<string | null> {
   const key = `${cwd}\n${candidate}`;
   if (resolved.has(key)) return resolved.get(key)!;
-  const file = await invoke<string | null>("resolve_file", { cwd, candidate }).catch(() => null);
+  const file = await call("resolve_file", { cwd, candidate }).catch(() => null);
   if (resolved.size > 2000) resolved.clear();
   // Neexistujúce cesty si pamätáme len chvíľu, súbor môže agent práve vytvoriť.
   resolved.set(key, file);
@@ -632,7 +623,7 @@ async function addProject() {
   try {
     const picked = await openDialog({ directory: true, multiple: false, title: t("project.pick") });
     if (typeof picked !== "string") return;
-    const exists = await invoke<boolean>("project_exists", { path: picked, existing: state.projects.map(p => p.path) });
+    const exists = await call("project_exists", { path: picked, existing: state.projects.map(p => p.path) });
     if (exists) return toast(t("project.exists"));
     state.projects.push({ id: crypto.randomUUID(), name: folderName(picked), path: picked });
     save();
@@ -651,7 +642,7 @@ async function removeProject(p: Project) {
   const body = live.length ? t("project.removeLive", { n: live.length }) : t("project.removeBody");
   if (!(await confirmBox(t("project.removeTitle", { name: p.name }), body, t("project.removeOk")))) return;
   for (const s of live) {
-    try { await invoke("pty_kill", { id: s.id }); }
+    try { await call("pty_kill", { id: s.id }); }
     catch (e) { toast(errorText(e)); return; }
   }
   for (const s of all) forgetRuntime(s.id);
@@ -666,7 +657,7 @@ async function removeProject(p: Project) {
 
 function openEditor(path: string, line?: number) {
   const { editorId: id, customEditorPath: customPath, customEditorArgs: customArgs } = state.settings;
-  invoke("open_in_editor", { editor: { id, customPath, customArgs }, path, line: line ?? null }).catch((e) =>
+  call("open_in_editor", { editor: { id, customPath, customArgs }, path, line: line ?? null }).catch((e) =>
     toast(errorText(e)),
   );
 }
@@ -828,7 +819,7 @@ const sidebar = createSidebar({
   // Volá sa až pri ťahaní, keď je `paneDrop` už definovaný.
   paneDrop: { hover: (id, x, y) => paneDrop.hover(id, x, y), drop: (id, x, y) => paneDrop.drop(id, x, y), clear: () => paneDrop.clear() },
   openView, saveView, manageViews: () => showSavedLayouts(state, modal, save, restorePaneLayout),
-  loadBranch: path => invoke<string | null>("project_branch", { path }),
+  loadBranch: path => call("project_branch", { path }),
   statusOf, statusLabel, contextLabel, save, renderPaneHeads, select, createSession,
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
   showImport, showInfo, markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => publishRemote(), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
@@ -1022,7 +1013,7 @@ function showImport(p: Project, target?: Session) {
       list.replaceChildren(el("p", "hint", t("import.loading")));
       hint.textContent = t(selected === "antigravity" ? "import.agy" : "import.files");
       try {
-        const choices = await invoke<{ id: string; modifiedAt: number; title: string | null }[]>("list_conversations", { provider: selected, cwd: p.path });
+        const choices = await call("list_conversations", { provider: selected, cwd: p.path });
         if (!alive || generation !== request) return;
         list.replaceChildren();
         for (const choice of choices) {
@@ -1108,10 +1099,10 @@ function insertTemplate(tpl: PromptTemplate) {
   const id = state.ui.activeSessionId;
   const rt = id ? runtimes.get(id) : undefined;
   if (!id || !rt?.running) return toast(t("tpl.needSession"));
-  void invoke("pty_write", { id, data: pasteSequence(tpl.text) })
+  void call("pty_write", { id, data: pasteSequence(tpl.text) })
     .then(() => {
       if (tpl.send) window.setTimeout(() => {
-        void invoke("pty_write", { id, data: "\r" }).catch((e) => toast(errorText(e)));
+        void call("pty_write", { id, data: "\r" }).catch((e) => toast(errorText(e)));
       }, 150);
     })
     .catch((e) => toast(errorText(e)));
@@ -1455,8 +1446,8 @@ function setupResizer() {
 }
 
 async function main() {
-  info = await invoke<AppInfo>("app_info");
-  const stored = await invoke<{ json: string | null; recovered: boolean; restored: boolean }>("load_state");
+  info = await call("app_info");
+  const stored = await call("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;
   applyTheme();
@@ -1483,8 +1474,8 @@ async function main() {
 
   new ResizeObserver(fitSoon).observe($("#stage"));
 
-  await listen<{ id: string; code: number | null; systemShutdown?: boolean }>("pty-exit", (e) => onExit(e.payload.id, e.payload.code, e.payload.systemShutdown));
-  await listen<AgentEvent>("agent-event", (e) => onAgentEvent(e.payload));
+  await on("pty-exit", e => onExit(e.id, e.code, e.systemShutdown));
+  await on("agent-event", onAgentEvent);
   const fileDrop = createFileDropHandler({
     targets: () => runtimes.values(),
     blocked: () => closingWindow || !$("#overlay").hidden,
@@ -1492,16 +1483,16 @@ async function main() {
     hint: ready => t(ready ? "drop.ready" : "drop.holdShift"),
     invalid: () => toast(t("drop.invalid")),
   });
-  await listen<FileDrag>("terminal-file-drag", e => fileDrop(e.payload));
+  await on("terminal-file-drag", fileDrop);
 
   const prepareShutdown = createShutdownHandler(flushForRestart,
-    (id, saved) => invoke("shutdown_ready", { id, saved }),
+    (id, saved) => call("shutdown_ready", { id, saved }),
     () => { closingWindow = true; },
     e => toast(t("app.saveFailed", { detail: String(e) })),
-    async id => !busy().length || !await invoke<boolean>("shutdown_defer", { id }) || confirmQuit());
-  await listen<string>("prepare-shutdown", e => void prepareShutdown(e.payload));
-  await listen("shutdown-cancelled", () => { closingWindow = false; });
-  const pendingShutdownsAtStartup = await invoke<string[]>("shutdown_pending");
+    async id => !busy().length || !await call("shutdown_defer", { id }) || confirmQuit());
+  await on("prepare-shutdown", id => void prepareShutdown(id));
+  await on("shutdown-cancelled", () => { closingWindow = false; });
+  const pendingShutdownsAtStartup = await call("shutdown_pending");
   await Promise.all(pendingShutdownsAtStartup.map(prepareShutdown));
 
   const win = getCurrentWindow();
@@ -1515,7 +1506,7 @@ async function main() {
     try { await saves.flush(); await win.destroy(); }
     catch (e) { closingWindow = false; toast(t("app.saveFailed", { detail: String(e) })); }
   });
-  await listen<{ ids: string[] }>("remote-watching", ({ payload }) => {
+  await on("remote-watching", payload => {
     const next = new Set(payload.ids);
     // Mobil odišiel: desktop si vezme veľkosť späť bez čakania na písanie či fokus.
     for (const id of remoteWatching) {
@@ -1532,18 +1523,18 @@ async function main() {
     renderSidebar();
   });
   // Mobil potvrdil pozastavenie sám; spustenie znova je to isté ako ↻ na desktope.
-  await listen<{ id: string; action: string }>("remote-action", ({ payload }) => {
+  await on("remote-action", payload => {
     const s = session(payload.id);
     if (!s) return;
     if (payload.action === "pause") void pauseSession(s, false);
     else if (payload.action === "start" && !runtimes.get(s.id)?.running) void start(s, false);
   });
   // Mobil zavrel terminál (napr. prepol na chat): desktop si veľkosť vezme hneď.
-  await listen<{ id: string }>("remote-size-released", ({ payload }) => {
+  await on("remote-size-released", payload => {
     const rt = runtimes.get(payload.id);
     if (rt) reclaimSize(rt, payload.id);
   });
-  await listen<{ id: string }>("remote-size", ({ payload }) => {
+  await on("remote-size", payload => {
     const rt = runtimes.get(payload.id);
     if (rt) rt.remoteSized = true;
   });

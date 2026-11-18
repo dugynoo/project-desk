@@ -1,4 +1,5 @@
 import { restartableForUpdate, type PersistedState, type Session, type Status } from "./model.ts";
+import type { Call } from "./ipc.ts";
 
 /** Only what the update check needs from a terminal runtime. */
 export interface UpdatableRuntime { running: boolean; closing: boolean; pausing?: boolean }
@@ -12,7 +13,7 @@ interface Dependencies {
   unread: ReadonlySet<string>;
   isWatched: (id: string) => boolean;
   isClosing: () => boolean;
-  invoke: <T>(command: string, args: Record<string, unknown>) => Promise<T>;
+  invoke: Call;
   restart: (s: Session, version: string) => void;
   /** First time a newer version shows up while sessions still run the old one. */
   announce: (agent: Agent, version: string) => void;
@@ -72,7 +73,7 @@ export function createAgentUpdates({ getState, runtimes, statusOf, unread, isWat
     checking = true;
     let results: Check[] = [];
     try {
-      results = await invoke<Check[]>("check_cli", { commands: [settings.claudeCommand, settings.codexCommand, ""], shell: settings.shell });
+      results = await invoke("check_cli", { commands: [settings.claudeCommand, settings.codexCommand, ""], shell: settings.shell });
     } catch {
       return;
     } finally {

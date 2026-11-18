@@ -6,7 +6,7 @@ import { LanguageDescription } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { editorColors } from "./theme.ts";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import { el, $ } from "./dom.ts";
@@ -174,7 +174,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     const text = raw();
     const snapshot = view.state.doc;
     try {
-      await invoke("text_save", { path: document.path, expected: document.text, text });
+      await call("text_save", { path: document.path, expected: document.text, text });
       document.text = text; savedDoc = snapshot; message.textContent = t("textEditor.saved");
     } catch (e) { message.textContent = errorText(e); }
     finally { busy = false; refresh(); }
@@ -192,7 +192,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     busy = true; refresh();
     fallback.hidden = true;
     try {
-      const doc = await invoke<Document>("text_open", { path });
+      const doc = await call("text_open", { path });
       const format = textFileFormat(doc.text);
       if (!format) throw "file.textOnly";
       view?.destroy(); host.replaceChildren();
@@ -241,7 +241,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     if (!document || busy || checking) return;
     checking = true; const current = document;
     try {
-      const fresh = await invoke<Document>("text_open", { path: current.path });
+      const fresh = await call("text_open", { path: current.path });
       if (document === current && fresh.text !== current.text) message.textContent = t("err.file.conflict");
     } catch (e) { if (document === current) message.textContent = errorText(e); }
     finally { checking = false; }

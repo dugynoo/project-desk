@@ -22,6 +22,8 @@ See `README.md` for product behavior, setup details, and release instructions.
   `src/persistence.ts`: serialized, debounced saves with explicit close/update flush.
 - `src/model.ts`: pure domain logic, state parsing/migrations, commands, statuses,
   and terminal paste/link helpers. Keep this module independent of DOM and Tauri.
+- `src/ipc.ts`: every native command and event with its argument and result types;
+  call commands through `call()` and listen through `on()`, never `invoke`/`listen` directly.
 - `src/i18n.ts`: English, Slovak, and Czech UI strings; `src/style.css` and
   `index.html`: styling and app markup.
 - `src-tauri/src/lib.rs`: Tauri command registration, IPC and app lifecycle.
@@ -77,8 +79,9 @@ when available. Report checks run and any platform or manual checks not performe
 - Preserve compatibility with saved state through `parseState` and existing
   settings migrations. Default-setting migrations must preserve user overrides.
 - Keep TypeScript IPC types and Rust serde payloads aligned (camelCase at the
-  boundary). Register new commands in `lib.rs` and review Tauri capabilities
-  when adding native functionality.
+  boundary). Register new commands in `lib.rs`, declare them in `src/ipc.ts`
+  (`src/ipc.test.ts` checks names, arguments and events against Rust), and review
+  Tauri capabilities when adding native functionality.
 - Derive agent status from Claude hooks and Codex session events, not terminal
   text scraping. Keep integrations local; do not modify global agent settings except for the owned
   Project Desk AGY plugin in ~/.gemini/config/plugins/project-desk. Preserve other

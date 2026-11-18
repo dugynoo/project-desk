@@ -1,24 +1,23 @@
 import { writeClipboard } from "./clipboard.ts";
 import { editShortcuts } from "./actions.ts";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { el } from "./dom.ts";
 import { cliChecks } from "./cli-check.ts";
 import { t, errorText, locale, LANGUAGES, type Key } from "./i18n.ts";
-import { MIN_FONT_SIZE, MAX_FONT_SIZE, MAX_SCROLLBACK, THEME_IDS, normalizeScrollback, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings, type EditorInfo } from "./model.ts";
+import { MIN_FONT_SIZE, MAX_FONT_SIZE, MAX_SCROLLBACK, THEME_IDS, normalizeScrollback, CUSTOM_EDITOR, PROVIDERS, PROVIDER_LABEL, settingsDraft, type Provider, type Settings } from "./model.ts";
 import type { createDialogs } from "./dialogs.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import qrcode from "qrcode-generator";
 
 interface SettingsInfo { platform: string; hooksEnabled: boolean; stateFile: string; updates: boolean }
-interface Backup { name: string; kind: "daily" | "shrink"; savedAt: number; projects: number; sessions: number; bytes: number }
 
 /** Snapshots of the saved state; a restore is applied on the next start. */
 function backupsSection(parent: HTMLElement, signal: AbortSignal, toast: (message: string) => void) {
   const list = el("div", "backup-list");
   parent.append(el("h4", "", t("settings.backups")), el("div", "note", t("settings.backupsNote")), list);
   const format = new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" });
-  invoke<Backup[]>("list_backups").then((backups) => {
+  call("list_backups").then((backups) => {
     if (signal.aborted) return;
     if (!backups.length) { list.append(el("div", "note", t("backup.none"))); return; }
     for (const b of backups) {
@@ -31,7 +30,7 @@ function backupsSection(parent: HTMLElement, signal: AbortSignal, toast: (messag
         if (!armed) { armed = true; restore.textContent = t("backup.confirm"); return; }
         restore.disabled = true;
         try {
-          await invoke("restore_backup", { name: b.name });
+          await call("restore_backup", { name: b.name });
           toast(t("backup.scheduled"));
         } catch (e) {
           toast(errorText(e));
@@ -108,7 +107,7 @@ export function createSettings(
     }
     sync();
 
-    invoke<EditorInfo[]>("list_editors")
+    call("list_editors")
       .then((found) => {
         if (signal.aborted) return;
         select.replaceChildren();
@@ -195,14 +194,14 @@ export function createSettings(
           const fresh = el("button", "", t("settings.remoteNewCode"));
           fresh.onclick = () => {
             fresh.disabled = true;
-            invoke<RemoteStatus>("remote_new_token").then(render).catch(e => { if (!signal.aborted) { fresh.disabled = false; onError(errorText(e)); } });
+            call("remote_new_token").then(render).catch(e => { if (!signal.aborted) { fresh.disabled = false; onError(errorText(e)); } });
           };
           out.push(qr, link, fresh, el("div", "note", t("settings.remotePairHint")));
         }
       }
       statusBox.replaceChildren(...out);
     };
-    invoke<RemoteStatus>("remote_status").then(render).catch(e => { if (!signal.aborted) statusBox.replaceChildren(el("div", "note", errorText(e))); });
+    call("remote_status").then(render).catch(e => { if (!signal.aborted) statusBox.replaceChildren(el("div", "note", errorText(e))); });
 
     const read = (): { error: string; field: HTMLInputElement } | Pick<Settings, "remoteAccess" | "remotePort" | "remoteAddress"> => {
       const value = Number(port.value);

@@ -1,5 +1,5 @@
 import { writeClipboard } from "./clipboard.ts";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -61,7 +61,7 @@ export function attachWebgl(rt: Runtime) {
 export function reclaimSize(rt: Runtime, id: string) {
   if (!rt.remoteSized) return;
   rt.remoteSized = false;
-  if (rt.running) void invoke("pty_resize", { id, cols: rt.term.cols, rows: rt.term.rows }).catch(() => {});
+  if (rt.running) void call("pty_resize", { id, cols: rt.term.cols, rows: rt.term.rows }).catch(() => {});
 }
 
 /**
@@ -140,7 +140,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     let lastInputError = -Infinity;
     const writeInput = (data: string) => {
       if (!rt.running) return;
-      void invoke("pty_write", { id: s.id, data }).catch((error: unknown) => {
+      void call("pty_write", { id: s.id, data }).catch((error: unknown) => {
         if (!rt.running || rt.closing) return;
         // Holding a key against a stalled process must not flood the UI.
         const now = performance.now();
@@ -203,7 +203,7 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     // Zmena rozmerov na desktope (aj z fitTerminal) posiela veľkosť sama, takže vráti aj nárok od mobilu.
     term.onResize(({ cols, rows }) => {
       rt.remoteSized = false;
-      if (rt.running) void invoke("pty_resize", { id: s.id, cols, rows }).catch(() => {});
+      if (rt.running) void call("pty_resize", { id: s.id, cols, rows }).catch(() => {});
     });
     term.onBell(() => {
       // Claude a Codex so známou konverzáciou hlásia stav inak; zvonček by notifikáciu zdvojil.

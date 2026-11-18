@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentUpdates, shortVersion, type UpdatableRuntime } from "./agent-updates.ts";
 import { emptyState, type Session, type Status } from "./model.ts";
+import type { Call } from "./ipc.ts";
 
 const conversation = "11111111-1111-4111-8111-111111111111";
 
@@ -21,7 +22,7 @@ function fixture() {
   const updates = createAgentUpdates({
     getState: () => state, runtimes, statusOf: id => statuses.get(id) ?? "sleeping", unread,
     isWatched: id => watched.has(id), isClosing: () => false,
-    invoke: async <T>(_command: string, args: Record<string, unknown>) => { probes.push(args); return await probe() as T; },
+    invoke: (async <T>(_command: string, args: Record<string, unknown>) => { probes.push(args); return await probe() as T; }) as unknown as Call,
     restart: (s, version) => { restarted.push(`${s.id}@${version}`); },
     announce: (agent, version) => { announced.push(`${agent}@${version}`); },
   });

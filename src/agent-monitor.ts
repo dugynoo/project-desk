@@ -3,6 +3,7 @@ import {
   statusAfterBackgroundTasks, withBackgroundTasks,
   type AgentEvent, type AgentStats, type PersistedState, type Session, type SessionObservation, type Status,
 } from "./model.ts";
+import type { Call } from "./ipc.ts";
 
 /** Only the lifecycle metadata needed by the monitor; no terminal or DOM dependency. */
 export interface MonitoredRuntime {
@@ -15,7 +16,7 @@ interface Dependencies {
   getState: () => PersistedState;
   runtimes: ReadonlyMap<string, MonitoredRuntime>;
   isClosing: () => boolean;
-  invoke: <T>(command: string, args: Record<string, unknown>) => Promise<T>;
+  invoke: Call;
   save: () => void;
   statusOf: (id: string) => Status;
   setStatus: (id: string, status: Status, silent?: boolean) => void;
@@ -56,7 +57,7 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
       const exclude = getState().sessions.filter((x) => x.id !== id && x.agentSessionId).map((x) => x.agentSessionId!);
       const runtime = runtimes.get(id);
       const startedAt = s.lastStartAt;
-      const found = await invoke<string | null>("find_codex_session", { cwd: p.path, sinceMs: s.lastStartAt, exclude }).catch(() => null);
+      const found = await invoke("find_codex_session", { cwd: p.path, sinceMs: s.lastStartAt, exclude }).catch(() => null);
       if (!current() || isClosing() || session(id) !== s || project(s.projectId) !== p
         || runtimes.get(id) !== runtime || !runtime?.running || runtime.closing || s.lastStartAt !== startedAt) return;
       if (isUuid(found) && !isUuid(s.agentSessionId) && !getState().sessions.some((x) => x.id !== id && x.agentSessionId === found)) {
@@ -75,7 +76,7 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     const runtime = runtimes.get(s.id);
     const startedAt = s.lastStartAt;
     if (!isUuid(agentId) || !runtime) return;
-    const r = await invoke<PollResult | null>("agent_poll", { provider: s.provider, agentId, generation: startedAt ?? 0 }).catch(() => null);
+    const r = await invoke("agent_poll", { provider: s.provider, agentId, generation: startedAt ?? 0 }).catch(() => null);
     if (!r || session(s.id) !== s || s.agentSessionId !== agentId || runtimes.get(s.id) !== runtime
       || !runtime.running || runtime.closing || s.lastStartAt !== startedAt) return;
     const before = statsOf(s)?.contextTokens;

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 
 const linux = typeof navigator !== "undefined" && /Linux/.test(navigator.userAgent);
 
@@ -9,7 +9,7 @@ const linux = typeof navigator !== "undefined" && /Linux/.test(navigator.userAge
 export async function writeClipboard(text: string): Promise<void> {
   if (linux) {
     try {
-      await invoke("copy_text", { text });
+      await call("copy_text", { text });
       return;
     } catch {
       // Chýba wl-copy/xclip: skúsi to webview.

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAgentMonitor, type MonitoredRuntime } from "./agent-monitor.ts";
 import { emptyState, type AgentStats, type Status } from "./model.ts";
+import type { Call } from "./ipc.ts";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const stats: AgentStats = { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, contextTokens: 12 };
@@ -17,7 +18,7 @@ function fixture(query: (command: string, args: Record<string, unknown>) => Prom
   let saves = 0, renders = 0;
   const monitor = createAgentMonitor({
     getState: () => state, runtimes, isClosing: () => false,
-    invoke: async <T>(command: string, args: Record<string, unknown>) => await query(command, args) as T,
+    invoke: (async <T>(command: string, args: Record<string, unknown>) => await query(command, args) as T) as unknown as Call,
     save: () => { saves++; }, statusOf: () => "untracked",
     setStatus: (_id, status, silent) => { changes.push({ status, silent }); },
     renderStatusSoon: () => { renders++; },
@@ -186,7 +187,7 @@ test("Claude Stop waits for a fresh read and stays in background while its tasks
   s.provider = "claude";
   const monitor = createAgentMonitor({
     getState: () => f.state, runtimes: f.runtimes, isClosing: () => false,
-    invoke: async <T>(command: string) => (command === "agent_poll" ? { stats, status: null, events: [], backgroundTasks: tasks } : null) as T,
+    invoke: (async <T>(command: string) => (command === "agent_poll" ? { stats, status: null, events: [], backgroundTasks: tasks } : null) as T) as unknown as Call,
     save: () => {}, statusOf: () => current,
     setStatus: (_id, status, silent) => { current = status; f.changes.push({ status, silent }); },
     renderStatusSoon: () => {},

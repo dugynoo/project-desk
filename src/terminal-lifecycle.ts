@@ -2,8 +2,9 @@ import { agentCommand, archiveSession, codexHooksFit, backgroundStatus, isUuid, 
   statusAfterSpawn, statusAfterStartupTimeout, type PersistedState, type Session, type Status } from "./model.ts";
 import { errorText, t } from "./i18n.ts";
 import type { MonitoredRuntime, createAgentMonitor } from "./agent-monitor.ts";
+import type { Call, OutputChunk, OutputSink } from "./ipc.ts";
 
-export interface OutputChunk { data: string; ack?: number }
+export type { OutputChunk };
 /** Minimal resources needed for process lifetime; also usable without a DOM in tests. */
 export interface LifecycleRuntime extends MonitoredRuntime {
   outputId?: string;
@@ -34,8 +35,8 @@ interface Dependencies<R extends LifecycleRuntime> {
   isClosing: () => boolean;
   editingId: () => string | undefined;
   createRuntime: (session: Session) => R;
-  invoke: <T>(command: string, args: Record<string, unknown>) => Promise<T>;
-  createOutput: () => { onmessage: (chunk: OutputChunk) => void };
+  invoke: Call;
+  createOutput: () => OutputSink;
   schedule: (callback: () => void, delay: number) => unknown;
   save: () => void;
   flush: () => Promise<void>;
@@ -78,7 +79,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     const key = `${command}\n${shell}`;
     let supported = noDaemon.get(key);
     if (!supported) {
-      supported = invoke<boolean>("codex_no_daemon", { command, shell }).then(v => v !== false, () => true);
+      supported = invoke("codex_no_daemon", { command, shell }).then(v => v !== false, () => true);
       noDaemon.set(key, supported);
     }
     return supported;
@@ -92,7 +93,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       pendingStarts.add(s.id);
       try {
         const exclude = getState().sessions.filter((x) => x.id !== s.id && x.agentSessionId).map((x) => x.agentSessionId!);
-        const found = await invoke<string | null>("recover_codex_session", { cwd: p.path, createdMs: s.createdAt, exclude }).catch(() => null);
+        const found = await invoke("recover_codex_session", { cwd: p.path, createdMs: s.createdAt, exclude }).catch(() => null);
         if (session(s.id) !== s || isClosing()) return;
         // Another asynchronous recovery may already have claimed this ID.
         if (isUuid(found) && !getState().sessions.some((x) => x.id !== s.id && x.agentSessionId === found)) {
@@ -136,8 +137,9 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
     const output = createOutput();
     output.onmessage = (chunk) => {
       if (rt.outputId !== outputId || runtimes.get(s.id) !== rt) return;
-      rt.term.write(chunk.data, chunk.ack === undefined ? undefined : () => {
-        void invoke("pty_output_ack", { outputId, through: chunk.ack }).catch(console.error);
+      const through = chunk.ack;
+      rt.term.write(chunk.data, through === undefined ? undefined : () => {
+        void invoke("pty_output_ack", { outputId, through }).catch(console.error);
       });
     };
     rt.running = true;
@@ -154,7 +156,7 @@ export function createTerminalLifecycle<R extends LifecycleRuntime>({ getState, 
       }
       const spawnCols = rt.term.cols;
       const spawnRows = rt.term.rows;
-      const prepared = await invoke<{ sessionId: string; status: string } | null>("pty_spawn", {
+      const prepared = await invoke("pty_spawn", {
         args: {
           id: s.id,
           outputId,

@@ -1,5 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { call } from "./ipc.ts";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -45,7 +45,7 @@ export function createUpdates(
   async function performCheck(): Promise<boolean> {
     if (!automatic()) {
       try {
-        const release = await invoke<typeof externalUpdate | null>("check_release");
+        const release = await call("check_release");
         externalUpdate = release ?? undefined;
         if (release) showAvailable(release.version);
         else {
@@ -126,12 +126,12 @@ export function createUpdates(
       // Na Windows updater spustí inštalátor a hneď ukončí appku; bez tohto by inštalátor
       // zabil Job Object spolu s ňou. Púšťame až teraz, nech terminály počas sťahovania ostanú v jobe.
       await flush();
-      await invoke("prepare_update", { on: true });
+      await call("prepare_update", { on: true });
       await update.install();
       // Na Windows inštalátor appku zavrie sám; inde ju treba spustiť nanovo.
       await relaunch();
     } catch (e) {
-      await invoke("prepare_update", { on: false }).catch(console.error);
+      await call("prepare_update", { on: false }).catch(console.error);
       btn.disabled = false;
       btn.textContent = t("update.button", { version: update.version });
       toast(t("update.failed", { detail: String(e) }));
