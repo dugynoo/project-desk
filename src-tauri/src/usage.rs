@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -69,11 +69,15 @@ struct Watch {
     background: HashSet<String>,
 }
 
+/// One lock per agent: reading a large session file (up to `SCAN_BUDGET` per poll) holds only
+/// that agent's entry, so other sessions' polls run in parallel. The maps are held only briefly.
+type Entry = Arc<Mutex<Watch>>;
+
 #[derive(Default)]
 pub struct Watcher {
-    watches: Mutex<HashMap<String, Watch>>,
+    watches: Mutex<HashMap<String, Entry>>,
     missing: Mutex<HashMap<String, Missing>>,
-    parked: Mutex<HashMap<String, (Watch, Instant)>>,
+    parked: Mutex<HashMap<String, (Entry, Instant)>>,
 }
 
 // Negative discovery results only: parsing/history catch-up never backs off.
@@ -420,23 +424,33 @@ impl Watcher {
         }
     }
 
+    fn entry(&self, provider: Provider, agent_id: &str, generation: u64) -> Option<Entry> {
+        {
+            let mut watches = self.watches.lock().ok()?;
+            if let Some(w) = watches.get(agent_id) { return Some(w.clone()); }
+            if let Some((w, _)) = self.parked.lock().ok()?.remove(agent_id) {
+                watches.insert(agent_id.to_owned(), w.clone());
+                return Some(w);
+            }
+        }
+        // The directory scan runs without the watch map, so known agents keep polling meanwhile.
+        let path = {
+            let mut missing = self.missing.lock().ok()?;
+            locate(&mut missing, agent_id, provider, generation, Instant::now(), || match provider {
+                Provider::Claude => find_claude(&claude_projects()?, agent_id),
+                Provider::Codex => find_codex(&crate::codex::sessions_root()?, agent_id),
+            })?
+        };
+        // Another poll may have found it first; keep that entry and its read position.
+        Some(self.watches.lock().ok()?.entry(agent_id.to_owned()).or_insert_with(|| Arc::new(Mutex::new(Watch::new(path)))).clone())
+    }
+
     pub fn poll(&self, provider: Provider, agent_id: &str, generation: u64) -> Option<Poll> {
         if !valid_id(agent_id) {
             return None;
         }
-        let mut watches = self.watches.lock().ok()?;
-        if !watches.contains_key(agent_id) {
-            if let Some((w, _)) = self.parked.lock().ok()?.remove(agent_id) { watches.insert(agent_id.to_owned(), w); }
-        }
-        if !watches.contains_key(agent_id) {
-            let mut missing = self.missing.lock().ok()?;
-            let path = locate(&mut missing, agent_id, provider, generation, Instant::now(), || match provider {
-                Provider::Claude => find_claude(&claude_projects()?, agent_id),
-                Provider::Codex => find_codex(&crate::codex::sessions_root()?, agent_id),
-            })?;
-            watches.insert(agent_id.to_owned(), Watch::new(path));
-        }
-        let w = watches.get_mut(agent_id)?;
+        let entry = self.entry(provider, agent_id, generation)?;
+        let mut w = entry.lock().ok()?;
         w.set_generation(generation);
         let events = w.read_new(provider).ok()?;
         if !w.primed { return None; }
@@ -554,13 +568,13 @@ mod tests {
         let watcher = Watcher::default();
         let mut active = Watch::new(PathBuf::new());
         active.claude_msgs.insert("message".into(), [1, 2, 3, 4]);
-        watcher.watches.lock().unwrap().insert("active".into(), active);
-        watcher.watches.lock().unwrap().insert("closed".into(), Watch::new(PathBuf::new()));
+        watcher.watches.lock().unwrap().insert("active".into(), Arc::new(Mutex::new(active)));
+        watcher.watches.lock().unwrap().insert("closed".into(), Arc::new(Mutex::new(Watch::new(PathBuf::new()))));
         watcher.retain(&["active".into()]);
         {
             let watches = watcher.watches.lock().unwrap();
             assert_eq!(watches.len(), 1);
-            assert_eq!(watches["active"].claude_msgs["message"], [1, 2, 3, 4]);
+            assert_eq!(watches["active"].lock().unwrap().claude_msgs["message"], [1, 2, 3, 4]);
         }
         watcher.retain(&[]);
         assert_eq!(watcher.watches.lock().unwrap().capacity(), 0);
@@ -569,10 +583,29 @@ mod tests {
     }
 
     #[test]
+    fn one_agent_reading_does_not_block_another() {
+        let watcher = Arc::new(Watcher::default());
+        let (busy, free) = ("00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002");
+        let path = temp_file("free.jsonl");
+        append(&path, concat!(r#"{"type":"assistant","message":{"id":"m","usage":{"output_tokens":7}}}"#, "
+"));
+        watcher.watches.lock().unwrap().insert(busy.into(), Arc::new(Mutex::new(Watch::new(PathBuf::new()))));
+        watcher.watches.lock().unwrap().insert(free.into(), Arc::new(Mutex::new(Watch::new(path.clone()))));
+        let held = watcher.watches.lock().unwrap()[busy].clone();
+        let _reading = held.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let other = watcher.clone();
+        std::thread::spawn(move || tx.send(other.poll(Provider::Claude, free, 0)).unwrap());
+        let poll = rx.recv_timeout(Duration::from_secs(5)).expect("blocked by another agent's read").unwrap();
+        assert_eq!(poll.stats.output_tokens, 7);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn parked_watches_are_capped() {
         let watcher = Watcher::default();
         for i in 0..PARKED_LIMIT + 4 {
-            watcher.watches.lock().unwrap().insert(format!("s{i}"), Watch::new(PathBuf::new()));
+            watcher.watches.lock().unwrap().insert(format!("s{i}"), Arc::new(Mutex::new(Watch::new(PathBuf::new()))));
             watcher.retain(&[]);
         }
         assert_eq!(watcher.parked.lock().unwrap().len(), PARKED_LIMIT);

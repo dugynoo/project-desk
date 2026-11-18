@@ -214,3 +214,22 @@ test("a newer hook wins over a delayed Claude Stop", async () => {
   await new Promise(done => setTimeout(done, 0));
   assert.deepEqual(f.changes.map(c => c.status), ["working"]);
 });
+
+test("sessions are polled a few at a time instead of one after another", async () => {
+  let inFlight = 0, peak = 0;
+  const f = fixture(async command => {
+    if (command !== "agent_poll") return null;
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    inFlight--;
+    return { ...result, events: [] };
+  });
+  const base = f.state.sessions[0];
+  f.state.sessions = Array.from({ length: 7 }, (_, i) => ({ ...base, id: `s${i}`,
+    agentSessionId: `11111111-1111-4111-8111-11111111111${i}` }));
+  for (const s of f.state.sessions) f.runtimes.set(s.id, { running: true, closing: false });
+  await f.monitor.pollAgents();
+  assert.equal(peak, 4);
+  for (const s of f.state.sessions) assert.deepEqual(f.monitor.statsOf(s), stats);
+});

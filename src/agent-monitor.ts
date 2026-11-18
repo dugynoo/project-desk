@@ -22,6 +22,9 @@ interface Dependencies {
   renderStatusSoon: () => void;
 }
 
+/** Session files read at once; each poll runs on Tauri's blocking pool. */
+const POLL_CONCURRENCY = 4;
+
 /** One monitor per app. The caller owns scheduling and native event subscriptions. */
 export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save, statusOf, setStatus, renderStatusSoon }: Dependencies) {
   const session = (id: string) => getState().sessions.find(s => s.id === id);
@@ -96,27 +99,33 @@ export function createAgentMonitor({ getState, runtimes, isClosing, invoke, save
     polling = true;
     let changed = false;
     const polledIds = new Set<string>();
-    try {
-      for (const s of [...getState().sessions]) {
-        const agentId = s.agentSessionId;
-        if (s.provider === "shell" || s.provider === "antigravity" || !isUuid(agentId) || !runtimes.get(s.id)?.running) continue;
-        const runtime = runtimes.get(s.id)!;
-        polledIds.add(agentId);
-        const r = await pollSession(s);
-        if (!r) continue;
-        if (r.changed) changed = true;
-        const observedEvent = r.events.at(-1) ?? r.status;
-        if (s.provider === "codex" && observedEvent && codexStatusAfter(observedEvent)) {
-          runtime.observation = observeSession(runtime.observation, observedEvent, r.events.length === 0, Date.now());
-        }
-        if (s.provider === "codex") {
-          // A complete turn may arrive between polls; retain its start/completion sequence.
-          for (const event of codexPollEvents(r)) {
-            const status = codexStatusAfter(event);
-            if (status) setStatus(s.id, status, r.events.length === 0);
-          }
+    const pollOne = async (s: Session) => {
+      const runtime = runtimes.get(s.id);
+      // Earlier workers may take a while; skip sessions that stopped in the meantime.
+      if (!runtime?.running) return;
+      const r = await pollSession(s);
+      if (!r) return;
+      if (r.changed) changed = true;
+      const observedEvent = r.events.at(-1) ?? r.status;
+      if (s.provider === "codex" && observedEvent && codexStatusAfter(observedEvent)) {
+        runtime.observation = observeSession(runtime.observation, observedEvent, r.events.length === 0, Date.now());
+      }
+      if (s.provider === "codex") {
+        // A complete turn may arrive between polls; retain its start/completion sequence.
+        for (const event of codexPollEvents(r)) {
+          const status = codexStatusAfter(event);
+          if (status) setStatus(s.id, status, r.events.length === 0);
         }
       }
+    };
+    try {
+      const due = getState().sessions.filter(s =>
+        s.provider !== "shell" && s.provider !== "antigravity" && isUuid(s.agentSessionId) && runtimes.get(s.id)?.running);
+      for (const s of due) polledIds.add(s.agentSessionId!);
+      // Each session file has its own lock in Rust, so one long read no longer delays the rest.
+      let next = 0;
+      const worker = async () => { while (next < due.length) await pollOne(due[next++]!); };
+      await Promise.all(Array.from({ length: Math.min(POLL_CONCURRENCY, due.length) }, worker));
     } finally {
       // Reconcile after in-flight reads so closed sessions cannot leave watches.
       const activeIds = [...new Set(getState().sessions.filter(s =>
