@@ -29,6 +29,7 @@ import "./style.css";
 import { Channel } from "@tauri-apps/api/core";
 import { call, on, type AppInfo } from "./ipc.ts";
 import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
+import { installMacMenu } from "./app-menu.ts";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import {
@@ -642,6 +643,7 @@ const { openTemplates } = createTemplates({ getState: () => state, runtimes, mod
 function applyLanguage() {
   setLang(state.settings.language);
   translateDocument();
+  applyMacMenu();
   renderSidebar();
   renderPaneHeads();
 }
@@ -671,6 +673,23 @@ function applyFontSize() {
     if (rt.term.options.fontSize !== state.settings.fontSize) rt.term.options.fontSize = state.settings.fontSize;
   }
   fitSoon();
+}
+/** macOS: vlastné menu (preložené); ⌘W zatvorí reláciu, nie celé okno. */
+function applyMacMenu() {
+  if (info.platform !== "macos") return;
+  const dialogOpen = () => !$("#overlay").hidden;
+  void installMacMenu({
+    settings: () => { if (!dialogOpen()) openSettings(); },
+    closeSession: () => {
+      const s = session(state.ui.activeSessionId ?? "");
+      if (s && !dialogOpen()) void closeSession(s);
+    },
+    closeWindow: () => void getCurrentWindow().close(),
+    find: () => {
+      const rt = runtimes.get(state.ui.activeSessionId ?? "");
+      if (rt && !dialogOpen()) openSearch(rt);
+    },
+  }).catch(e => toast(String(e)));
 }
 /** macOS: miesto pre semafory a ťahanie okna, okrem fullscreenu (vtedy titlebar nie je). */
 async function followMacTitlebar() {
@@ -851,6 +870,7 @@ async function main() {
   info = await call("app_info");
   document.documentElement.style.setProperty("--mono", monoFontStack(info.platform === "macos"));
   if (info.platform === "macos") void followMacTitlebar();
+  applyMacMenu();
   const stored = await call("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;

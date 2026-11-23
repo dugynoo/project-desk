@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "core:window:allow-close",
     "core:window:allow-set-badge-count",
     "core:window:allow-request-user-attention",
     "core:window:allow-start-dragging",

@@ -178,7 +178,8 @@ Shift. App actions use Cmd on macOS and Ctrl elsewhere; Ctrl on macOS always goe
 terminal: Ctrl+C interrupts even with a selection, Ctrl+V reaches the agent (image paste in
 Claude Code) and Ctrl+click opens a link. Option+drag selects text even in apps that capture
 the mouse (Codex, vim); **Use Option as Meta key** in Settings sends Alt shortcuts instead of
-special characters. Sessions get `TERM_PROGRAM=ProjectDesk` and, when the app was started
+special characters. The macOS menu bar has **Settings…** (⌘,), **Close Session** (⌘W; asks while
+the session runs), **Close Window** (⇧⌘W) and **Find in Terminal…** (⌘F). Sessions get `TERM_PROGRAM=ProjectDesk` and, when the app was started
 without one (Finder, Dock), a UTF-8 `LANG` from the system region. Outside macOS, finding a session and multiple panels default to Ctrl+Shift+K and
 Ctrl+Shift+G, so Ctrl+K (delete to end of line) and Ctrl+G (Claude's external editor) reach
 the terminal. Number-row and numpad bindings
