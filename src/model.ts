@@ -1105,6 +1105,14 @@ export const normalizeTheme = (id: unknown): ThemeId =>
   (THEME_IDS as readonly unknown[]).includes(id) ? id as ThemeId : "dark";
 
 export const MAX_SCROLLBACK = 100_000;
+/**
+ * Písmo s pevnou šírkou pre terminál, editor a šablóny. Vo WebKite na macu `"SF Mono"` podľa mena
+ * nenájde a holé `monospace` je Courier; `ui-monospace` dá SF Mono. Chromium na Windows ho ignoruje.
+ */
+export function monoFontStack(mac: boolean): string {
+  return mac ? "ui-monospace, Menlo, monospace" : '"Cascadia Mono", "Cascadia Code", Consolas, monospace';
+}
+
 export function normalizeScrollback(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, Math.min(MAX_SCROLLBACK, Math.round(value))) : DEFAULT_SETTINGS.terminalScrollback;

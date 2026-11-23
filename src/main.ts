@@ -8,7 +8,7 @@ import { removeProjectState, applyPanePreset, savePanePreset, paneDropSide, drop
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { applyUiTheme, terminalTheme } from "./theme.ts";
-import { normalizeFontSize, normalizeScrollback, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
+import { monoFontStack, normalizeFontSize, normalizeScrollback, DEFAULT_SETTINGS as FONT_DEFAULTS, ACTION_IDS, bindingFor, shortcutAction, type ActionId } from "./model.ts";
 import { createSettings } from "./settings.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import { createFileDropHandler } from "./file-drop.ts";
@@ -838,6 +838,7 @@ function setupResizer() {
 
 async function main() {
   info = await call("app_info");
+  document.documentElement.style.setProperty("--mono", monoFontStack(info.platform === "macos"));
   const stored = await call("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;

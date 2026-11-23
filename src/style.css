@@ -12,12 +12,14 @@
   --off: #4b5160;
   --danger: #ff6b6b;
   --editor-bg: #282c34;
+  /* Nastaví main.ts podľa platformy (monoFontStack). */
+  --mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
-body { font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif; overflow: hidden; user-select: none; }
+body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
 button { font: inherit; color: inherit; }
 
 #app { display: flex; height: 100vh; }
@@ -167,7 +169,7 @@ button.icon.on { color: var(--accent); }
 .modal label[hidden] { display: none; }
 .modal .note { font-size: 11px; color: var(--muted); margin-top: 8px; }
 .modal textarea, .modal select { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; outline: none; }
-.modal textarea { resize: vertical; font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+.modal textarea { resize: vertical; font-family: var(--mono); font-size: 12px; }
 .custom-editor[hidden] { display: none; }
 .modal .input-row { display: flex; gap: 6px; }
 .modal .input-row input { flex: 1; min-width: 0; }
@@ -281,7 +283,7 @@ button.icon { min-width: 24px; min-height: 24px; }
 .backup-row button { flex: none; }
 .settings-modal > .actions { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 0; flex-shrink: 0; }
 .settings-modal > .actions button { min-width: 88px; }
-.shortcut-record { font-family: ui-monospace, "Cascadia Mono", monospace; }
+.shortcut-record { font-family: var(--mono); }
 @media (max-width: 550px) {
   .settings-modal { padding: 14px; }
   .settings-tabs { gap: 0; }
@@ -338,7 +340,7 @@ button.icon { min-width: 24px; min-height: 24px; }
 .markdown-preview h1, .markdown-preview h2 { padding-bottom: .25em; border-bottom: 1px solid var(--line); }
 .markdown-preview h1 { font-size: 1.6em; } .markdown-preview h2 { font-size: 1.3em; } .markdown-preview h3 { font-size: 1.1em; }
 .markdown-preview a { color: var(--accent); cursor: pointer; }
-.markdown-preview code { padding: .1em .35em; border-radius: 4px; background: #ffffff14; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+.markdown-preview code { padding: .1em .35em; border-radius: 4px; background: #ffffff14; font-family: var(--mono); font-size: .9em; }
 .markdown-preview pre { position: relative; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: #0000004d; overflow: auto; }
 .markdown-copy { position: absolute; top: 6px; right: 6px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-2); color: var(--muted); font: 12px system-ui, sans-serif; cursor: pointer; opacity: 0; }
 .markdown-preview pre:hover .markdown-copy, .markdown-copy:focus-visible { opacity: 1; }

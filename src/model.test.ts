@@ -1208,7 +1208,7 @@ test("restarting on agent updates is on by default and a saved opt-out survives 
   assert.equal(parseState(JSON.stringify({ settings: { restartOnAgentUpdate: false } })).state.settings.restartOnAgentUpdate, false);
 });
 
-import { dropOnPane, paneDropSide, normalizeScrollback, normalizeTheme } from "./model.ts";
+import { dropOnPane, monoFontStack, paneDropSide, normalizeScrollback, normalizeTheme } from "./model.ts";
 
 test("paneDropSide picks the nearest edge, the middle third replaces", () => {
   assert.equal(paneDropSide(0.1, 0.5), "left");
@@ -1233,6 +1233,12 @@ test("dropOnPane replaces or swaps in the middle and refuses impossible drops", 
   assert.equal(dropOnPane(["a"], "grid", "a", "a", "left"), null);
   assert.equal(dropOnPane(["a"], "grid", "b", "x", "left"), null);
   assert.equal(dropOnPane(["1", "2", "3", "4", "5", "6", "7", "8"], "grid", "9", "1", "left"), null);
+});
+
+test("monospace font uses SF Mono on macOS and never a bare WebKit monospace first", () => {
+  assert.match(monoFontStack(true), /^ui-monospace,/);
+  assert.match(monoFontStack(false), /^"Cascadia Mono",/);
+  for (const mac of [true, false]) assert.match(monoFontStack(mac), /, monospace$/);
 });
 
 test("scrollback and theme settings are clamped to known values", () => {

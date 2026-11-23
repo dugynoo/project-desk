@@ -43,7 +43,7 @@ export function createTextEditor(confirmDiscard: () => Promise<boolean>, externa
     const settings = getSettings();
     preview.style.fontSize = `${settings.editorFontSize}px`;
     const colors = editorColors(settings.theme);
-    return [EditorView.theme({ "&": { fontSize: `${settings.editorFontSize}px` } }),
+    return [EditorView.theme({ "&": { fontSize: `${settings.editorFontSize}px` }, ".cm-scroller": { fontFamily: "var(--mono)" } }),
       ...(colors ? [EditorView.theme(colors, { dark: true })] : []),
       ...(settings.editorWordWrap ? [EditorView.lineWrapping] : [])];
   };

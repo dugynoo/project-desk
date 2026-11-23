@@ -10,7 +10,7 @@ import { createSearchBar } from "./terminal-search.ts";
 import { $, el } from "./dom.ts";
 import { errorText } from "./i18n.ts";
 import { terminalTheme } from "./theme.ts";
-import { appWheelSteps, copiedText, isTypedInput, isUuid, normalizeScrollback, type Session, type PersistedState, type Status } from "./model.ts";
+import { appWheelSteps, copiedText, isTypedInput, isUuid, monoFontStack, normalizeScrollback, type Session, type PersistedState, type Status } from "./model.ts";
 
 export interface Runtime extends MonitoredRuntime {
   outputId?: string;
@@ -117,7 +117,7 @@ export function createTerminalFactory({ toast, getState, isMac, runtimes, setupL
     $("#stage").append(pane);
 
     const term = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
+      fontFamily: monoFontStack(isMac()),
       fontSize: getState().settings.fontSize,
       // Bliká len aktívny terminál (`layout`), skryté nebudia procesor.
       cursorBlink: false,
