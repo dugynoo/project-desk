@@ -168,6 +168,12 @@ export function createFileLinks({ getState, platform, toast, confirmBox, editorV
       if (!link) return;
       e.preventDefault();
       e.stopPropagation();
+      // macOS posiela Ctrl+klik ako pravý klik (bez click), takže ho tu otvoríme rovnako ako na iných systémoch.
+      if (e.ctrlKey && platform() === "macos") {
+        if ("url" in link) openLink(link.url);
+        else openFile(link.file, link.line);
+        return;
+      }
       if ("url" in link) {
         popupMenu(e.clientX, e.clientY, [
           [t("menu.openLink"), () => openLink(link.url)],
