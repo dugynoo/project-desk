@@ -128,7 +128,8 @@ export function createFileLinks({ getState, platform, toast, confirmBox, editorV
       rt.host.title = "";
       rt.hoverLink = undefined;
     };
-    const wantsOpen = (e: MouseEvent) => e.ctrlKey || e.metaKey;
+    // macOS: Ctrl+klik príde ako contextmenu (nižšie); tu len Cmd, aby sa odkaz neotvoril dvakrát.
+    const wantsOpen = (e: MouseEvent) => platform() === "macos" ? e.metaKey : e.ctrlKey || e.metaKey;
     rt.term.loadAddon(
       new WebLinksAddon(
         (e, uri) => {

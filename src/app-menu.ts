@@ -1,6 +1,8 @@
 import { Menu } from "@tauri-apps/api/menu";
 import { t } from "./i18n.ts";
 
+let current: Menu | undefined;
+
 interface Actions {
   settings(): void;
   /** Closes the active session the same way as its close button (asks while it runs). */
@@ -56,6 +58,7 @@ export async function installMacMenu(actions: Actions) {
         items: [
           { id: "find", text: t("appMenu.find"), accelerator: "Cmd+F", action: actions.find },
           { item: "Separator" },
+          // One item enters and leaves full screen, so its label names the toggle.
           { item: "Fullscreen", text: t("appMenu.fullscreen") },
         ],
       },
@@ -71,4 +74,8 @@ export async function installMacMenu(actions: Actions) {
     ],
   });
   await menu.setAsAppMenu();
+  // A language change builds a new menu; release the replaced one.
+  const previous = current;
+  current = menu;
+  await previous?.close();
 }

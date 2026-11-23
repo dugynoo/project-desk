@@ -607,7 +607,7 @@ const sidebar = createSidebar({
   showImport: p => showImport(p), showInfo: s => showInfo(s), markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => remote.publish(), deferRender: render => pressGuard.defer(render), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
 });
-function renderSidebar() { sidebar.render(); }
+function renderSidebar() { sidebar.render(); updateDockBadge(); }
 function refreshBranches(revisit: boolean | number = false, paths?: string[]) { sidebar.refreshBranches(revisit, paths); }
 
 // ---------- modálne okná ----------
@@ -870,13 +870,13 @@ async function main() {
   info = await call("app_info");
   document.documentElement.style.setProperty("--mono", monoFontStack(info.platform === "macos"));
   if (info.platform === "macos") void followMacTitlebar();
-  applyMacMenu();
   const stored = await call("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;
   applyTheme();
   setLang(state.settings.language);
   translateDocument();
+  applyMacMenu();
   if (stored.recovered) toast(t("app.recovered"), true);
   if (stored.restored) toast(t("app.restored"));
   if (loaded.dropped) toast(t("app.corrupted", { n: loaded.dropped }));

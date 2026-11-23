@@ -194,7 +194,7 @@ export function createTerminalFactory({ toast, getState, isMac, runtimes, setupL
       // Ctrl+V nechá prehliadač vyvolať paste, ktorý xterm spracuje (vrátane bracketed paste).
       if (mod && e.key.toLowerCase() === "v") return false;
       // Shift+Enter = nový riadok v Claude Code (rovnako ako Alt+Enter).
-      if (e.key === "Enter" && e.shiftKey && !mod) {
+      if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.metaKey) {
         writeInput("\x1b\r");
         e.preventDefault();
         return false;
