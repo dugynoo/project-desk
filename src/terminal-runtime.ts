@@ -91,6 +91,8 @@ export function fitTerminal(rt: Runtime) {
 interface Dependencies {
   toast: (message: string) => void;
   getState: () => PersistedState;
+  /** macOS: kopírovanie a vkladanie je na Cmd, Ctrl ostáva terminálu. */
+  isMac: () => boolean;
   runtimes: Map<string, Runtime>;
   setupLinks: (rt: Runtime, session: Session) => void;
   isAppShortcut: (event: KeyboardEvent) => boolean;
@@ -105,7 +107,7 @@ interface Dependencies {
 }
 
 /** Owns xterm construction and input events; process lifetime is managed separately. */
-export function createTerminalFactory({ toast, getState, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
+export function createTerminalFactory({ toast, getState, isMac, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
   isWatched, unread, renderSidebar, notify, select, onTyped }: Dependencies) {
   return function createRuntime(s: Session): Runtime {
     const pane = el("div", "pane");
@@ -122,6 +124,9 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
       scrollback: normalizeScrollback(getState().settings.terminalScrollback),
       allowProposedApi: true,
       theme: terminalTheme(getState().settings.theme),
+      macOptionIsMeta: getState().settings.optionAsMeta,
+      // Codex TUI a vim zachytávajú myš; Option+ťahanie potom aj tak označí text.
+      macOptionClickForcesSelection: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -173,7 +178,8 @@ export function createTerminalFactory({ toast, getState, runtimes, setupLinks, i
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       reclaimSize(rt, s.id);
-      const mod = e.ctrlKey || e.metaKey;
+      // Na macu ide Ctrl do terminálu (Ctrl+C preruší, Ctrl+V vloží obrázok v Claude Code).
+      const mod = isMac() ? e.metaKey : e.ctrlKey;
       if (isAppShortcut(e) && $("#overlay").hidden) return handleGlobalKey(e);
       // Ctrl+C kopíruje, keď je niečo označené; inak ide do procesu ako prerušenie.
       if (mod && e.key.toLowerCase() === "c" && term.hasSelection()) {

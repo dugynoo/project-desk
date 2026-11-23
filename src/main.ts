@@ -28,7 +28,7 @@ import "./style.css";
 
 import { Channel } from "@tauri-apps/api/core";
 import { call, on, type AppInfo } from "./ipc.ts";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, UserAttentionType } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import {
@@ -108,9 +108,19 @@ const renderSoon = onNextFrame(() => {
   renderSidebar();
   renderPaneHeads();
 });
+/** macOS: počet relácií, ktoré čakajú na teba, na ikone v Docku. */
+let dockBadge = 0;
+function updateDockBadge() {
+  if (info.platform !== "macos") return;
+  const waiting = state.sessions.filter(s => statusOf(s.id) === "needs-you").length;
+  if (waiting === dockBadge) return;
+  dockBadge = waiting;
+  void getCurrentWindow().setBadgeCount(waiting || undefined).catch(() => {});
+}
 /** Mobil dostane stav hneď: requestAnimationFrame pri minimalizovanom okne nemusí bežať. */
 function renderStatusSoon() {
   remote.publish();
+  updateDockBadge();
   renderSoon();
 }
 
@@ -155,6 +165,10 @@ function setStatus(id: string, next: Status, silent = false) {
   if (!silent && ATTENTION.has(next) && !isWatched(id)) {
     unread.add(id);
     notify(id, next);
+    // macOS: ikona v Docku raz poskočí, keď okno nemá fokus.
+    if (next === "needs-you" && !windowFocused && info.platform === "macos") {
+      void getCurrentWindow().requestUserAttention(UserAttentionType.Informational).catch(() => {});
+    }
   }
   renderStatusSoon();
 }
@@ -175,7 +189,7 @@ const { setupLinks, openEditor, openTextEditor, openFolder, openFolderLabel, con
 
 const createRuntime = createTerminalFactory({
   toast,
-  getState: () => state, runtimes, setupLinks, isAppShortcut, handleGlobalKey,
+  getState: () => state, isMac: () => info.platform === "macos", runtimes, setupLinks, isAppShortcut, handleGlobalKey,
   isWatched, unread, renderSidebar, notify, select, onTyped: id => agentUpdates.input(id),
 });
 const terminalLifecycle = createTerminalLifecycle({
@@ -642,7 +656,7 @@ const showSettings = createSettings(
     state.settings = draft;
     let remoteStatus: Promise<RemoteStatus | null> | undefined;
     if (remoteChanged) { if (!draft.remoteAccess) remote.clearWatching(); remoteStatus = remote.configure(); }
-    applyFontSize(); applyTheme(); applyScrollback(); save(); if (langChanged) applyLanguage(); else renderSidebar(); configureEditor(); refreshShortcutHints();
+    applyFontSize(); applyTheme(); applyScrollback(); applyOptionAsMeta(); save(); if (langChanged) applyLanguage(); else renderSidebar(); configureEditor(); refreshShortcutHints();
     return remoteStatus;
   },
   modal, toast, checkUpdate, installUpdate,
@@ -657,6 +671,9 @@ function applyFontSize() {
     if (rt.term.options.fontSize !== state.settings.fontSize) rt.term.options.fontSize = state.settings.fontSize;
   }
   fitSoon();
+}
+function applyOptionAsMeta() {
+  for (const rt of runtimes.values()) rt.term.options.macOptionIsMeta = state.settings.optionAsMeta;
 }
 function applyTheme() {
   const theme = state.settings.theme;

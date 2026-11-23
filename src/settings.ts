@@ -299,6 +299,11 @@ export function createSettings(
         scrollback.value = String(st.terminalScrollback);
         const scrollbackLabel = el("label", "", t("settings.scrollback")); scrollbackLabel.htmlFor = scrollback.id;
         display.append(themeLabel, theme, fontLabel, fontSize, scrollbackLabel, scrollback, el("div", "note", t("settings.scrollbackNote")));
+        const optionMeta = el("input"); optionMeta.type = "checkbox"; optionMeta.checked = st.optionAsMeta;
+        if (info.platform === "macos") {
+          const optionMetaLabel = el("label", "check"); optionMetaLabel.append(optionMeta, document.createTextNode(t("settings.optionAsMeta")));
+          display.append(optionMetaLabel, el("div", "note", t("settings.optionAsMetaNote")));
+        }
         const gitBranch = el("input");
         gitBranch.type = "checkbox";
         gitBranch.id = "show-git-branch";
@@ -425,6 +430,7 @@ export function createSettings(
             markdownOpen: markdownOpen.value as Settings["markdownOpen"],
             editorFontSize: Number(editorFont.value),
             editorWordWrap: wrap.checked,
+            optionAsMeta: optionMeta.checked,
             showGitBranch: gitBranch.checked,
             shortcuts,
             defaultProvider: defaultProvider.value as Provider,

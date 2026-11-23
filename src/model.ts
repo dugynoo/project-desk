@@ -95,6 +95,8 @@ export interface Settings {
   theme: string;
   /** Koľko riadkov histórie drží terminál (0 = žiadnu). */
   terminalScrollback: number;
+  /** macOS: Option posiela Meta (Esc+kláves) namiesto znakov ako ∫ alebo diakritiky. */
+  optionAsMeta: boolean;
   editorId: string;
   customEditorPath: string;
   /** Argumenty vlastného editora; `%TARGET_PATH%` = súbor alebo priečinok, `%LINE%` = riadok. */
@@ -169,6 +171,7 @@ export const DEFAULT_SETTINGS: Settings = {
   editorWordWrap: false,
   theme: "dark",
   terminalScrollback: 5000,
+  optionAsMeta: false,
   editorId: "",
   customEditorPath: "",
   customEditorArgs: "%TARGET_PATH%",

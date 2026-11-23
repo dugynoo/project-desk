@@ -93,7 +93,7 @@ Startup preserves status events received while launching the terminal. If no rea
 - **Claude Code:** status comes from Claude Code hooks: *Working*, *Waiting for input*, *Done*, *Agent exited*. Permission requests report waiting immediately; failed tools return to working, and a turn-ending API error reports that attention is needed. The app starts Claude with `--settings` pointing at local hooks. Hooks only observe status and never approve or deny requests. A notification that one of Claude's background agents needs input does not change the session's own status. Your `~/.claude` settings are never modified. See the [Claude hook lifecycle](https://code.claude.com/docs/en/hooks).
 - **Codex:** status comes from event types and timestamps in the Codex session file in `~/.codex/sessions`: *Working*, *Done*. Historical usage totals survive resume, but status from before the current process launch is ignored: an interrupted old turn is not proof of current work. Usage data alone does not imply completion. Until a current status arrives, startup falls back to *Status unavailable*. Current-launch snapshots do not replay old notifications. Approval waiting still cannot be detected reliably from this file.
 - **Antigravity CLI:** project-local hooks report activity, completion and explicit `ask_question` / `ask_permission` tools. Automatic permission dialogs are not exposed by these hooks; token usage is not tracked. See setup below.
-- **Notifications:** a system notification and an unread dot appear when an agent finishes or needs you while you are looking elsewhere.
+- **Notifications:** a system notification and an unread dot appear when an agent finishes or needs you while you are looking elsewhere. On macOS, the Dock icon shows how many sessions are waiting for you and bounces once when one starts waiting while Desk is in the background.
 - **Attention overview:** the sidebar counts waiting, completed and working sessions. Use **Needs attention** to filter to waiting/completed sessions; **Ctrl+Shift+A** jumps to the next one.
 - **Notification center:** the **Notifications** button opens the last 100 completion/input-request events, newest first, with unread markers and relative times. Click an available session to jump to it, mark all events read, or clear read entries. History survives restarts and records only session/project labels, provider, event type, time and read state. Closed/removed sessions remain in history without being relaunched. Initial readiness and restored status snapshots do not create new completion events. Events for the session you are watching are already read; desktop notification settings do not disable this history.
 
@@ -175,7 +175,11 @@ between these views. Existing settings retain the default shortcuts.
 
 Bindings support Ctrl/Cmd plus a letter, digit, F1–F12, Enter, plus or minus, optionally with
 Shift. App actions use Cmd on macOS and Ctrl elsewhere; Ctrl on macOS always goes to the
-terminal. Outside macOS, finding a session and multiple panels default to Ctrl+Shift+K and
+terminal: Ctrl+C interrupts even with a selection, Ctrl+V reaches the agent (image paste in
+Claude Code) and Ctrl+click opens a link. Option+drag selects text even in apps that capture
+the mouse (Codex, vim); **Use Option as Meta key** in Settings sends Alt shortcuts instead of
+special characters. Sessions get `TERM_PROGRAM=ProjectDesk` and, when the app was started
+without one (Finder, Dock), a UTF-8 `LANG` from the system region. Outside macOS, finding a session and multiple panels default to Ctrl+Shift+K and
 Ctrl+Shift+G, so Ctrl+K (delete to end of line) and Ctrl+G (Claude's external editor) reach
 the terminal. Number-row and numpad bindings
 work on localized keyboards. Clipboard and common close/undo combinations are

@@ -258,6 +258,38 @@ fn strip_agent_markers(cmd: &mut CommandBuilder) {
     }
 }
 
+/// LANG pre nové relácie, keď ho aplikácia nezdedila (macOS z Findera/Docku). Odvodí sa
+/// z jazyka a regiónu systému ako v Terminal.app; prázdne prostredie mimo macOS nechá tak.
+fn default_lang() -> Option<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        static LANG: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        LANG.get_or_init(|| {
+            if ["LANG", "LC_ALL", "LC_CTYPE"].iter().any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty())) {
+                return None;
+            }
+            let apple = std::process::Command::new("/usr/bin/defaults").args(["read", "-g", "AppleLocale"]).output()
+                .ok().filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            Some(utf8_locale(&apple, |name| std::path::Path::new("/usr/share/locale").join(name).is_dir()))
+        }).as_deref()
+    }
+    #[cfg(not(target_os = "macos"))]
+    { None }
+}
+
+/// `sk_SK@rg=czzzzz` → `sk_SK.UTF-8`, ak systém taký locale má; inak `en_US.UTF-8`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn utf8_locale(apple_locale: &str, exists: impl Fn(&str) -> bool) -> String {
+    let base = apple_locale.split('@').next().unwrap_or_default();
+    let candidate = format!("{base}.UTF-8");
+    if !base.is_empty() && base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && exists(&candidate) {
+        candidate
+    } else {
+        "en_US.UTF-8".into()
+    }
+}
+
 /// Zostaví príkaz pre shell. Názvy projektov a úloh sa sem nikdy nedostanú,
 /// `command` pochádza iba z nastavení aplikácie a cwd sa nastavuje cez option.
 fn build_command(shell: Option<&str>, command: Option<&str>) -> CommandBuilder {
@@ -378,6 +410,10 @@ impl PtyManager {
         cmd.cwd(&req.cwd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM_PROGRAM", "ProjectDesk");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // Ako Terminal.app: app spustená z Findera nemá LANG a zsh by inak lámal diakritiku.
+        if let Some(lang) = default_lang() { cmd.env("LANG", lang); }
         // App spustená z inej Claude Code session (napr. `npm run app:dev` z agenta) by tieto značky
         // podedila a Claude v sessions by bral seba ako vnorenú: bez prepisu konverzácie, teda bez chatu.
         strip_agent_markers(&mut cmd);
@@ -513,6 +549,17 @@ impl PtyManager {
 #[cfg(test)]
 mod tests {
     use super::take_utf8;
+    use super::utf8_locale;
+
+    #[test]
+    fn utf8_locale_follows_system_region_when_installed() {
+        let installed = |name: &str| ["sk_SK.UTF-8", "cs_CZ.UTF-8"].contains(&name);
+        assert_eq!(utf8_locale("sk_SK", installed), "sk_SK.UTF-8");
+        assert_eq!(utf8_locale("cs_CZ@rg=skzzzz", installed), "cs_CZ.UTF-8");
+        assert_eq!(utf8_locale("en_SK", installed), "en_US.UTF-8");
+        assert_eq!(utf8_locale("", installed), "en_US.UTF-8");
+        assert_eq!(utf8_locale("../x", |_| true), "en_US.UTF-8");
+    }
 
     #[test]
     fn parent_claude_session_markers_are_not_inherited() {
