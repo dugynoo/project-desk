@@ -3,7 +3,7 @@ import { createTerminalLifecycle, type OutputChunk } from "./terminal-lifecycle.
 import { createAgentMonitor } from "./agent-monitor.ts";
 import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
-import { openSearch, setSearchTheme } from "./terminal-search.ts";
+import { hideSearch, openSearch, setSearchTheme } from "./terminal-search.ts";
 import { removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane } from "./model.ts";
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
@@ -237,6 +237,7 @@ function layout() {
       if (!rt.webgl) attachWebgl(rt);
       webglRecent = [id, ...webglRecent.filter(x => x !== id)];
     }
+    if (!show) hideSearch(rt);
   }
   // WebGL majú viditeľné a naposledy zobrazené terminály, spolu najviac WEBGL_BUDGET:
   // prepnutie späť je bez nového kontextu a limit prehliadača (~16) sa neprekročí.

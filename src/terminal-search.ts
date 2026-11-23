@@ -60,6 +60,14 @@ export function createSearchBar(term: Terminal, search: SearchAddon, isAppShortc
   return bar;
 }
 
+/** Hidden panes drop their highlights: the addon otherwise rescans the buffer after every output pause.
+ *  The input keeps its text, so openSearch restores the search. */
+export function hideSearch(rt: { search: SearchAddon; searchBar: HTMLElement }) {
+  if (rt.searchBar.hidden) return;
+  rt.searchBar.hidden = true;
+  rt.search.clearDecorations();
+}
+
 export function openSearch(rt: { term: Terminal; search: SearchAddon; searchBar: HTMLElement }) {
   const input = rt.searchBar.querySelector("input")!;
   if (rt.term.hasSelection() && !rt.term.getSelection().includes("\n")) input.value = rt.term.getSelection();
