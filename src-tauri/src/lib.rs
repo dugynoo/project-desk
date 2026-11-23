@@ -484,6 +484,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Okno sa otvorí s veľkosťou, polohou a maximalizáciou z minulého behu (aj po odpojení
+        // monitora ostane na obrazovke). Viditeľnosť sa neobnovuje, aby okno nikdy neostalo skryté.
+        .plugin(tauri_plugin_window_state::Builder::default()
+            .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
+            .build())
         .on_window_event(file_drop::on_event);
     // Only explicitly opted-in macOS smoke builds embed an automation server.
     // Normal development and shipped binaries never register it.

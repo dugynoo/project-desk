@@ -26,7 +26,7 @@ It replaces the earlier Cursor extension. Your editor opens only when you ask fo
 
 The UI is available in English, Slovak and Czech (⚙ Settings → Language). English is the default.
 
-Launching Project Desk again brings the existing window forward, including when minimized. On macOS the window has no separate title bar: the traffic lights sit above the sidebar, and the strip above the sidebar (or across the window when the sidebar auto-hides) drags the window and maximizes it on double-click.
+Launching Project Desk again brings the existing window forward, including when minimized. The window reopens with its last size, position, maximized and fullscreen state; if that monitor is gone, it returns to a visible screen. On macOS the window has no separate title bar: the traffic lights sit above the sidebar, and the strip above the sidebar (or across the window when the sidebar auto-hides) drags the window and maximizes it on double-click.
 Only one instance may use a data directory at a time; development and production can run
 alongside each other because they use separate identifiers and state. An OS file lock also
 protects state when desktop instance discovery is unavailable (for example, Linux without

@@ -36,6 +36,7 @@ tauri-plugin-process = "2"
 # Releases use Tauri v2 artifacts; legacy v1 ZIP support pulls in zip 4.x.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2.5"
 tempfile = "3.27.0"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["net", "sync", "time", "macros", "rt-multi-thread"] }
