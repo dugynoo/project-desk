@@ -22,7 +22,13 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; user-select: none; }
 button { font: inherit; color: inherit; }
 
-#app { display: flex; height: 100vh; }
+#app { display: flex; height: 100vh; position: relative; }
+/* macOS: okno nemá systémový titlebar (titleBarStyle Overlay); semafory sú nad sidebarom
+   a tieto pruhy slúžia na ťahanie okna. Vo fullscreene semafory zmiznú, pruhy tiež. */
+.titlebar-drag, #window-drag { display: none; }
+.mac-titlebar .titlebar-drag { display: block; flex: none; height: 28px; }
+.mac-titlebar.sidebar-auto #app { padding-top: 28px; }
+.mac-titlebar.sidebar-auto #window-drag { display: block; position: absolute; top: 0; left: 0; right: 0; height: 28px; background: var(--panel); border-bottom: 1px solid var(--line); }
 
 #sidebar { display: flex; flex-direction: column; background: var(--panel); min-width: 180px; overflow: hidden; }
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 10px 10px 8px 12px; border-bottom: 1px solid var(--line); }

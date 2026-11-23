@@ -672,6 +672,17 @@ function applyFontSize() {
   }
   fitSoon();
 }
+/** macOS: miesto pre semafory a ťahanie okna, okrem fullscreenu (vtedy titlebar nie je). */
+async function followMacTitlebar() {
+  const win = getCurrentWindow();
+  const sync = async () => {
+    const fullscreen = await win.isFullscreen().catch(() => false);
+    document.body.classList.toggle("mac-titlebar", !fullscreen);
+  };
+  document.body.classList.add("mac-titlebar");
+  await win.onResized(() => void sync());
+  await sync();
+}
 function applyOptionAsMeta() {
   for (const rt of runtimes.values()) rt.term.options.macOptionIsMeta = state.settings.optionAsMeta;
 }
@@ -839,6 +850,7 @@ function setupResizer() {
 async function main() {
   info = await call("app_info");
   document.documentElement.style.setProperty("--mono", monoFontStack(info.platform === "macos"));
+  if (info.platform === "macos") void followMacTitlebar();
   const stored = await call("load_state");
   const loaded = parseState(stored.json);
   state = loaded.state;

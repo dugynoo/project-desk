@@ -8,6 +8,8 @@
     "core:window:allow-destroy",
     "core:window:allow-set-badge-count",
     "core:window:allow-request-user-attention",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
     "dialog:allow-open",
     "notification:default",
     "updater:default",

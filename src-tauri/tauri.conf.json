@@ -17,6 +17,8 @@
         "height": 900,
         "minWidth": 700,
         "minHeight": 400,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "backgroundThrottling": "disabled",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows"
       }
