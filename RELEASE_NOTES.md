@@ -1,5 +1,1 @@
-- Your workspace is now backed up daily and before you remove a project; restore a snapshot from ⚙ Settings.
-- Closing, pausing or restarting a session also ends everything it started, such as dev servers and MCP servers.
-- Buttons in the sidebar and pane headers no longer miss clicks while an agent is updating its status.
-- Status and token counts of many sessions update faster, and one large conversation no longer delays the others.
-- Phone remote access: limits on uploaded images, and a restarted session no longer shows the previous run's output. Plus clearer, translated error messages and better stability.
+- A search left open in a terminal no longer keeps re-scanning its history after you switch to another session. Opening search again restores the query.
