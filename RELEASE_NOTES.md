@@ -1,4 +1,4 @@
-- Phone notifications: tap the bell in the phone's session list to get a notification when an agent finishes or needs you while Project Desk is in the background. Tapping it opens that session. On iPhone and iPad, add the page to the Home Screen first (the page explains how).
-- Start a new Claude or Codex session from the phone with + next to a project.
-- When Claude asks a question with options, answer it with a tap in the phone chat.
-- Links that an agent ends with a period or comma open correctly.
+- Changes view (optional, Settings → Display): project menu ⋯ → Changes lists files changed since the last commit, new files included, with a diff of each file.
+- Last-turn changes (optional): session menu ⋯ → Changes in last turn shows only what changed since the agent last started working.
+- Worktree sessions (optional): project menu ⋯ → New worktree… creates a branch in a folder next to the project and starts a session there, so two agents do not overwrite each other's files.
+- A message sent from the phone chat appears immediately, including /compact.
