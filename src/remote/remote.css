@@ -24,13 +24,22 @@ button { font: inherit; color: inherit; }
 .banner { flex: none; padding: calc(6px + env(safe-area-inset-top)) 16px 6px; text-align: center; font-size: 14px; background: var(--working); color: #111317; }
 .toast { position: fixed; left: 16px; right: 16px; bottom: 120px; z-index: 10; padding: 10px 14px; border-radius: 8px; background: var(--needs); color: #111317; font-size: 14px; }
 .pair { margin: 0; padding: 32px 16px; color: var(--muted); text-align: center; }
+.pair p { margin: 0 0 16px; }
+.pair-form { display: flex; gap: 6px; max-width: 480px; margin: 0 auto; }
 
 .list { flex: 1; overflow-y: auto; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
-.list-title { margin: 0; padding: 16px; font-size: 20px; font-weight: 600; }
+.list-head { display: flex; align-items: center; }
+.list-title { flex: 1; margin: 0; padding: 16px; font-size: 20px; font-weight: 600; }
+.bell { flex: none; min-width: 44px; min-height: 44px; margin-right: 8px; background: none; border: 0; border-radius: 8px; font-size: 20px; cursor: pointer; }
+.bell[hidden] { display: none; }
+.bell:disabled { opacity: .5; }
 .empty { padding: 0 16px; color: var(--muted); }
-.project { margin: 8px 0 0; padding: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.project { display: flex; align-items: center; margin: 8px 0 0; padding: 0; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
 .project-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 8px 16px 4px; background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer; }
 .project-toggle .chevron { flex: none; width: 12px; }
+.project-toggle { flex: 1; min-width: 0; }
+.project-add { flex: none; min-width: 44px; min-height: 44px; margin-right: 8px; background: none; border: 0; border-radius: 8px; color: var(--accent); font-size: 22px; font-weight: 400; cursor: pointer; }
+.project-add:active { background: var(--panel-2); }
 .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-count { flex: none; font-weight: 400; }
 .project-toggle .dot[hidden] { display: none; }
@@ -103,6 +112,13 @@ button { font: inherit; color: inherit; }
 .msg.user .bubble { padding: 8px 12px; background: #23324a; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; }
 .msg.tool { display: flex; gap: 6px; min-width: 0; font: 12px/1.4 "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace; color: var(--muted); }
 .tool-name { flex: none; color: var(--accent); }
+.msg.question { padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.question-text { margin-bottom: 8px; white-space: pre-wrap; }
+.question-options { display: flex; flex-direction: column; gap: 6px; }
+.option { min-height: 44px; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; text-align: left; cursor: pointer; }
+.option:not(:disabled):active { background: var(--line); }
+.option:disabled { cursor: default; color: var(--muted); }
+.option.chosen { border-color: var(--accent); color: var(--text); }
 .tool-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .md { line-height: 1.5; }
 .md > :first-child { margin-top: 0; }

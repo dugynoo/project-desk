@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLOSE_REVOKED, closeAction, parseServerMsg, reconnectDelay } from "./protocol.ts";
+import { CLOSE_REVOKED, closeAction, optionKeys, parseServerMsg, reconnectDelay, tokenFromPairing } from "./protocol.ts";
 
 test("parseServerMsg rejects unknown type", () => {
   assert.equal(parseServerMsg('{"type":"nope"}'), null);
@@ -39,4 +39,24 @@ test("closeAction asks to re-pair on revoke and probes after repeated failed con
   assert.equal(closeAction(1006, true, 5), "retry");
   assert.equal(closeAction(1006, false, 2), "retry");
   assert.equal(closeAction(1006, false, 3), "probe");
+});
+
+test("parseServerMsg keeps question options and drops malformed ones", () => {
+  const ok = parseServerMsg('{"type":"chat","id":"a","reset":false,"items":[{"role":"tool","text":"Pick","name":"AskUserQuestion","options":["Red","Green"]}]}');
+  assert.deepEqual(ok, { type: "chat", id: "a", reset: false, items: [{ role: "tool", text: "Pick", name: "AskUserQuestion", options: ["Red", "Green"] }] });
+  const bad = parseServerMsg('{"type":"chat","id":"a","reset":false,"items":[{"role":"tool","text":"Pick","options":[1]}]}');
+  assert.deepEqual(bad, { type: "chat", id: "a", reset: false, items: [] });
+});
+
+test("optionKeys moves down to the option and confirms it", () => {
+  assert.deepEqual(optionKeys(0), ["\r"]);
+  assert.deepEqual(optionKeys(2), ["\x1b[B", "\x1b[B", "\r"]);
+});
+
+test("tokenFromPairing reads the pairing link or a bare token", () => {
+  const token = "a".repeat(32);
+  assert.equal(tokenFromPairing(` https://pc.tail1.ts.net/remote.html#t=${token} `), token);
+  assert.equal(tokenFromPairing(token), token);
+  assert.equal(tokenFromPairing("https://pc.tail1.ts.net/remote.html"), null);
+  assert.equal(tokenFromPairing("short"), null);
 });

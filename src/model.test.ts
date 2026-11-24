@@ -1302,3 +1302,23 @@ test("OSC 8 hyperlinks open web pages and local files only", () => {
   assert.deepEqual(hyperlinkTarget("https://example.com/a?q=1),"), { url: "https://example.com/a?q=1)" });
   assert.deepEqual(hyperlinkTarget("file:///tmp/x.ts#L7."), { path: "/tmp/x.ts", line: 7 });
 });
+
+import { MAX_PUSH_SUBSCRIPTIONS, upsertPushSubscription } from "./model.ts";
+
+test("parseState keeps the push key and only valid subscriptions", () => {
+  const vapid = { publicKey: "BPk", privateJwk: { kty: "EC", crv: "P-256", d: "x" } };
+  const good = { endpoint: "https://web.push.apple.com/a", p256dh: "BC", auth: "AA" };
+  const { state } = parseState(JSON.stringify({ push: { vapid, subscriptions: [good, { endpoint: "http://x", p256dh: "a", auth: "b" }, { endpoint: "https://x" }, 7] } }));
+  assert.deepEqual(state.push, { vapid, subscriptions: [good] });
+  assert.equal(parseState(JSON.stringify({ push: { vapid: { publicKey: "" } } })).state.push, undefined);
+});
+
+test("upsertPushSubscription replaces by endpoint and keeps the newest", () => {
+  const sub = (n: number, auth = "a") => ({ endpoint: `https://fcm.googleapis.com/${n}`, p256dh: "p", auth });
+  assert.deepEqual(upsertPushSubscription([sub(1), sub(2)], sub(1, "new")), [sub(2), sub(1, "new")]);
+  const many = Array.from({ length: MAX_PUSH_SUBSCRIPTIONS }, (_, i) => sub(i));
+  const next = upsertPushSubscription(many, sub(99));
+  assert.equal(next.length, MAX_PUSH_SUBSCRIPTIONS);
+  assert.deepEqual(next.at(-1), sub(99));
+  assert.equal(next[0]!.endpoint, sub(1).endpoint);
+});

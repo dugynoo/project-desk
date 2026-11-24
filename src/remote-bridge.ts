@@ -1,8 +1,9 @@
 import { call, on } from "./ipc.ts";
 import { errorText } from "./i18n.ts";
-import { remoteChatSources, remoteSnapshot, type PersistedState, type Session, type Status } from "./model.ts";
+import { remoteChatSources, remoteSnapshot, upsertPushSubscription, type PersistedState, type Project, type Session, type Status } from "./model.ts";
 import type { RemoteStatus } from "./remote/protocol.ts";
 import { reclaimSize, type Runtime } from "./terminal-runtime.ts";
+import { createVapidKeys, encryptPayload, toBase64, vapidAuthorization } from "./web-push.ts";
 
 interface Dependencies {
   getState(): PersistedState;
@@ -11,6 +12,8 @@ interface Dependencies {
   canPause(s: Session): boolean;
   pauseSession(s: Session, confirm: boolean): Promise<unknown>;
   start(s: Session, focus: boolean): Promise<unknown>;
+  /** New session from the phone; it starts without taking the desktop's view. */
+  createSession(p: Project, provider: "claude" | "codex", id: string): void;
   /** true = the saved state changed. */
   markSessionRead(id: string): boolean;
   save(): void;
@@ -41,7 +44,46 @@ export function createRemoteBridge(deps: Dependencies) {
       const s = session(id);
       return s ? deps.canPause(s) : false;
     });
+    snapshot.pushKey = state.push?.vapid.publicKey;
     void call("remote_publish", { snapshot, chatSources: remoteChatSources(state) }).catch(() => {});
+  }
+
+  /** Podpisový kľúč pre notifikácie vznikne pri prvom zapnutí; mobil ho dostane v snímku. */
+  let creatingKeys: Promise<void> | undefined;
+  function ensurePushKeys(): Promise<void> {
+    if (getState().push) return Promise.resolve();
+    creatingKeys ??= createVapidKeys()
+      .then(vapid => { getState().push ??= { vapid, subscriptions: [] }; deps.save(); })
+      .catch(() => {})
+      .finally(() => { creatingKeys = undefined; });
+    return creatingKeys;
+  }
+
+  function forgetPush(endpoint?: string) {
+    const push = getState().push;
+    if (!push) return;
+    const left = endpoint === undefined ? [] : push.subscriptions.filter(s => s.endpoint !== endpoint);
+    if (left.length === push.subscriptions.length) return;
+    push.subscriptions = left;
+    deps.save();
+  }
+
+  /** Notifikácia na spárované mobily (obsah šifruje desktop, push služba ho neprečíta). */
+  async function pushToPhones(message: { title: string; body: string; id: string }, urgent: boolean) {
+    const state = getState();
+    const push = state.push;
+    if (!state.settings.remoteAccess || !push?.subscriptions.length) return;
+    const payload = new TextEncoder().encode(JSON.stringify(message));
+    await Promise.all(push.subscriptions.map(async sub => {
+      try {
+        const [authorization, body] = await Promise.all([vapidAuthorization(sub.endpoint, push.vapid), encryptPayload(payload, sub)]);
+        const status = await call("remote_push", { endpoint: sub.endpoint, authorization, body: toBase64(body), urgent });
+        // Mobil odber zrušil alebo vypršal.
+        if (status === 404 || status === 410) forgetPush(sub.endpoint);
+      } catch {
+        // Bez siete sa notifikácia stratí; bodka v zozname ostane.
+      }
+    }));
   }
 
   /** Bez bežiaceho servera nemá nikto otvorenú reláciu, inak by zostali „videné“ a stlmili upozornenia. */
@@ -59,7 +101,10 @@ export function createRemoteBridge(deps: Dependencies) {
   function configure(): Promise<RemoteStatus | null> {
     const { remoteAccess, remotePort, remoteAddress } = getState().settings;
     return call("remote_configure", { enabled: remoteAccess, port: remotePort, address: remoteAddress })
-      .then((status) => { if (remoteAccess) publish(); else clearWatching(); return status; })
+      .then(async (status) => {
+        if (remoteAccess) { await ensurePushKeys(); publish(); } else clearWatching();
+        return status;
+      })
       .catch((e: unknown) => { clearWatching(); toast(errorText(e)); return null; });
   }
 
@@ -96,7 +141,22 @@ export function createRemoteBridge(deps: Dependencies) {
       const rt = runtimes.get(payload.id);
       if (rt) rt.remoteSized = true;
     });
+    await on("remote-create", payload => {
+      const p = getState().projects.find(x => x.id === payload.project);
+      // Opakovaná správa (znovupripojenie) nesmie vytvoriť druhú session.
+      if (!p || session(payload.id)) return;
+      deps.createSession(p, payload.provider, payload.id);
+    });
+    await on("remote-push-subscribe", sub => {
+      const push = getState().push;
+      if (!push) return;
+      push.subscriptions = upsertPushSubscription(push.subscriptions, sub);
+      deps.save();
+    });
+    await on("remote-push-unsubscribe", payload => forgetPush(payload.endpoint));
+    // Nový párovací kód odpojil mobily; notifikácie im už nepôjdu.
+    await on("remote-revoked", () => forgetPush());
   }
 
-  return { publish, clearWatching, configure, listen, isWatching: (id: string) => watching.has(id) };
+  return { publish, clearWatching, configure, listen, pushToPhones, isWatching: (id: string) => watching.has(id) };
 }

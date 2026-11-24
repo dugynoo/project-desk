@@ -56,6 +56,10 @@ pub enum RemoteEvent {
     /// Mobil zavrel terminál a veľkosť bola jeho: desktop si ju vezme späť.
     SizeReleased { id: String },
     Action { id: String, action: SessionAction },
+    /// Mobil chce novú session (`id` je UUID od mobilu).
+    Create { id: String, project: String, provider: &'static str },
+    PushSubscribe { endpoint: String, p256dh: String, auth: String },
+    PushUnsubscribe { endpoint: String },
 }
 
 /// Akcia nad session, ktorú vykoná desktop (životný cyklus sessions žije vo webview).
@@ -617,6 +621,24 @@ impl Conn {
             }
             ClientMsg::Start { id } => {
                 (self.s.events)(RemoteEvent::Action { id, action: SessionAction::Start });
+                true
+            }
+            ClientMsg::Create { id, project, provider } => {
+                if uuid::Uuid::parse_str(&id).is_err() || project.is_empty() || project.len() > 200 {
+                    return self.error(&id, "remote.createFailed".into()).await;
+                }
+                (self.s.events)(RemoteEvent::Create { id, project, provider: provider.as_str() });
+                true
+            }
+            ClientMsg::PushSubscribe { endpoint, p256dh, auth } => {
+                if !super::protocol::push_subscription_valid(&endpoint, &p256dh, &auth) {
+                    return self.send(ServerMsg::Error { id: None, code: "remote.pushUnavailable".into() }).await;
+                }
+                (self.s.events)(RemoteEvent::PushSubscribe { endpoint, p256dh, auth });
+                true
+            }
+            ClientMsg::PushUnsubscribe { endpoint } => {
+                (self.s.events)(RemoteEvent::PushUnsubscribe { endpoint });
                 true
             }
         }

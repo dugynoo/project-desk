@@ -54,15 +54,36 @@ pub struct ChatItem {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Možnosti otázky agenta (AskUserQuestion), na ktorú mobil odpovie ťuknutím.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
 }
+
+/// Claude Code ukáže najviac toľko možností a za nimi vlastné („Type something“).
+const MAX_OPTIONS: usize = 9;
 
 impl ChatItem {
     fn new(role: Role, text: &str) -> Self {
-        ChatItem { role, text: clip(text, MAX_TEXT), name: None }
+        ChatItem { role, text: clip(text, MAX_TEXT), name: None, options: None }
     }
 
     fn tool(name: &str, input: &str) -> Self {
-        ChatItem { role: Role::Tool, text: clip(&one_line(input), MAX_TOOL), name: Some(name.to_owned()) }
+        ChatItem { role: Role::Tool, text: clip(&one_line(input), MAX_TOOL), name: Some(name.to_owned()), options: None }
+    }
+
+    /// Otázka s možnosťami. Ťuknutie vie odpovedať len na jednu otázku s jednou voľbou;
+    /// viac otázok alebo viac volieb naraz ostáva na terminál.
+    fn question(input: &Value) -> Self {
+        let questions = input["questions"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let text = questions.iter().filter_map(|q| q["question"].as_str()).collect::<Vec<_>>().join("\n");
+        let options = match questions {
+            [q] if q["multiSelect"].as_bool() != Some(true) => q["options"]
+                .as_array()
+                .and_then(|o| o.iter().map(|o| o["label"].as_str().map(|l| clip(l, MAX_TOOL))).collect::<Option<Vec<_>>>())
+                .filter(|o| !o.is_empty() && o.len() <= MAX_OPTIONS),
+            _ => None,
+        };
+        ChatItem { role: Role::Tool, text: clip(&text, MAX_TEXT), name: Some("AskUserQuestion".into()), options }
     }
 }
 
@@ -241,6 +262,7 @@ fn claude_items(v: &Value) -> Vec<ChatItem> {
             .flatten()
             .filter_map(|b| match b["type"].as_str() {
                 Some("text") => b["text"].as_str().filter(|t| !t.trim().is_empty()).map(|t| ChatItem::new(Role::Assistant, t)),
+                Some("tool_use") if b["name"] == "AskUserQuestion" => Some(ChatItem::question(&b["input"])),
                 Some("tool_use") => Some(ChatItem::tool(b["name"].as_str().unwrap_or("tool"), &tool_summary(&b["input"]))),
                 _ => None,
             })
@@ -381,9 +403,27 @@ mod tests {
     #[test]
     fn claude_tool_use_is_summarized() {
         let a = claude(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"npm\n test","description":"d"}}]}}"#);
-        assert_eq!(a, vec![ChatItem { role: Role::Tool, text: "npm test".into(), name: Some("Bash".into()) }]);
+        assert_eq!(a, vec![ChatItem { role: Role::Tool, text: "npm test".into(), name: Some("Bash".into()), options: None }]);
         let r = claude(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/a/b.rs"}}]}}"#);
         assert_eq!(r[0].text, "/a/b.rs");
+    }
+
+    #[test]
+    fn claude_question_offers_options_only_for_one_single_choice_question() {
+        let one = claude(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Pick a color","header":"Color","multiSelect":false,"options":[{"label":"Red","description":"r"},{"label":"Green","description":"g"}]}]}}]}}"#);
+        assert_eq!(one, vec![ChatItem {
+            role: Role::Tool,
+            text: "Pick a color".into(),
+            name: Some("AskUserQuestion".into()),
+            options: Some(vec!["Red".into(), "Green".into()]),
+        }]);
+        let multi = claude(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Which?","multiSelect":true,"options":[{"label":"A"},{"label":"B"}]}]}}]}}"#);
+        assert_eq!((multi[0].text.as_str(), multi[0].options.clone()), ("Which?", None));
+        let two = claude(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"A?","options":[{"label":"x"}]},{"question":"B?","options":[{"label":"y"}]}]}}]}}"#);
+        assert_eq!((two[0].text.as_str(), two[0].options.clone()), ("A?\nB?", None));
+        let json = serde_json::to_string(&one[0]).unwrap();
+        assert!(json.contains(r#""options":["Red","Green"]"#), "{json}");
+        assert!(!serde_json::to_string(&ChatItem::new(Role::User, "x")).unwrap().contains("options"));
     }
 
     #[test]
@@ -410,7 +450,7 @@ mod tests {
         // Ten istý text ako response_item by bol duplikát.
         assert!(codex(r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#).is_empty());
         let shell = codex(r#"{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"cargo test\"]}"}}"#);
-        assert_eq!(shell, vec![ChatItem { role: Role::Tool, text: "cargo test".into(), name: Some("shell".into()) }]);
+        assert_eq!(shell, vec![ChatItem { role: Role::Tool, text: "cargo test".into(), name: Some("shell".into()), options: None }]);
         let patch = codex(r#"{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: src/a.rs\n@@\n-x\n+y\n*** Add File: b.md\n*** End Patch"}}"#);
         assert_eq!(patch[0].text, "src/a.rs, b.md");
         assert!(codex(r#"{"type":"event_msg","payload":{"type":"token_count"}}"#).is_empty());

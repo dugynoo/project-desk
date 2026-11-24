@@ -7,6 +7,8 @@ export interface ChatItem {
   text: string;
   /** Názov nástroja pri `role: "tool"`. */
   name?: string;
+  /** Možnosti otázky agenta; mobil na ňu odpovie ťuknutím. */
+  options?: string[];
 }
 
 /** Subprotokol WebSocketu; druhý záznam je `auth.<token>`. */
@@ -21,7 +23,10 @@ export type ClientMsg =
   | { type: "start"; id: string }
   | { type: "chatOpen"; id: string }
   | { type: "chatClose"; id: string }
-  | { type: "image"; id: string; data: string };
+  | { type: "image"; id: string; data: string }
+  | { type: "create"; id: string; project: string; provider: "claude" | "codex" }
+  | { type: "pushSubscribe"; endpoint: string; p256dh: string; auth: string }
+  | { type: "pushUnsubscribe"; endpoint: string };
 
 export type ServerMsg =
   | { type: "snapshot"; snapshot: RemoteSnapshot }
@@ -92,7 +97,23 @@ export function parseServerMsg(raw: string): ServerMsg | null {
 function isChatItem(v: unknown): v is ChatItem {
   if (typeof v !== "object" || v === null) return false;
   const o = v as Record<string, unknown>;
-  return (o.role === "user" || o.role === "assistant" || o.role === "tool") && isStr(o.text) && (o.name === undefined || isStr(o.name));
+  return (o.role === "user" || o.role === "assistant" || o.role === "tool") && isStr(o.text) && (o.name === undefined || isStr(o.name))
+    && (o.options === undefined || (Array.isArray(o.options) && o.options.every(isStr)));
+}
+
+/** Klávesy, ktoré v Claude Code vyberú `index`-tú možnosť otázky (kurzor začína na prvej). */
+export function optionKeys(index: number): string[] {
+  return [...Array<string>(Math.max(0, index)).fill("\x1b[B"), "\r"];
+}
+
+/** Token z vloženého párovacieho odkazu (`…/remote.html#t=…`) alebo samotný token. */
+export function tokenFromPairing(text: string): string | null {
+  const value = text.trim();
+  const m = /#t=([^\s&]+)/.exec(value);
+  if (m) {
+    try { return decodeURIComponent(m[1]!); } catch { return null; }
+  }
+  return /^[\w-]{16,}$/.test(value) ? value : null;
 }
 
 /** 1000 × 2^attempt ms, najviac 10 000. */

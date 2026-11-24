@@ -129,6 +129,12 @@ const remote = createRemoteBridge({
   getState: () => state, runtimes, statusOf, toast, save,
   canPause: s => canPause(s), pauseSession: (s, confirm) => pauseSession(s, confirm), start: (s, focus) => start(s, focus),
   markSessionRead: id => markSessionRead(id), renderSidebar: () => renderSidebar(),
+  createSession: (p, provider, id) => {
+    const s = addSession(p, provider, id);
+    save();
+    renderSidebar();
+    void start(s, false);
+  },
 });
 
 const agentMonitor = createAgentMonitor({
@@ -166,6 +172,11 @@ function setStatus(id: string, next: Status, silent = false) {
   if (!silent && ATTENTION.has(next) && !isWatched(id)) {
     unread.add(id);
     notify(id, next);
+    // Mobil zabzučí, len keď pri počítači nesedíš (okno nemá fokus).
+    if (!windowFocused && s) {
+      const p = project(s.projectId);
+      void remote.pushToPhones({ title: `${statusLabel(next)} · ${s.title}`, body: `${p?.name ?? ""} · ${PROVIDER_LABEL[s.provider]}`, id }, next === "needs-you");
+    }
     // macOS: ikona v Docku raz poskočí, keď okno nemá fokus.
     if (next === "needs-you" && !windowFocused && info.platform === "macos") {
       void getCurrentWindow().requestUserAttention(UserAttentionType.Informational).catch(() => {});
@@ -385,11 +396,11 @@ function select(id: string, focus = true) {
   if (focus) runtimes.get(id)!.term.focus();
 }
 
-function createSession(p: Project, provider: Provider) {
+function addSession(p: Project, provider: Provider, id: string = crypto.randomUUID()): Session {
   const n = sessionsOf(state, p.id).filter((s) => s.provider === provider).length + 1;
   const now = Date.now();
   const s: Session = {
-    id: crypto.randomUUID(),
+    id,
     projectId: p.id,
     provider,
     background: provider === "claude" && state.settings.claudeBackground && info.platform === "windows",
@@ -399,6 +410,11 @@ function createSession(p: Project, provider: Provider) {
   };
   state.sessions.push(s);
   p.collapsed = false;
+  return s;
+}
+
+function createSession(p: Project, provider: Provider) {
+  const s = addSession(p, provider);
   // Terminál sa spustí hneď a názov sa zatiaľ dá prepísať priamo v zozname.
   sidebar.startRename(s, false);
   select(s.id);

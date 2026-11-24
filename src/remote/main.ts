@@ -6,8 +6,9 @@ import { FitAddon } from "@xterm/addon-fit";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { errorText, setLang, t, type Key } from "../i18n.ts";
 import { pasteSequence, type RemoteSnapshot } from "../model.ts";
-import { PROTOCOL, REMOTE_KEYS, closeAction, parseServerMsg, reconnectDelay, type ChatItem, type ClientMsg, type ServerMsg } from "./protocol.ts";
+import { PROTOCOL, REMOTE_KEYS, closeAction, optionKeys, parseServerMsg, reconnectDelay, tokenFromPairing, type ChatItem, type ClientMsg, type ServerMsg } from "./protocol.ts";
 import { parseMarkdown, type Block, type Inline } from "./markdown.ts";
+import { b64url, fromB64url } from "../web-push.ts";
 
 type RemoteSession = RemoteSnapshot["sessions"][number];
 
@@ -48,6 +49,25 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: s
   return e;
 }
 
+/** Session, ktorú treba otvoriť, keď príde v snímku (klik na notifikáciu, nová session z mobilu). */
+let pendingOpen: string | null = null;
+
+// Klik na notifikáciu otvorí stránku s `#s=<id>`.
+{
+  const m = /^#s=(.+)$/.exec(location.hash);
+  if (m) {
+    try { pendingOpen = decodeURIComponent(m[1]!); } catch { /* poškodený odkaz */ }
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+function openPending() {
+  if (!pendingOpen || !snapshot?.sessions.some((s) => s.id === pendingOpen)) return;
+  const id = pendingOpen;
+  pendingOpen = null;
+  openSession(id);
+}
+
 // Token z odkazu `#t=...`; uloží sa a z URL zmizne.
 function loadToken(): string | null {
   const m = /^#t=(.+)$/.exec(location.hash);
@@ -59,6 +79,33 @@ function loadToken(): string | null {
     return token;
   }
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+/**
+ * Párovanie bez QR: aplikácia pridaná na plochu iPhonu má vlastné úložisko, token jej treba vložiť
+ * ako odkaz.
+ */
+function pairScreen(text: string): HTMLElement {
+  const wrap = h("div", "pair");
+  wrap.append(h("p", "", text));
+  const form = h("form", "pair-form");
+  const input = h("input", "text");
+  input.type = "url";
+  input.placeholder = t("remote.pasteLabel");
+  input.setAttribute("aria-label", t("remote.pasteLabel"));
+  input.autocomplete = "off";
+  const ok = h("button", "send", t("remote.pasteConnect"));
+  ok.type = "submit";
+  form.append(input, ok);
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const token = tokenFromPairing(input.value);
+    if (!token) return;
+    location.replace(`${location.pathname}#t=${encodeURIComponent(token)}`);
+    location.reload();
+  };
+  wrap.append(form);
+  return wrap;
 }
 
 function send(msg: ClientMsg) {
@@ -84,6 +131,7 @@ function connect(token: string) {
     attempt = 0;
     failures = 0;
     renderBanner();
+    void syncPush();
     // po znovupripojení znova odoberáme otvorenú session (skrytá stránka až po návrate)
     if (openId && !document.hidden) attach();
   };
@@ -130,7 +178,7 @@ function showRepair() {
   openId = null;
   listSig = null;
   document.querySelector(".banner")?.remove();
-  app.replaceChildren(h("p", "pair", t("remote.repair")));
+  app.replaceChildren(pairScreen(t("remote.repair")));
 }
 
 function handle(msg: ServerMsg) {
@@ -142,6 +190,8 @@ function handle(msg: ServerMsg) {
       setLang(snapshot.language);
       document.documentElement.lang = snapshot.language;
       render();
+      openPending();
+      if (snapshot.pushKey !== pushKeySeen) { pushKeySeen = snapshot.pushKey; void syncPush(); }
       break;
     case "history":
       if (msg.id === openId && term) {
@@ -277,13 +327,18 @@ function renderList() {
   groupDots.clear();
   listSig = sig;
   const root = listEl;
-  root.replaceChildren(h("h1", "list-title", t("remote.title")));
-  if (!snapshot || !snapshot.sessions.length) {
+  const top = h("div", "list-head");
+  bellEl = h("button", "bell");
+  bellEl.type = "button";
+  bellEl.onclick = () => void togglePush();
+  top.append(h("h1", "list-title", t("remote.title")), bellEl);
+  root.replaceChildren(top);
+  renderBell();
+  if (!snapshot || !snapshot.projects.length) {
     root.append(h("p", "empty", t("remote.empty")));
   } else {
     for (const p of snapshot.projects) {
       const sessions = snapshot.sessions.filter((s) => s.projectId === p.id);
-      if (!sessions.length) continue;
       const isCollapsed = collapsed.has(p.id);
       const head = h("h2", "project");
       const toggle = h("button", "project-toggle");
@@ -298,7 +353,20 @@ function renderList() {
         groupDots.set(p.id, dot);
       }
       toggle.onclick = () => toggleProject(p.id);
-      head.append(toggle);
+      const add = h("button", "project-add", "+");
+      add.type = "button";
+      add.title = t("remote.newSession");
+      add.setAttribute("aria-label", `${t("remote.newSession")}: ${p.name}`);
+      add.onclick = () => showSheet(`${t("remote.newSession")} · ${p.name}`, (["claude", "codex"] as const).map((provider) => ({
+        icon: "+",
+        label: provider === "claude" ? "Claude" : "Codex",
+        run: () => {
+          const id = crypto.randomUUID();
+          pendingOpen = id;
+          send({ type: "create", id, project: p.id, provider });
+        },
+      })));
+      head.append(toggle, add);
       root.append(head);
       if (isCollapsed) continue;
       for (const s of sessions) {
@@ -349,10 +417,15 @@ function openSheet(id: string) {
   const actions = s ? sessionActions(s) : [];
   closeSheet();
   if (!s || !actions.length) return;
+  showSheet(s.title, actions);
+}
+
+function showSheet(title: string, actions: { icon: string; label: string; run: () => void }[]) {
+  closeSheet();
   const backdrop = h("div", "sheet-backdrop");
   const sheet = h("div", "sheet");
   sheet.setAttribute("role", "dialog");
-  sheet.append(h("div", "sheet-title", s.title));
+  sheet.append(h("div", "sheet-title", title));
   for (const a of actions) {
     const b = h("button", "sheet-item", `${a.icon}  ${a.label}`);
     b.type = "button";
@@ -413,8 +486,9 @@ function updateHeader(s: RemoteSession) {
   }
   // Konverzácia sa zmenila tak, že chat už nemá zdroj: zostane terminál.
   if (!s.chat && mode === "chat") setMode("terminal");
+  const asking = refreshQuestions(s);
   const notice = paneEl.querySelector<HTMLElement>(".notice");
-  if (notice) notice.hidden = !(mode === "chat" && statusOf(s) === "needs-you");
+  if (notice) notice.hidden = asking || !(mode === "chat" && statusOf(s) === "needs-you");
   paneEl.querySelector(".head-actions")?.replaceChildren(...sessionActions(s).map((a) => {
     const b = h("button", "head-action", a.icon);
     b.type = "button";
@@ -668,6 +742,32 @@ function appendChat(items: ChatItem[], reset: boolean) {
   for (const item of items) el.append(safeChatItem(item));
   while (el.childElementCount > CHAT_DOM_LIMIT) el.firstElementChild?.remove();
   if (reset || atBottom) el.scrollTop = el.scrollHeight;
+  const s = snapshot?.sessions.find((x) => x.id === openId);
+  if (s) updateHeader(s);
+}
+
+/**
+ * Na otázku sa dá odpovedať, len kým je posledná v chate a agent čaká. Vráti, či je taká otázka.
+ */
+function refreshQuestions(s: RemoteSession): boolean {
+  const last = chatEl?.lastElementChild;
+  let asking = false;
+  for (const card of chatEl?.querySelectorAll<HTMLElement>(".question") ?? []) {
+    const active = card === last && statusOf(s) === "needs-you" && !card.dataset.answered;
+    if (active) asking = true;
+    for (const b of card.querySelectorAll("button")) b.disabled = !active;
+  }
+  return mode === "chat" && asking;
+}
+
+/** Ťuknutie na možnosť: v termináli šípky dole na ňu a Enter, s pauzami, aby ich agent spracoval po jednom. */
+function answer(card: HTMLElement, index: number, button: HTMLButtonElement) {
+  const id = openId;
+  if (!id || card.dataset.answered) return;
+  card.dataset.answered = "1";
+  button.classList.add("chosen");
+  for (const b of card.querySelectorAll("button")) b.disabled = true;
+  optionKeys(index).forEach((data, i) => setTimeout(() => send({ type: "input", id, data }), i * 150));
 }
 
 /** Správa, ktorú sa nepodarí vykresliť, ostane ako obyčajný text, nezastaví zvyšok chatu. */
@@ -686,6 +786,20 @@ function chatItem(item: ChatItem): HTMLElement {
     const row = h("div", "msg user");
     row.append(h("div", "bubble", item.text));
     return row;
+  }
+  if (item.role === "tool" && item.options) {
+    const card = h("div", "msg question");
+    card.append(h("div", "question-text", item.text));
+    const options = h("div", "question-options");
+    item.options.forEach((label, i) => {
+      const b = h("button", "option", label);
+      b.type = "button";
+      b.disabled = true;
+      b.onclick = () => answer(card, i, b);
+      options.append(b);
+    });
+    card.append(options);
+    return card;
   }
   if (item.role === "tool") {
     const row = h("div", "msg tool");
@@ -759,6 +873,122 @@ function inlineNode(p: Inline): Node {
   }
 }
 
+// Upozornenia: service worker zobrazí správu, ktorú desktop pošle cez push službu prehliadača.
+let bellEl: HTMLButtonElement | null = null;
+let pushOn = false;
+let pushBusy = false;
+let pushKeySeen: string | undefined;
+const pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+let registration: Promise<ServiceWorkerRegistration> | null = null;
+function worker(): Promise<ServiceWorkerRegistration> {
+  registration ??= navigator.serviceWorker.register("/remote-sw.js").then(() => navigator.serviceWorker.ready);
+  return registration;
+}
+
+function renderBell() {
+  if (!bellEl) return;
+  bellEl.hidden = !snapshot?.pushKey;
+  bellEl.textContent = pushOn ? "🔔" : "🔕";
+  bellEl.disabled = pushBusy;
+  const label = t(pushOn ? "remote.pushDisable" : "remote.pushEnable");
+  bellEl.title = label;
+  bellEl.setAttribute("aria-label", label);
+  bellEl.setAttribute("aria-pressed", String(pushOn));
+}
+
+function sendSubscription(sub: PushSubscription) {
+  const json = sub.toJSON();
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return;
+  send({ type: "pushSubscribe", endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth });
+}
+
+/** Odber patrí kľúču desktopu; po pripojení ho desktop dostane znova (napr. po novom spárovaní). */
+async function syncPush() {
+  if (!pushSupported || !snapshot?.pushKey || Notification.permission !== "granted") {
+    pushOn = false;
+    renderBell();
+    return;
+  }
+  try {
+    const reg = await worker();
+    let sub = await reg.pushManager.getSubscription();
+    const key = sub?.options.applicationServerKey;
+    // Desktop má nový kľúč (napr. obnovený stav): starý odber by push služba odmietla.
+    if (sub && key && b64url(new Uint8Array(key)) !== snapshot.pushKey) {
+      await sub.unsubscribe();
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64url(snapshot.pushKey) });
+    }
+    pushOn = !!sub;
+    if (sub) sendSubscription(sub);
+  } catch {
+    pushOn = false;
+  }
+  renderBell();
+}
+
+async function togglePush() {
+  const key = snapshot?.pushKey;
+  if (!key || pushBusy) return;
+  if (!pushSupported) {
+    if (appleMobile) showInstallHint();
+    else showToast(t("remote.pushUnsupported"));
+    return;
+  }
+  pushBusy = true;
+  renderBell();
+  try {
+    const reg = await worker();
+    if (pushOn) {
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        send({ type: "pushUnsubscribe", endpoint: sub.endpoint });
+        await sub.unsubscribe();
+      }
+      pushOn = false;
+      showToast(t("remote.pushDisabled"));
+    } else if ((await Notification.requestPermission()) !== "granted") {
+      showToast(t("remote.pushDenied"));
+    } else {
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64url(key) });
+      sendSubscription(sub);
+      pushOn = true;
+      showToast(t("remote.pushEnabled"));
+    }
+  } catch {
+    showToast(errorText("remote.pushUnavailable"));
+  } finally {
+    pushBusy = false;
+    renderBell();
+  }
+}
+
+/** Safari na iPhone ukáže upozornenia len aplikácii z plochy, ktorá má vlastné úložisko (a teda token). */
+function showInstallHint() {
+  showSheet(t("remote.pushInstall"), [{
+    icon: "⧉",
+    label: t("remote.copyLink"),
+    run: () => {
+      let token: string | null = null;
+      try { token = localStorage.getItem(TOKEN_KEY); } catch { /* súkromný režim */ }
+      if (!token) return;
+      void navigator.clipboard.writeText(`${location.origin}${location.pathname}#t=${encodeURIComponent(token)}`)
+        .then(() => showToast(t("remote.linkCopied")), () => {});
+    },
+  }]);
+}
+
+if (pushSupported) {
+  // Klik na notifikáciu pri otvorenej stránke: service worker povie, ktorú session otvoriť.
+  navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
+    const data: unknown = e.data;
+    if (typeof data === "object" && data !== null && (data as { type?: unknown }).type === "open") {
+      const id = (data as { id?: unknown }).id;
+      if (typeof id === "string") { pendingOpen = id; openPending(); }
+    }
+  });
+}
+
 // Skrytá stránka (zamknutý telefón, iná appka) sessions nesleduje, inak by na desktope stlmila upozornenia.
 document.addEventListener("visibilitychange", () => {
   if (!openId) return;
@@ -772,7 +1002,7 @@ document.addEventListener("visibilitychange", () => {
 
 const token = loadToken();
 if (!token) {
-  app.append(h("p", "pair", t("remote.pairFirst")));
+  app.append(pairScreen(t("remote.pairFirst")));
 } else {
   paneEl.append(h("p", "pane-empty", t("remote.pick")));
   renderList();

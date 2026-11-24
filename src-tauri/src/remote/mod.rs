@@ -5,6 +5,7 @@ pub mod config;
 pub mod history;
 pub mod hub;
 pub mod protocol;
+pub mod push;
 pub mod server;
 pub mod size;
 pub mod tailscale;
@@ -105,6 +106,15 @@ pub fn events(app: AppHandle) -> server::Events {
             RemoteEvent::Action { id, action } => {
                 app.emit("remote-action", serde_json::json!({ "id": id, "action": action.as_str() }))
             }
+            RemoteEvent::Create { id, project, provider } => {
+                app.emit("remote-create", serde_json::json!({ "id": id, "project": project, "provider": provider }))
+            }
+            RemoteEvent::PushSubscribe { endpoint, p256dh, auth } => {
+                app.emit("remote-push-subscribe", serde_json::json!({ "endpoint": endpoint, "p256dh": p256dh, "auth": auth }))
+            }
+            RemoteEvent::PushUnsubscribe { endpoint } => {
+                app.emit("remote-push-unsubscribe", serde_json::json!({ "endpoint": endpoint }))
+            }
         };
     })
 }
@@ -114,10 +124,14 @@ pub fn assets(app: AppHandle) -> server::Assets {
     Arc::new(move |path: &str| asset(&app, path))
 }
 
+/// Súbory mobilnej stránky mimo `assets/`: stránka, service worker pre notifikácie, manifest a ikona.
+#[cfg(not(debug_assertions))]
+const PAGE_FILES: [&str; 4] = ["remote.html", "remote-sw.js", "remote.webmanifest", "remote-icon.png"];
+
 #[cfg(not(debug_assertions))]
 fn asset(app: &AppHandle, path: &str) -> Option<(Vec<u8>, String)> {
     let path = path.split_once('?').map_or(path, |(p, _)| p);
-    if path != "remote.html" && !path.starts_with("assets/") {
+    if !PAGE_FILES.contains(&path) && !path.starts_with("assets/") {
         return None;
     }
     let asset = app.asset_resolver().get(path.to_owned())?;
@@ -125,7 +139,8 @@ fn asset(app: &AppHandle, path: &str) -> Option<(Vec<u8>, String)> {
     if path != "remote.html" && asset.mime_type.starts_with("text/html") {
         return None;
     }
-    Some((asset.bytes, asset.mime_type))
+    let mime = if path.ends_with(".webmanifest") { "application/manifest+json".to_owned() } else { asset.mime_type };
+    Some((asset.bytes, mime))
 }
 
 /// `npm run app:dev`: stránku a moduly servuje Vite na pevnom porte.
@@ -141,8 +156,11 @@ fn asset(_app: &AppHandle, path: &str) -> Option<(Vec<u8>, String)> {
 /// mobilná stránka naozaj načítava. Vite by inak servoval celé repozitár.
 #[cfg_attr(not(debug_assertions), allow(dead_code))]
 fn dev_path_allowed(key: &str) -> bool {
-    const FILES: [&str; 6] =
-        ["remote.html", "@vite/client", "@vite/env", "src/i18n.ts", "src/model.ts", "node_modules/@xterm/xterm/css/xterm.css"];
+    const FILES: [&str; 10] = [
+        "remote.html", "@vite/client", "@vite/env", "src/i18n.ts", "src/model.ts", "src/web-push.ts",
+        "node_modules/@xterm/xterm/css/xterm.css",
+        "remote-sw.js", "remote.webmanifest", "remote-icon.png",
+    ];
     const DIRS: [&str; 3] = ["src/remote/", "node_modules/.vite/deps/", "node_modules/vite/dist/client/"];
     // Query kľúče, ktoré pridáva samotný Vite; `?raw`, `?url` a pod. by menili, čo sa vráti.
     const QUERY: [&str; 4] = ["v", "t", "import", "direct"];
@@ -199,6 +217,8 @@ mod tests {
             "src/i18n.ts?t=1700000000",
             "node_modules/.vite/deps/@xterm_xterm.js?v=1a2b3c4d",
             "node_modules/@xterm/xterm/css/xterm.css?import",
+            "remote-sw.js",
+            "remote.webmanifest",
         ] {
             assert!(dev_path_allowed(ok), "{ok}");
         }

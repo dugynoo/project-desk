@@ -300,6 +300,11 @@ async fn remote_new_token(app: tauri::AppHandle, state: State<'_, AppState>) -> 
         .map_err(|e| format!("remote.startFailed: {e}"))?;
     control.token = Some(token);
     state.remote.revoke();
+    // Odpojené mobily už nemajú dostávať ani notifikácie.
+    {
+        use tauri::Emitter;
+        let _ = app.emit("remote-revoked", ());
+    }
     if let Some(old) = control.server.take() {
         old.stop_and_wait().await;
         start_remote(&app, &state, &mut control).await?;
@@ -316,6 +321,12 @@ fn remote_publish(
     // Zdroje pred snímkom: mobil po novom snímku hneď otvára chat.
     state.remote.set_chat_sources(chat_sources);
     state.remote.publish_snapshot(snapshot);
+}
+
+/// Web Push na spárovaný mobil; obsah zašifroval desktop, Rust ho len pošle push službe.
+#[tauri::command]
+async fn remote_push(endpoint: String, authorization: String, body: String, urgent: bool) -> Result<u16, String> {
+    remote::push::send(&endpoint, &authorization, &body, urgent).await
 }
 
 #[tauri::command]
@@ -576,6 +587,7 @@ pub fn run() {
             remote_status,
             remote_new_token,
             remote_publish,
+            remote_push,
             clipboard::copy_text
         ])
         .build(tauri::generate_context!())

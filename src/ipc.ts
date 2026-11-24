@@ -70,6 +70,8 @@ export interface Commands {
   remote_status: { args: None; result: RemoteStatus };
   remote_new_token: { args: None; result: RemoteStatus };
   remote_publish: { args: { snapshot: unknown; chatSources: Record<string, ChatSource> }; result: void };
+  /** HTTP status from the push service; 404/410 mean the subscription is gone. */
+  remote_push: { args: { endpoint: string; authorization: string; body: string; urgent: boolean }; result: number };
   copy_text: { args: { text: string }; result: void };
 }
 
@@ -93,6 +95,10 @@ export interface Events {
   "remote-action": { id: string; action: string };
   "remote-size": { id: string };
   "remote-size-released": { id: string };
+  "remote-create": { id: string; project: string; provider: "claude" | "codex" };
+  "remote-push-subscribe": { endpoint: string; p256dh: string; auth: string };
+  "remote-push-unsubscribe": { endpoint: string };
+  "remote-revoked": null;
 }
 
 export function on<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void): Promise<UnlistenFn> {

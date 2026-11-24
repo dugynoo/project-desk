@@ -1,4 +1,5 @@
 // Čistá doménová logika bez DOM a Tauri, aby sa dala testovať v Node.
+import type { PushSubscriptionKeys, VapidKeys } from "./web-push.ts";
 
 export type Provider = "claude" | "codex" | "antigravity" | "shell";
 export const PROVIDERS: Provider[] = ["claude", "codex", "antigravity", "shell"];
@@ -148,6 +149,8 @@ export interface PersistedState {
   closedSessions: Session[];
   settings: Settings;
   settingsRev: number;
+  /** Notifikácie na spárované mobily: kľúč desktopu a odbery ich prehliadačov. */
+  push?: PushState;
   ui: { sidebarWidth: number; sidebarAutoHide?: boolean; grid: boolean; paneLayout: PaneLayout; paneSlots: (string | null)[]; paneSizes: Record<string, number[]>; pinnedSessionIds: string[]; activeSessionId?: string };
 }
 
@@ -290,6 +293,12 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
   }
   state.notifications.sort((a, b) => b.at - a.at);
   state.notifications = state.notifications.slice(0, ATTENTION_HISTORY_LIMIT);
+  const push = data.push;
+  if (isObj(push) && isObj(push.vapid) && str(push.vapid.publicKey) && isObj(push.vapid.privateJwk)) {
+    const subscriptions = (Array.isArray(push.subscriptions) ? push.subscriptions : []).filter(isPushSubscription).slice(0, MAX_PUSH_SUBSCRIPTIONS)
+      .map(s => ({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }));
+    state.push = { vapid: { publicKey: push.vapid.publicKey, privateJwk: push.vapid.privateJwk as JsonWebKey }, subscriptions };
+  }
   if (isObj(data.settings)) {
     for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
       if (key === "shortcuts") continue;
@@ -459,8 +468,27 @@ export function agentCommand(
 }
 
 /** Zjednodušený stav pre mobil: bez konverzačných dát. */
+export interface PushState {
+  vapid: VapidKeys;
+  subscriptions: PushSubscriptionKeys[];
+}
+
+/** Viac mobilov (a prehliadačov) naraz; najstarší odber vypadne. */
+export const MAX_PUSH_SUBSCRIPTIONS = 10;
+
+export function isPushSubscription(v: unknown): v is PushSubscriptionKeys {
+  return isObj(v) && str(v.endpoint) && v.endpoint.startsWith("https://") && str(v.p256dh) && str(v.auth);
+}
+
+/** Pridá alebo obnoví odber (podľa `endpoint`) na koniec zoznamu. */
+export function upsertPushSubscription(list: PushSubscriptionKeys[], sub: PushSubscriptionKeys): PushSubscriptionKeys[] {
+  return [...list.filter(s => s.endpoint !== sub.endpoint), sub].slice(-MAX_PUSH_SUBSCRIPTIONS);
+}
+
 export interface RemoteSnapshot {
   language: string;
+  /** Verejný VAPID kľúč desktopu pre odber notifikácií na mobile. */
+  pushKey?: string;
   projects: { id: string; name: string }[];
   /**
    * `canPause`: mobil môže agenta pozastaviť (ako ⏸ na desktope); zastavenú session môže spustiť znova.

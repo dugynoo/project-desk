@@ -1,0 +1,10 @@
+{
+  "name": "Project Desk",
+  "short_name": "Project Desk",
+  "start_url": "remote.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111317",
+  "theme_color": "#111317",
+  "icons": [{ "src": "remote-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+}
