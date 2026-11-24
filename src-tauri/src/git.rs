@@ -99,7 +99,14 @@ fn snapshot(path: &Path) -> Result<String, String> {
     let temp = std::env::temp_dir().join(format!("desk-index-{}", uuid::Uuid::new_v4()));
     let result = (|| {
         // The copied stat cache lets `add` skip unchanged files.
-        if index.is_file() { std::fs::copy(&index, &temp).map_err(|e| format!("git.failed: {e}"))?; }
+        // The copy keeps the index mtime: git treats files changed in the same second as the index
+        // as "racy" and rehashes them. A newer mtime would hide same-size edits made right after it.
+        if index.is_file() {
+            let failed = |e: std::io::Error| format!("git.failed: {e}");
+            std::fs::copy(&index, &temp).map_err(failed)?;
+            let modified = std::fs::metadata(&index).and_then(|m| m.modified()).map_err(failed)?;
+            std::fs::File::options().write(true).open(&temp).and_then(|f| f.set_modified(modified)).map_err(failed)?;
+        }
         let mut add = command(path);
         add.env("GIT_INDEX_FILE", &temp).args(["add", "--all", "--ignore-errors"]);
         run(add, LONG, 1 << 16)?;
