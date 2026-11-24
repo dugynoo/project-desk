@@ -5,7 +5,7 @@ import { writeClipboard } from "./clipboard.ts";
 import { call } from "./ipc.ts";
 import { popupMenu, type MenuItem } from "./dom.ts";
 import { errorText, type Key, t } from "./i18n.ts";
-import { fileOpenTarget, findFileRefs, linkEditorMode, relativePath, type EditorInfo, type PersistedState, type Session } from "./model.ts";
+import { fileOpenTarget, findFileRefs, hyperlinkTarget, linkEditorMode, relativePath, type EditorInfo, type PersistedState, type Session } from "./model.ts";
 import type { Runtime } from "./terminal-runtime.ts";
 import type { createDialogs } from "./dialogs.ts";
 
@@ -124,7 +124,10 @@ export function createFileLinks({ getState, platform, toast, confirmBox, editorV
       rt.host.title = t(key);
       rt.hoverLink = link;
     };
+    // Bumped on leave, so a file lookup that finishes after the pointer left is dropped.
+    let hoverSeq = 0;
     const leave = () => {
+      hoverSeq++;
       rt.host.title = "";
       rt.hoverLink = undefined;
     };
@@ -138,6 +141,26 @@ export function createFileLinks({ getState, platform, toast, confirmBox, editorV
         { hover: (_e, uri) => hover("link.urlHint", { url: uri }), leave },
       ),
     );
+    // OSC 8 hyperlinks (Codex, Claude Code): xterm's default handler asks via confirm() and calls
+    // window.open, which does nothing in the app. Treat them like the links found in the text.
+    rt.term.options.linkHandler = {
+      activate: (e, uri) => {
+        const target = hyperlinkTarget(uri);
+        if (!target || !wantsOpen(e)) return;
+        if ("url" in target) return openLink(target.url);
+        const p = project(s.projectId);
+        if (p) void resolveFile(p.path, target.path).then(file => { if (file) openFile(file, target.line); });
+      },
+      hover: (_e, uri) => {
+        const target = hyperlinkTarget(uri);
+        if (!target) return;
+        if ("url" in target) return hover("link.urlHint", { url: target.url });
+        const p = project(s.projectId);
+        const seq = hoverSeq;
+        if (p) void resolveFile(p.path, target.path).then(file => { if (file && seq === hoverSeq) hover("link.fileHint", { file, line: target.line }); });
+      },
+      leave,
+    };
     rt.term.registerLinkProvider({
       provideLinks(y, callback) {
         const p = project(s.projectId);

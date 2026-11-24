@@ -39,6 +39,7 @@ import {
   codexStatusAfter,
   codexPollEvents,
   findFileRefs,
+  hyperlinkTarget,
   formatTokens,
   moveProject,
   moveSession,
@@ -1283,4 +1284,15 @@ test("an active session ID without a session is dropped on load", () => {
   const raw = { projects: [{ id: "p", name: "P", path: "/p" }], sessions: [{ id: "a", projectId: "p", title: "a", provider: "shell" }] };
   assert.equal(parseState(JSON.stringify({ ...raw, ui: { activeSessionId: "gone" } })).state.ui.activeSessionId, undefined);
   assert.equal(parseState(JSON.stringify({ ...raw, ui: { activeSessionId: "a" } })).state.ui.activeSessionId, "a");
+});
+
+test("OSC 8 hyperlinks open web pages and local files only", () => {
+  assert.deepEqual(hyperlinkTarget("https://github.com/a/b/pull/1"), { url: "https://github.com/a/b/pull/1" });
+  assert.deepEqual(hyperlinkTarget("file:///Users/me/app/src/main.ts#L42"), { path: "/Users/me/app/src/main.ts", line: 42 });
+  assert.deepEqual(hyperlinkTarget("file://localhost/tmp/a%20b.txt"), { path: "/tmp/a b.txt" });
+  assert.deepEqual(hyperlinkTarget("file:///C:/work/x.rs"), { path: "C:/work/x.rs" });
+  assert.equal(hyperlinkTarget("file://otherhost/etc/passwd"), undefined);
+  assert.equal(hyperlinkTarget("javascript:alert(1)"), undefined);
+  assert.equal(hyperlinkTarget("vscode://file/x"), undefined);
+  assert.equal(hyperlinkTarget("not a url"), undefined);
 });

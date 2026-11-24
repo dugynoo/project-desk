@@ -809,6 +809,23 @@ function rootedRefs(text: string, root: string): FileRef[] {
 
 /** Kandidáti na cesty k súborom v riadku terminálu (napr. `src/main.ts:120`). Existenciu overí backend.
  *  S koreňom projektu rozpozná aj jeho absolútne cesty s medzerami. */
+/**
+ * Target of an OSC 8 hyperlink (Codex and Claude Code print links this way): a web page, or a local
+ * file from a `file://` URI with an optional `#L12` line. Other schemes are not opened.
+ */
+export function hyperlinkTarget(uri: string): { url: string } | { path: string; line?: number } | undefined {
+  let parsed: URL;
+  try { parsed = new URL(uri); } catch { return undefined; }
+  if (parsed.protocol === "http:" || parsed.protocol === "https:") return { url: uri };
+  if (parsed.protocol !== "file:" || (parsed.host && parsed.host !== "localhost")) return undefined;
+  let path: string;
+  try { path = decodeURIComponent(parsed.pathname); } catch { return undefined; }
+  if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+  if (!path) return undefined;
+  const line = /^#L(\d+)/.exec(parsed.hash)?.[1];
+  return line ? { path, line: Number(line) } : { path };
+}
+
 export function findFileRefs(text: string, root?: string): FileRef[] {
   const out = root ? rootedRefs(text, root) : [];
   const taken = out.map(r => [r.index, r.index + r.length]);
