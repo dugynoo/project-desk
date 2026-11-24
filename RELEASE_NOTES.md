@@ -1,1 +1,2 @@
-- Links that Codex and Claude Code print as clickable hyperlinks now open: web links in your browser and file links in the editor, with Ctrl+click or Cmd+click and the right-click menu.
+- Security fix for Windows: a file link pointing to a network share could make Project Desk connect to that server and expose your Windows sign-in hash when you only hovered over the link. Please update.
+- Links that Codex and Claude Code print as clickable hyperlinks open (from 0.19.1): web links in your browser and file links in the editor.
