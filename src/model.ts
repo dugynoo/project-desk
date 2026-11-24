@@ -820,8 +820,10 @@ export function hyperlinkTarget(uri: string): { url: string } | { path: string; 
   if (parsed.protocol !== "file:" || (parsed.host && parsed.host !== "localhost")) return undefined;
   let path: string;
   try { path = decodeURIComponent(parsed.pathname); } catch { return undefined; }
+  // `file:////host/share` and backslashes would reach a UNC path: on Windows even checking whether
+  // it exists connects to that server and sends the user's NTLM credentials.
+  if (!path || path.includes("\\") || path.startsWith("//")) return undefined;
   if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
-  if (!path) return undefined;
   const line = /^#L(\d+)/.exec(parsed.hash)?.[1];
   return line ? { path, line: Number(line) } : { path };
 }

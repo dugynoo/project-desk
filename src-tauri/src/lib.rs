@@ -398,20 +398,36 @@ async fn project_exists(path: String, existing: Vec<String>) -> Result<bool, Str
 /// Cesta z výstupu terminálu → existujúci súbor (relatívne k projektu alebo absolútne).
 #[tauri::command(async)]
 fn resolve_file(cwd: String, candidate: String) -> Option<String> {
-    if candidate.len() > 1024 {
+    if candidate.len() > 1024 || leaves_drive(&candidate) {
         return None;
     }
     let mut c = candidate.as_str();
     // Git diff píše `a/cesta` a `b/cesta`.
     for prefix in ["a/", "b/", "./"] {
         if let Some(rest) = c.strip_prefix(prefix) {
-            if Path::new(&cwd).join(rest).is_file() {
+            if !leaves_drive(rest) && Path::new(&cwd).join(rest).is_file() {
                 c = rest;
             }
         }
     }
     let p = Path::new(&cwd).join(c);
     p.is_file().then(|| p.to_string_lossy().into_owned())
+}
+
+/// Windows: a UNC or device path (`\\host\share`) replaces the project directory when joined, and
+/// even `is_file()` on it connects to that host and sends the user's NTLM credentials. Terminal
+/// output decides these candidates, so only drive and relative paths are resolved.
+fn leaves_drive(candidate: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        if let Some(Component::Prefix(p)) = Path::new(candidate).components().next() {
+            return !matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = candidate;
+    false
 }
 
 #[tauri::command]

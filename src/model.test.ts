@@ -1292,6 +1292,9 @@ test("OSC 8 hyperlinks open web pages and local files only", () => {
   assert.deepEqual(hyperlinkTarget("file://localhost/tmp/a%20b.txt"), { path: "/tmp/a b.txt" });
   assert.deepEqual(hyperlinkTarget("file:///C:/work/x.rs"), { path: "C:/work/x.rs" });
   assert.equal(hyperlinkTarget("file://otherhost/etc/passwd"), undefined);
+  assert.equal(hyperlinkTarget("file:////evil/share/x.txt"), undefined);
+  assert.equal(hyperlinkTarget("file:///%5C%5Cevil%5Cshare%5Cx.txt"), undefined);
+  assert.equal(hyperlinkTarget("file:///C:%5Cwork%5Cx.rs"), undefined);
   assert.equal(hyperlinkTarget("javascript:alert(1)"), undefined);
   assert.equal(hyperlinkTarget("vscode://file/x"), undefined);
   assert.equal(hyperlinkTarget("not a url"), undefined);
