@@ -1298,4 +1298,7 @@ test("OSC 8 hyperlinks open web pages and local files only", () => {
   assert.equal(hyperlinkTarget("javascript:alert(1)"), undefined);
   assert.equal(hyperlinkTarget("vscode://file/x"), undefined);
   assert.equal(hyperlinkTarget("not a url"), undefined);
+  assert.deepEqual(hyperlinkTarget("https://example.com/docs."), { url: "https://example.com/docs" });
+  assert.deepEqual(hyperlinkTarget("https://example.com/a?q=1),"), { url: "https://example.com/a?q=1)" });
+  assert.deepEqual(hyperlinkTarget("file:///tmp/x.ts#L7."), { path: "/tmp/x.ts", line: 7 });
 });

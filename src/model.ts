@@ -814,6 +814,8 @@ function rootedRefs(text: string, root: string): FileRef[] {
  * file from a `file://` URI with an optional `#L12` line. Other schemes are not opened.
  */
 export function hyperlinkTarget(uri: string): { url: string } | { path: string; line?: number } | undefined {
+  // Agents sometimes link a URL together with the sentence's closing punctuation.
+  uri = uri.replace(/[.,;:!?]+$/, "");
   let parsed: URL;
   try { parsed = new URL(uri); } catch { return undefined; }
   if (parsed.protocol === "http:" || parsed.protocol === "https:") return { url: uri };
