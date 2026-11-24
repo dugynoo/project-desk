@@ -1,4 +1,1 @@
-- The window reopens with its last size and position. On macOS it has no separate title bar: the traffic lights sit above the sidebar.
-- macOS menu bar: ⌘W closes the current session instead of the whole app, ⌘, opens Settings and ⌘F searches the terminal.
-- On macOS, Ctrl goes to the terminal: Ctrl+C interrupts, Ctrl+V pastes images into Claude Code and Ctrl+click opens links. Option+drag selects text in Codex and vim, and a new setting lets Option work as the Meta key.
-- On macOS, the Dock icon shows how many sessions are waiting for you, the terminal and built-in editor use SF Mono instead of Courier, and sessions started from Finder keep accents intact.
+- Links that Codex and Claude Code print as clickable hyperlinks now open: web links in your browser and file links in the editor, with Ctrl+click or Cmd+click and the right-click menu.
