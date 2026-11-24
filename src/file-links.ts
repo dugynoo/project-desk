@@ -219,7 +219,7 @@ export function createFileLinks({ getState, platform, toast, confirmBox, editorV
   }
 
   return {
-    setupLinks, openEditor, openTextEditor, openFolder, openFolderLabel,
+    setupLinks, openEditor, openTextEditor, openFile, openFolder, openFolderLabel,
     /** Settings changed: the built-in editor rereads its options. */
     configureEditor: () => textEditor?.configure(),
     /** Unsaved changes in the built-in editor. */

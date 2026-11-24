@@ -234,6 +234,32 @@ background polling or file watcher; when disabled no new Git processes are start
 A branch changed inside the terminal is refreshed on the next such interaction,
 not immediately. Probes run serially with a two-second timeout.
 
+### Git changes and worktrees (optional)
+
+Three Display settings, all off by default:
+
+- **Changes view for projects** adds **Changes** to the project ⋯ menu. It lists
+  files changed since the last commit, new untracked files included (.gitignore
+  applies), and shows the diff of the selected file. **Open file** opens it with
+  the configured file editor.
+- **Changes from the agent's last turn** saves a snapshot of the project each time
+  a Claude, Codex or Antigravity session starts working (resuming after a
+  permission prompt is the same turn). The session ⋯ menu then offers **Changes
+  in last turn**, a diff from that snapshot to the current files. Other sessions
+  in the same project also show up in it. Snapshots live in memory for the app
+  run only.
+- **Sessions in a separate Git worktree** adds **New worktree…** to the project
+  ⋯ menu. It creates `<repository>-<branch>` next to the repository (`git worktree
+  add`; an existing branch is checked out, otherwise a new one starts from the
+  current commit), adds that folder as a project and starts a session in it.
+  Removing such a project offers to remove the folder with `git worktree remove`,
+  which Git refuses while it holds uncommitted or untracked files; the branch stays.
+
+Snapshots and change lists never touch your staging area or files: Project Desk
+copies the index to a temporary file, stages into that copy and writes a tree
+object. The objects are unreferenced, so `git gc` removes them later. In very
+large repositories a snapshot can take a few seconds.
+
 ### Terminal font size
 
 Settings controls the shared terminal font size (8–32 px, default 13 px).

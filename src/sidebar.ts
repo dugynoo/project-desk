@@ -47,6 +47,10 @@ interface SidebarDependencies {
   openView(id: string): void;
   saveView(project: Project, id?: string): void;
   manageViews(): void;
+  /** Voliteľné Git funkcie (zapínajú sa v nastaveniach). */
+  showChanges(project: Project, session?: Session): void;
+  hasTurn(session: Session): boolean;
+  newWorktree(project: Project): void;
 }
 
 /** Owns sidebar DOM and transient interaction state; application state stays with the caller. */
@@ -351,6 +355,8 @@ export function createSidebar(deps: SidebarDependencies) {
       actions.append(launcher, actionsButton(() => [
         { label: t("project.openEditor"), run: () => openEditor(p.path) },
         { label: openFolderLabel(), run: () => openFolder(p.path) },
+        ...(getState().settings.changesPanel ? [{ label: t("project.changes"), run: () => deps.showChanges(p) }] : []),
+        ...(getState().settings.worktrees ? [{ label: t("worktree.new"), run: () => deps.newWorktree(p) }] : []),
         { label: t("project.rename"), run: () => startProjectRename(p) },
         { label: t("views.save"), run: () => deps.saveView(p) },
         { label: t(p.pinned ? "project.unpin" : "project.pin"), run: () => { p.pinned = !p.pinned; save(); renderSidebar(); } },
@@ -446,6 +452,7 @@ export function createSidebar(deps: SidebarDependencies) {
           const sessionActions = () => [
             { label: t("session.rename"), run: () => startRename(s) },
             { label: t("session.info"), run: () => showInfo(s) },
+            ...(deps.hasTurn(s) ? [{ label: t("session.turnChanges"), run: () => deps.showChanges(p, s) }] : []),
             { label: t(isUnread ? "session.markRead" : "session.markUnread"), run: () => isUnread ? markRead(s.id) : markUnread(s.id) },
             { label: t(s.hidden ? "session.unhide" : "session.hide"), run: () => { s.hidden = !s.hidden; save(); renderSidebar(); } },
             ...(canPause(s) ? [{ label: t("session.pause"), run: () => void pauseSession(s) }] : []),

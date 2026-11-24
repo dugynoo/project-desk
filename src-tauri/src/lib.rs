@@ -551,6 +551,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             git::project_branch,
+            git::git_snapshot,
+            git::git_changes,
+            git::git_diff,
+            git::git_worktree_add,
+            git::git_worktree_remove,
             app_info,
             updates::check_release,
             load_state,

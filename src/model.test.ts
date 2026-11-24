@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  isTurnStart,
+  diffLines,
   appWheelSteps,
   fileOpenTarget,
   remoteChatSources,
@@ -1321,4 +1323,30 @@ test("upsertPushSubscription replaces by endpoint and keeps the newest", () => {
   assert.equal(next.length, MAX_PUSH_SUBSCRIPTIONS);
   assert.deepEqual(next.at(-1), sub(99));
   assert.equal(next[0]!.endpoint, sub(1).endpoint);
+});
+
+test("a turn starts when the agent starts working, not when it resumes after a permission prompt", () => {
+  assert.equal(isTurnStart("idle", "working"), true);
+  assert.equal(isTurnStart("done", "working"), true);
+  assert.equal(isTurnStart("starting", "working"), true);
+  assert.equal(isTurnStart("needs-you", "working"), false);
+  assert.equal(isTurnStart("working", "working"), false);
+  assert.equal(isTurnStart("working", "done"), false);
+});
+
+test("diffLines keeps hunks and changed lines and drops file headers", () => {
+  const patch = "diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n keep\n-one\n+two\n\\ No newline at end of file\n";
+  assert.deepEqual(diffLines(patch).map(l => [l.kind, l.text]), [
+    ["hunk", "@@ -1,2 +1,2 @@"], ["context", " keep"], ["del", "-one"], ["add", "+two"], ["note", "\\ No newline at end of file"],
+  ]);
+  assert.deepEqual(diffLines("diff --git a/x b/x\nBinary files a/x and b/x differ\n"), [{ kind: "note", text: "Binary files a/x and b/x differ" }]);
+  assert.deepEqual(diffLines(""), []);
+});
+
+test("Git tools are off by default and a worktree project keeps its flag", () => {
+  const { state } = parseState(JSON.stringify({ projects: [{ id: "p", name: "x", path: "/x", worktree: true }, { id: "q", name: "y", path: "/y" }],
+    settings: { changesPanel: true } }));
+  assert.equal(state.projects[0]!.worktree, true);
+  assert.equal("worktree" in state.projects[1]!, false);
+  assert.deepEqual([state.settings.changesPanel, state.settings.turnChanges, state.settings.worktrees], [true, false, false]);
 });

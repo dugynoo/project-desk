@@ -27,6 +27,8 @@ export interface CliCheck { status: CliStatus; version: string }
 export interface Conversation { id: string; modifiedAt: number; title: string | null }
 export interface AgentPoll { stats: AgentStats; status: string | null; events: string[]; backgroundTasks?: number }
 export interface AvailableRelease { version: string; body: string; url: string }
+/** `root`: repository root; file paths are relative to it. `base`/`current`: snapshot trees for `git_diff`. */
+export interface GitChanges { root: string; base: string; current: string; files: { status: string; path: string }[]; truncated: boolean }
 export interface ChatSource { provider: ChatProvider; agentId: string }
 
 type None = Record<string, never>;
@@ -57,6 +59,11 @@ export interface Commands {
   open_folder: { args: { path: string }; result: void };
   project_exists: { args: { path: string; existing: string[] }; result: boolean };
   project_branch: { args: { path: string }; result: string | null };
+  git_snapshot: { args: { path: string }; result: string };
+  git_changes: { args: { path: string; base: string | null }; result: GitChanges };
+  git_diff: { args: { path: string; base: string; current: string; file: string }; result: string };
+  git_worktree_add: { args: { path: string; branch: string }; result: string };
+  git_worktree_remove: { args: { path: string }; result: void };
   list_editors: { args: None; result: EditorInfo[] };
   check_cli: { args: { commands: [string, string, string]; shell: string }; result: CliCheck[] };
   codex_no_daemon: { args: { command: string; shell: string }; result: boolean };

@@ -4,7 +4,8 @@ import { createAgentMonitor } from "./agent-monitor.ts";
 import { createAgentUpdates } from "./agent-updates.ts";
 import { createSystemNotifications } from "./system-notifications.ts";
 import { hideSearch, openSearch, setSearchTheme } from "./terminal-search.ts";
-import { removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane } from "./model.ts";
+import { removeProjectState, applyPanePreset, savePanePreset, paneDropSide, dropOnPane, isTurnStart } from "./model.ts";
+import { showChanges } from "./changes.ts";
 import { createSidebar } from "./sidebar.ts";
 import { showPalette, actionLabel, bindingLabel, type PaletteAction } from "./actions.ts";
 import { applyUiTheme, terminalTheme } from "./theme.ts";
@@ -154,6 +155,7 @@ function setStatus(id: string, next: Status, silent = false) {
   if (prev === next) return;
   statuses.set(id, next);
   agentUpdates.statusChanged(id, next);
+  if (isTurnStart(prev, next)) snapshotTurn(id);
   const kind = attentionEventKind(prev, next, silent);
   const s = session(id);
   if (next === "working" && s?.interrupted) {
@@ -194,7 +196,7 @@ const notify = createSystemNotifications({
   enabled: () => state.settings.notifications, session, project, statusLabel,
 });
 
-const { setupLinks, openEditor, openTextEditor, openFolder, openFolderLabel, configureEditor, editorPending, editorMayClose } = createFileLinks({
+const { setupLinks, openEditor, openTextEditor, openFile, openFolder, openFolderLabel, configureEditor, editorPending, editorMayClose } = createFileLinks({
   getState: () => state, platform: () => info.platform, toast,
   confirmBox: (...args) => confirmBox(...args), editorVisibilityChanged,
 });
@@ -457,6 +459,82 @@ async function removeProject(p: Project) {
   save();
   layout();
   renderSidebar();
+  if (p.worktree && await confirmBox(t("worktree.removeTitle"), t("worktree.removeBody", { path: p.path }), t("worktree.removeOk"))) {
+    try {
+      await call("git_worktree_remove", { path: p.path });
+      toast(t("worktree.removed"), true);
+    } catch (e) { toast(errorText(e)); }
+  }
+}
+
+// ---------- Git: zmeny a worktree (voliteľné v nastaveniach) ----------
+
+/** Snímka projektu zo začiatku posledného ťahu každej relácie; len v pamäti, nič sa neukladá. */
+const turnBases = new Map<string, string>();
+const turnRequests = new Map<string, object>();
+function snapshotTurn(id: string) {
+  const s = session(id);
+  const p = s && project(s.projectId);
+  turnBases.delete(id);
+  turnRequests.delete(id);
+  if (!state.settings.turnChanges || !s || !p || s.provider === "shell") return;
+  const request = {};
+  turnRequests.set(id, request);
+  void call("git_snapshot", { path: p.path }).then(tree => {
+    // Neskorá snímka nesmie prepísať tú z ďalšieho ťahu.
+    if (turnRequests.get(id) === request) turnBases.set(id, tree);
+  }).catch(() => {}); // Projekt bez Gitu: položka v menu sa jednoducho neukáže.
+}
+
+function showProjectChanges(p: Project, s?: Session) {
+  const base = s && turnBases.get(s.id);
+  if (s && !base) return;
+  showChanges(modal, { path: p.path, base, openFile,
+    heading: s ? t("changes.turnTitle", { name: s.title }) : t("changes.title", { name: p.name }) });
+}
+
+function newWorktree(p: Project) {
+  modal((box, close) => {
+    const input = el("input");
+    input.id = "worktree-branch";
+    input.spellcheck = false;
+    input.autocomplete = "off";
+    const label = el("label", "", t("worktree.branch"));
+    label.htmlFor = input.id;
+    const status = el("p", "note");
+    status.setAttribute("role", "status");
+    const cancel = el("button", "", t("common.cancel"));
+    const create = el("button", "primary", t("worktree.create"));
+    const actions = el("div", "actions");
+    actions.append(cancel, create);
+    box.append(el("h3", "", t("worktree.title", { name: p.name })), label, input,
+      el("div", "note", t("worktree.note", { folder: folderName(p.path) })), status, actions);
+    let busy = false;
+    const submit = async () => {
+      if (busy || !input.value.trim()) return;
+      busy = true;
+      create.disabled = input.disabled = true;
+      status.textContent = t("worktree.creating");
+      try {
+        const path = await call("git_worktree_add", { path: p.path, branch: input.value.trim() });
+        // Priečinok už existuje, preto sa projekt pridá, aj keď používateľ okno medzitým zavrel.
+        const created: Project = { id: crypto.randomUUID(), name: folderName(path), path, worktree: true };
+        state.projects.splice(state.projects.indexOf(p) + 1, 0, created);
+        close();
+        createSession(created, state.settings.defaultProvider);
+        save();
+      } catch (e) {
+        busy = false;
+        create.disabled = input.disabled = false;
+        status.textContent = errorText(e);
+        input.focus();
+      }
+    };
+    cancel.onclick = close;
+    create.onclick = () => void submit();
+    input.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); void submit(); } };
+    input.focus();
+  }, () => {});
 }
 
 
@@ -622,6 +700,8 @@ const sidebar = createSidebar({
   start, closeSession, pauseSession, canPause, removeProject, openEditor, openFolderLabel, openFolder,
   showImport: p => showImport(p), showInfo: s => showInfo(s), markRead: (id) => { if (markSessionRead(id)) save(); renderSidebar(); }, jumpAttention, showClosedSessions, rendered: () => remote.publish(), deferRender: render => pressGuard.defer(render), layoutChanged: () => fitVisible(), showNotifications: () => notificationCenter.show(),
   refreshNotifications: () => notificationCenter.refresh(),
+  showChanges: showProjectChanges, newWorktree,
+  hasTurn: s => state.settings.turnChanges && turnBases.has(s.id),
 });
 function renderSidebar() { sidebar.render(); updateDockBadge(); }
 function refreshBranches(revisit: boolean | number = false, paths?: string[]) { sidebar.refreshBranches(revisit, paths); }

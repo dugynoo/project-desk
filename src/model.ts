@@ -31,6 +31,8 @@ export interface Project {
   collapsed?: boolean;
   /** Pripnuté projekty sú vždy hore. */
   pinned?: boolean;
+  /** Priečinok je Git worktree vytvorený z appky; pri odstránení projektu ponúkne zmazať aj ten. */
+  worktree?: boolean;
 }
 
 /** Text, ktorý sa vloží do terminálu ako prompt. Bez `projectId` platí pre všetky projekty. */
@@ -76,6 +78,10 @@ export interface Session {
 export interface Settings {
   claudeBackground: boolean;
   showGitBranch: boolean;
+  /** Voliteľné Git funkcie: prehľad zmien projektu, zmeny za ťah agenta, relácie vo worktree. */
+  changesPanel: boolean;
+  turnChanges: boolean;
+  worktrees: boolean;
   fontSize: number;
   shortcuts: Partial<Record<ActionId, string>>;
   defaultProvider: Provider;
@@ -157,6 +163,9 @@ export interface PersistedState {
 export const DEFAULT_SETTINGS: Settings = {
   claudeBackground: false,
   showGitBranch: false,
+  changesPanel: false,
+  turnChanges: false,
+  worktrees: false,
   fontSize: 13,
   shortcuts: {},
   defaultProvider: "claude",
@@ -228,7 +237,8 @@ export function parseState(raw: string | null | undefined): { state: PersistedSt
 
   for (const p of Array.isArray(data.projects) ? data.projects : []) {
     if (isObj(p) && str(p.id) && str(p.name) && str(p.path)) {
-      state.projects.push({ id: p.id, name: p.name, path: p.path, collapsed: p.collapsed === true, pinned: p.pinned === true });
+      state.projects.push({ id: p.id, name: p.name, path: p.path, collapsed: p.collapsed === true, pinned: p.pinned === true,
+        ...(p.worktree === true ? { worktree: true } : {}) });
     } else dropped++;
   }
   const projectIds = new Set(state.projects.map((p) => p.id));
@@ -1275,4 +1285,23 @@ export function appWheelSteps(deltaY: number, deltaMode: number): number {
   if (deltaMode === 1) return Math.min(10, Math.max(1, Math.round(size)));
   if (deltaMode === 2) return 10;
   return size < 50 ? 1 : Math.min(10, Math.max(3, Math.round(size / 100) * 3));
+}
+
+/** Začiatok nového ťahu agenta; návrat po povolení (`needs-you`) je ten istý ťah. */
+export function isTurnStart(previous: Status, next: Status): boolean {
+  return next === "working" && previous !== "working" && previous !== "needs-you";
+}
+
+export interface DiffLine { kind: "add" | "del" | "hunk" | "context" | "note"; text: string }
+
+/** Riadky jednotného diffu jedného súboru na zobrazenie; hlavičky (`diff --git`, `index`, `---`, `+++`) vynechá. */
+export function diffLines(patch: string): DiffLine[] {
+  const out: DiffLine[] = [];
+  let body = false;
+  for (const line of patch.replace(/\n$/, "").split("\n")) {
+    if (line.startsWith("@@")) { body = true; out.push({ kind: "hunk", text: line }); }
+    else if (!body) { if (line.startsWith("Binary files")) out.push({ kind: "note", text: line }); }
+    else out.push({ kind: line[0] === "+" ? "add" : line[0] === "-" ? "del" : line[0] === "\\" ? "note" : "context", text: line });
+  }
+  return out;
 }

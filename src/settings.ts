@@ -311,6 +311,18 @@ export function createSettings(
         const gitLabel = el("label", "check");
         gitLabel.append(gitBranch, document.createTextNode(t("settings.gitBranch")));
         display.append(gitLabel, el("div", "note", t("settings.gitBranchNote")));
+        const gitTool = (checked: boolean, label: "settings.changesPanel" | "settings.turnChanges" | "settings.worktrees") => {
+          const input = el("input");
+          input.type = "checkbox";
+          input.checked = checked;
+          const row = el("label", "check");
+          row.append(input, document.createTextNode(t(label)));
+          display.append(row, el("div", "note", t(`${label}Note`)));
+          return input;
+        };
+        const changesPanel = gitTool(st.changesPanel, "settings.changesPanel");
+        const turnChanges = gitTool(st.turnChanges, "settings.turnChanges");
+        const worktrees = gitTool(st.worktrees, "settings.worktrees");
         const language = el("select");
         for (const l of LANGUAGES) language.append(new Option(l.label, l.id, false, l.id === st.language));
         language.id = "settings-language";
@@ -432,6 +444,9 @@ export function createSettings(
             editorWordWrap: wrap.checked,
             optionAsMeta: optionMeta.checked,
             showGitBranch: gitBranch.checked,
+            changesPanel: changesPanel.checked,
+            turnChanges: turnChanges.checked,
+            worktrees: worktrees.checked,
             shortcuts,
             defaultProvider: defaultProvider.value as Provider,
             antigravityCommand: antigravity.value.trim() || "agy",
