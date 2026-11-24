@@ -1,2 +1,4 @@
-- Security fix for Windows: a file link pointing to a network share could make Project Desk connect to that server and expose your Windows sign-in hash when you only hovered over the link. Please update.
-- Links that Codex and Claude Code print as clickable hyperlinks open (from 0.19.1): web links in your browser and file links in the editor.
+- Phone notifications: tap the bell in the phone's session list to get a notification when an agent finishes or needs you while Project Desk is in the background. Tapping it opens that session. On iPhone and iPad, add the page to the Home Screen first (the page explains how).
+- Start a new Claude or Codex session from the phone with + next to a project.
+- When Claude asks a question with options, answer it with a tap in the phone chat.
+- Links that an agent ends with a period or comma open correctly.

@@ -1,6 +1,6 @@
 [package]
 name = "project-desk"
-version = "0.19.2"
+version = "0.20.0"
 license = "MIT"
 edition = "2021"
 # AtomicUsize::try_update (pty.rs) is stable since 1.95.
