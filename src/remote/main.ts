@@ -592,6 +592,7 @@ function openSession(id: string) {
     // Text ide ako bracketed paste, Enter zvlášť; prázdny text pošle len Enter.
     if (input.value) send({ type: "input", id, data: pasteSequence(input.value) });
     send({ type: "input", id, data: "\r" });
+    showPending(input.value);
     input.value = "";
     if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
   };
@@ -663,6 +664,7 @@ function mountBody() {
     b.onclick = () => {
       send({ type: "input", id, data: "/compact" });
       send({ type: "input", id, data: "\r" });
+      showPending("/compact");
     };
     keys.append(b);
   }
@@ -736,14 +738,35 @@ function appendChat(items: ChatItem[], reset: boolean) {
   const el = chatEl;
   if (!el) return;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  const pending = [...el.querySelectorAll<HTMLElement>(".msg.pending")];
   if (reset) el.replaceChildren();
-  if (items.length) el.querySelector(".chat-empty")?.remove();
+  if (items.length || pending.length) el.querySelector(".chat-empty")?.remove();
   else if (reset) el.append(h("p", "chat-empty", t("remote.chatEmpty")));
-  for (const item of items) el.append(safeChatItem(item));
+  for (const item of items) {
+    el.append(safeChatItem(item));
+    // Agent správu zapísal: dočasná bublina (rovnaký text, inak najstaršia) už netreba.
+    if (item.role === "user" && pending.length) {
+      const i = pending.findIndex((p) => p.textContent === item.text.trim());
+      pending.splice(i < 0 ? 0 : i, 1)[0]!.remove();
+    }
+  }
+  // Ešte nezapísané správy ostávajú na konci.
+  el.append(...pending);
   while (el.childElementCount > CHAT_DOM_LIMIT) el.firstElementChild?.remove();
   if (reset || atBottom) el.scrollTop = el.scrollHeight;
   const s = snapshot?.sessions.find((x) => x.id === openId);
   if (s) updateHeader(s);
+}
+
+/** Odoslaná správa sa ukáže hneď, kým ju agent nezapíše do konverzácie (napr. /compact trvá). */
+function showPending(text: string) {
+  const el = chatEl;
+  if (!el || !text.trim()) return;
+  el.querySelector(".chat-empty")?.remove();
+  const row = h("div", "msg user pending");
+  row.append(h("div", "bubble", text.trim()));
+  el.append(row);
+  el.scrollTop = el.scrollHeight;
 }
 
 /**

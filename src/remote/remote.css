@@ -110,6 +110,7 @@ button { font: inherit; color: inherit; }
 .msg { max-width: 100%; overflow-wrap: anywhere; }
 .msg.user { align-self: flex-end; max-width: 85%; }
 .msg.user .bubble { padding: 8px 12px; background: #23324a; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; }
+.msg.user.pending { opacity: .6; }
 .msg.tool { display: flex; gap: 6px; min-width: 0; font: 12px/1.4 "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace; color: var(--muted); }
 .tool-name { flex: none; color: var(--accent); }
 .msg.question { padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
